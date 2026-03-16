@@ -55,7 +55,7 @@ python main_ver15.py
 📁 version_history.py: 코드 업데이트 히스토리 기록
 
 
-🛠️ [ 버전 및 업데이트 내역 ]
+## 🛠️ [ 버전 및 업데이트 내역 ]
 
 📌 V16.1 [2026.03.21]
 ▫️ 긴급 패치: 필수 진입점인 /record (장부 동기화 및 조회) 명령어 원상 복구(부활) (수정: telegram_bot, telegram_view, main_ver15)
