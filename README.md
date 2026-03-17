@@ -41,24 +41,31 @@ pip3 install "python-telegram-bot[job-queue]"
 📌 3. 환경 변수 설정 (.env 파일 생성)
 프로젝트 최상단 폴더에 .env 파일을 만들고 아래 양식에 맞게 본인의 키를 입력합니다.
 
-TELEGRAM_TOKEN="당신의_텔레그램_봇_토큰"
-ADMIN_CHAT_ID="당신의_텔레그램_챗_ID"
-APP_KEY="한국투자증권_APP_KEY"
-APP_SECRET="한국투자증권_APP_SECRET"
-CANO="종합계좌번호_앞8자리"
-ACNT_PRDT_CD="계좌상품코드_보통01"
+TELEGRAM_TOKEN=나의_텔레그램_봇_토큰
+ADMIN_CHAT_ID=나의_텔레그램_채팅방_ID숫자
+APP_KEY=나의_한국투자증권_APP_KEY
+APP_SECRET=나의_한국투자증권_APP_SECRET
+CANO=나의_계좌번호_앞8자리
+ACNT_PRDT_CD=01 또는 22
 
 📌 4. 프로그램 실행
 
 python main_ver15.py
 
 (권장: 서버 환경에서는 nohup python main_ver15.py & 명령어를 사용하여 백그라운드에서 24시간 가동되도록 설정하세요.)
+
 ​📂 파일 구조 (Directory Structure)
+
 ​📁 main_ver15.py: 스케줄러 구동 및 프로그램의 메인 진입점(Entry Point)
+
 📁 broker.py: 한국투자증권 API 통신 및 데이터 가공을 담당하는 클래스
+
 📁 strategy.py: 예산 분배 및 특정 조건에 따른 매수/매도 알고리즘이 구현된 클래스
+
 📁 telegram_bot.py / telegram_view.py: 텔레그램 봇 라우터 및 화면(UI) 렌더링을 담당하는 클래스
+
 📁 config.py: 각종 JSON 데이터를 저장하고 불러오는 로컬 캐싱/설정 매니저
+
 📁 version_history.py: 코드 업데이트 히스토리 기록
 
 
