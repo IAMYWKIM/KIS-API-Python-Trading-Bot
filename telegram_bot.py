@@ -509,16 +509,29 @@ class TelegramController:
                 icon = "💎"
                 ver_display = "무매3"
                 
-            msg += f"{icon} <b>{t} ({ver_display} 모드)</b>\n▫️ 분할: <b>{int(self.cfg.get_split_count(t))}회</b>\n▫️ 목표: <b>{self.cfg.get_target_profit(t)}%</b>\n▫️ 자동복리: <b>{self.cfg.get_compound_rate(t)}%</b>\n\n"
-            keyboard.append([
+            msg += f"{icon} <b>{t} ({ver_display} 모드)</b>\n▫️ 분할: <b>{int(self.cfg.get_split_count(t))}회</b>\n▫️ 목표: <b>{self.cfg.get_target_profit(t)}%</b>\n▫️ 자동복리: <b>{self.cfg.get_compound_rate(t)}%</b>\n"
+            
+            if ver == "V17":
+                sniper_trigger = self.cfg.get_sniper_trigger(t)
+                msg += f"▫️ 스나이퍼 타점: <b>-{sniper_trigger}%</b>\n\n"
+            else:
+                msg += "\n"
+                
+            row1 = [
                 InlineKeyboardButton(f"⚙️ {t} 분할", callback_data=f"INPUT:SPLIT:{t}"), 
                 InlineKeyboardButton(f"🎯 {t} 목표", callback_data=f"INPUT:TARGET:{t}"),
                 InlineKeyboardButton(f"💸 {t} 복리", callback_data=f"INPUT:COMPOUND:{t}")
-            ])
-            keyboard.append([
+            ]
+            keyboard.append(row1)
+            
+            row2 = [
                 InlineKeyboardButton(f"🔄 {t} 무매3/무매4 전환", callback_data=f"TOGGLE:VERSION:{t}"),
                 InlineKeyboardButton(f"✂️ {t} 액면보정", callback_data=f"INPUT:STOCK_SPLIT:{t}")
-            ])
+            ]
+            if ver == "V17":
+                row2.append(InlineKeyboardButton(f"📉 {t} 타점", callback_data=f"INPUT:SNIPER:{t}"))
+            keyboard.append(row2)
+            
         await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
     async def cmd_version(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -659,6 +672,7 @@ class TelegramController:
             elif sub == "TARGET": ko_name = "목표 수익률(%)"
             elif sub == "COMPOUND": ko_name = "자동 복리율(%)"
             elif sub == "STOCK_SPLIT": ko_name = "액면 분할/병합 비율 (예: 10분할은 10, 10병합은 0.1)"
+            elif sub == "SNIPER": ko_name = "스나이퍼 타점 퍼센트 (예: 9.0 또는 5.0)"
             else: ko_name = "값"
             
             await context.bot.send_message(update.effective_chat.id, f"⚙️ [{ticker}] {ko_name} 입력 (숫자만):")
@@ -700,6 +714,11 @@ class TelegramController:
                 ticker = parts[2]
                 self.cfg.apply_stock_split(ticker, val)
                 await update.message.reply_text(f"✅ [{ticker}] 액면 보정 완료\n▫️ 모든 장부 기록이 {val}배 비율로 정밀하게 소급 조정되었습니다.")
+                
+            elif state.startswith("CONF_SNIPER"):
+                ticker = parts[2]
+                self.cfg.set_sniper_trigger(ticker, val)
+                await update.message.reply_text(f"✅ [{ticker}] 스나이퍼 타점이 -{val}% 로 변경되었습니다.")
                 
             del self.user_states[chat_id]
         except: await update.message.reply_text("❌ 오류: 숫자를 입력하세요.")

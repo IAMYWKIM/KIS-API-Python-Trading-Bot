@@ -192,7 +192,8 @@ class TelegramView:
             if v_mode == "V17":
                 hybrid_target = t_info.get('hybrid_target', 0.0)
                 if hybrid_target > 0:
-                    trigger_reason = "BB" if t_info.get('trigger_reason') == "BB" else "-9%"
+                    sniper_pct = t_info.get('sniper_trigger', 9.0) # 기본값 대비
+                    trigger_reason = "BB" if t_info.get('trigger_reason') == "BB" else f"-{sniper_pct}%"
                     body_msg += f"📉 <b>스나이퍼({trigger_reason}): ${hybrid_target:.2f} 이하 대기중</b>\n"
                 else:
                     body_msg += f"📉 <b>스나이퍼: 장전 대기 중</b>\n"
@@ -347,3 +348,4 @@ class TelegramView:
             [InlineKeyboardButton("💎 SOXL + TQQQ 통합", callback_data="TICKER:ALL")]
         ]
         return f"🔄 <b>[ 운용 종목 선택 ]</b>\n현재: <b>{', '.join(current_tickers)}</b>", InlineKeyboardMarkup(keyboard)
+

@@ -32,14 +32,16 @@ class ConfigManager:
             "COMPOUND_CFG": "data/compound_config.json",
             "VERSION_CFG": "data/version_config.json",
             "REVERSE_CFG": "data/reverse_config.json",
-            "BB_LOWER": "data/bb_lower.json" 
+            "BB_LOWER": "data/bb_lower.json",
+            "SNIPER_CFG": "data/sniper_config.json" 
         }
         
         self.DEFAULT_SEED = {"SOXL": 6720.0, "TQQQ": 6720.0}
         self.DEFAULT_SPLIT = {"SOXL": 40.0, "TQQQ": 40.0}
         self.DEFAULT_TARGET = {"SOXL": 12.0, "TQQQ": 10.0}
         self.DEFAULT_COMPOUND = {"SOXL": 70.0, "TQQQ": 70.0}
-        self.DEFAULT_VERSION = {"SOXL": "V14", "TQQQ": "V14"} 
+        self.DEFAULT_VERSION = {"SOXL": "V14", "TQQQ": "V14"}
+        self.DEFAULT_SNIPER = {"SOXL": 9.0, "TQQQ": 5.0}
 
     def _load_json(self, filename, default=None):
         if os.path.exists(filename):
@@ -458,6 +460,15 @@ class ConfigManager:
 
     def get_target_profit(self, t):
         return self._load_json(self.FILES["PROFIT_CFG"], self.DEFAULT_TARGET).get(t, 10.0)
+        
+    def get_sniper_trigger(self, t):
+        default_val = self.DEFAULT_SNIPER.get(t, 9.0)
+        return float(self._load_json(self.FILES["SNIPER_CFG"], self.DEFAULT_SNIPER).get(t, default_val))
+        
+    def set_sniper_trigger(self, t, v):
+        d = self._load_json(self.FILES["SNIPER_CFG"], self.DEFAULT_SNIPER)
+        d[t] = float(v)
+        self._save_json(self.FILES["SNIPER_CFG"], d)
 
     def get_turbo_mode(self):
         return self._load_file(self.FILES["TURBO"]) == 'True'

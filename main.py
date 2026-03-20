@@ -169,14 +169,16 @@ async def scheduled_sniper_monitor(context):
             # 🦇 [V19.1 패치] 하이브리드(MAX) 다이내믹 밴드 트리거 연산
             real_time_bb_lower = await asyncio.to_thread(broker.get_bb_lower, t, current_price=curr_p)
             
-            # 대표님의 궁극의 공식 적용: min(평단가, 전일종가) * 0.91 (-9% 타점)
-            hybrid_base = min(avg_price, prev_c) * 0.91
+            # 🦇 [V19.9 패치] 종목별 설정된 스나이퍼 타점 불러와서 하이브리드 베이스 계산
+            sniper_pct = cfg.get_sniper_trigger(t)
+            hybrid_multiplier = (100.0 - sniper_pct) / 100.0
+            hybrid_base = min(avg_price, prev_c) * hybrid_multiplier
             
             # 두 값을 맞붙여서 더 높은 가격(현실성 있는 바닥)을 최종 타격가로 확정
             raw_target_price = max(real_time_bb_lower, hybrid_base)
             target_buy_price = math.floor(raw_target_price * 100) / 100.0
             
-            trigger_reason = "실시간 블밴 하한가" if real_time_bb_lower >= hybrid_base else "-9% 고정 하한가"
+            trigger_reason = "실시간 블밴 하한가" if real_time_bb_lower >= hybrid_base else f"-{sniper_pct}% 고정 하한가"
             
             # 최종 확정된 타격가(target_buy_price)를 기준으로 스나이퍼 발동!
             if target_buy_price > 0 and curr_p <= target_buy_price and curr_p < avg_price:
@@ -209,9 +211,40 @@ async def scheduled_sniper_monitor(context):
                                 
                                 if not buy_unfilled:
                                     cfg.set_lock(t, "SNIPER") 
+                                    
+                                    # 🛡️ 영수증 발급: 당일 체결 내역에서 방금 쏜 스나이퍼 매수건 실제 단가 뽑기
+                                    kst = pytz.timezone('Asia/Seoul')
+                                    today_kis_str = datetime.datetime.now(kst).strftime('%Y%m%d')
+                                    execs = await asyncio.to_thread(broker.get_execution_history, t, today_kis_str, today_kis_str)
+                                    
+                                    actual_buy_price = target_buy_price # 기본값
+                                    if execs:
+                                        # 최근 체결된 순서대로 정렬
+                                        execs.sort(key=lambda x: x.get('ord_tmd', '000000'), reverse=True)
+                                        matched_qty = 0
+                                        total_amt = 0.0
+                                        for ex in execs:
+                                            if ex.get('sll_buy_dvsn_cd') == '02': # 매수
+                                                eqty = int(float(ex.get('ft_ccld_qty', '0')))
+                                                eprice = float(ex.get('ft_ccld_unpr3', '0'))
+                                                if matched_qty + eqty <= buy_qty:
+                                                    total_amt += eqty * eprice
+                                                    matched_qty += eqty
+                                                elif matched_qty < buy_qty:
+                                                    rem = buy_qty - matched_qty
+                                                    total_amt += rem * eprice
+                                                    matched_qty += rem
+                                                
+                                                if matched_qty >= buy_qty:
+                                                    break
+                                        
+                                        if matched_qty > 0:
+                                            actual_buy_price = total_amt / matched_qty
+                                            actual_buy_price = math.floor(actual_buy_price * 100) / 100.0
+
                                     msg = f"💥 <b>[{t}] V19.1 하이브리드 덫 명중! ({trigger_reason} 이탈)</b>\n"
                                     msg += f"📉 실시간 현재가(${curr_p:.2f})가 <b>[{trigger_reason}]</b> 기준선(${target_buy_price:.2f})마저 뚫었습니다!\n"
-                                    msg += f"🎯 <b>최적의 바닥 가격(${target_buy_price:.2f})에 {buy_qty}주 지정가 덫이 완벽하게 체결</b>되었습니다!\n"
+                                    msg += f"🎯 <b>최적의 실제 체결 단가(${actual_buy_price:.2f})에 {buy_qty}주 지정가 덫이 완벽하게 체결</b>되었습니다!\n"
                                     msg += "🔫 당일 스나이퍼 활동을 짜릿하게 종료합니다."
                                     await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
                                     hunt_success = True
@@ -273,8 +306,38 @@ async def scheduled_sniper_monitor(context):
                             
                             if not sell_unfilled:
                                 cfg.set_lock(t, "SNIPER")
+                                
+                                # 🛡️ 영수증 발급: 당일 체결 내역에서 전량 익절 실제 단가 뽑기
+                                kst = pytz.timezone('Asia/Seoul')
+                                today_kis_str = datetime.datetime.now(kst).strftime('%Y%m%d')
+                                execs = await asyncio.to_thread(broker.get_execution_history, t, today_kis_str, today_kis_str)
+                                
+                                actual_sell_price = bid_price # 기본값
+                                if execs:
+                                    execs.sort(key=lambda x: x.get('ord_tmd', '000000'), reverse=True)
+                                    matched_qty = 0
+                                    total_amt = 0.0
+                                    for ex in execs:
+                                        if ex.get('sll_buy_dvsn_cd') == '01': # 매도
+                                            eqty = int(float(ex.get('ft_ccld_qty', '0')))
+                                            eprice = float(ex.get('ft_ccld_unpr3', '0'))
+                                            if matched_qty + eqty <= qty:
+                                                total_amt += eqty * eprice
+                                                matched_qty += eqty
+                                            elif matched_qty < qty:
+                                                rem = qty - matched_qty
+                                                total_amt += rem * eprice
+                                                matched_qty += rem
+                                            
+                                            if matched_qty >= qty:
+                                                break
+                                    
+                                    if matched_qty > 0:
+                                        actual_sell_price = total_amt / matched_qty
+                                        actual_sell_price = math.floor(actual_sell_price * 100) / 100.0
+
                                 msg = f"🔥 <b>[{t}] 스나이퍼 잭팟 터짐! (목표가 돌파)</b>\n"
-                                msg += f"🎯 실시간 매수 1호가(${bid_price:.2f})가 목표가(${target_price:.2f})를 돌파하여 <b>전량 강제 익절</b> 처리했습니다.\n"
+                                msg += f"🎯 실시간 매수 1호가(${bid_price:.2f})가 목표가(${target_price:.2f})를 돌파하여 <b>실제 단가 ${actual_sell_price:.2f}에 전량 강제 익절</b> 처리했습니다.\n"
                                 msg += "🔫 당일 스나이퍼 활동을 완전 종료합니다."
                                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
                                 hunt_success = True
@@ -338,9 +401,38 @@ async def scheduled_sniper_monitor(context):
                                     cfg.set_lock(t, "SNIPER")
                                     phase = "전반전(별값 돌파)" if is_first_half else "후반전(본전+수수료 돌파)"
                                     
+                                    # 🛡️ 영수증 발급: 당일 체결 내역에서 쿼터 익절 실제 단가 뽑기
+                                    kst = pytz.timezone('Asia/Seoul')
+                                    today_kis_str = datetime.datetime.now(kst).strftime('%Y%m%d')
+                                    execs = await asyncio.to_thread(broker.get_execution_history, t, today_kis_str, today_kis_str)
+                                    
+                                    actual_sell_price = bid_price # 기본값
+                                    if execs:
+                                        execs.sort(key=lambda x: x.get('ord_tmd', '000000'), reverse=True)
+                                        matched_qty = 0
+                                        total_amt = 0.0
+                                        for ex in execs:
+                                            if ex.get('sll_buy_dvsn_cd') == '01': # 매도
+                                                eqty = int(float(ex.get('ft_ccld_qty', '0')))
+                                                eprice = float(ex.get('ft_ccld_unpr3', '0'))
+                                                if matched_qty + eqty <= q_qty:
+                                                    total_amt += eqty * eprice
+                                                    matched_qty += eqty
+                                                elif matched_qty < q_qty:
+                                                    rem = q_qty - matched_qty
+                                                    total_amt += rem * eprice
+                                                    matched_qty += rem
+                                                
+                                                if matched_qty >= q_qty:
+                                                    break
+                                        
+                                        if matched_qty > 0:
+                                            actual_sell_price = total_amt / matched_qty
+                                            actual_sell_price = math.floor(actual_sell_price * 100) / 100.0
+
                                     msg = f"🔫 <b>[{t}] V17 시크릿 쿼터 익절 발동! ({phase})</b>\n"
                                     msg += f"🎯 실시간 매수 1호가: ${bid_price:.2f} (트리거: ${trigger_price:.2f})\n"
-                                    msg += f"🛡️ 기존 방어선을 해제하고 {q_qty}주를 <b>지정가(LIMIT)</b>로 즉시 낚아챘습니다!\n"
+                                    msg += f"🛡️ 기존 방어선을 해제하고 {q_qty}주를 <b>최적의 단가 ${actual_sell_price:.2f}에 즉시 낚아챘습니다!</b>\n"
                                     
                                     await asyncio.to_thread(broker.cancel_all_orders_safe, t, side="BUY")
                                     await asyncio.sleep(1.0)
