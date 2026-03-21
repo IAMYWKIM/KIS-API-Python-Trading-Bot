@@ -38,18 +38,25 @@ class TelegramView:
             "<i>┗ 🚨 수동 닻 올리기: 예산 부족으로 리버스 진입 후 외화RP매도 등 예수금을 추가 입금하셨다면, 이 메뉴에서 반드시 '리버스 강제 해제'를 눌러 닻을 올려주세요!</i>"
         )
 
-    def get_reset_menu(self):
+    # 🎯 [V20.2 핫픽스] 리셋 메뉴 하드코딩 제거: 현재 운용 중인 종목만 동적으로 버튼 생성
+    def get_reset_menu(self, active_tickers):
         msg = (
             "🛠️ <b>[ 시스템 안전 통제실 ]</b>\n"
             "⚠️ 주의: 강제 초기화할 항목을 선택하세요."
         )
-        keyboard = [
-            [InlineKeyboardButton("🔓 [SOXL] 매매 잠금 해제", callback_data="RESET:LOCK:SOXL")],
-            [InlineKeyboardButton("🔓 [TQQQ] 매매 잠금 해제", callback_data="RESET:LOCK:TQQQ")],
-            [InlineKeyboardButton("🚨 [SOXL] 리버스/장부 초기화", callback_data="RESET:REV:SOXL")],
-            [InlineKeyboardButton("🚨 [TQQQ] 리버스/장부 초기화", callback_data="RESET:REV:TQQQ")],
-            [InlineKeyboardButton("❌ 취소 및 닫기", callback_data="RESET:CANCEL")]
-        ]
+        keyboard = []
+        
+        # 1. 매매 잠금 해제 버튼 생성
+        for t in active_tickers:
+            keyboard.append([InlineKeyboardButton(f"🔓 [{t}] 매매 잠금 해제", callback_data=f"RESET:LOCK:{t}")])
+            
+        # 2. 리버스/장부 초기화 버튼 생성
+        for t in active_tickers:
+            keyboard.append([InlineKeyboardButton(f"🚨 [{t}] 리버스/장부 초기화", callback_data=f"RESET:REV:{t}")])
+            
+        # 3. 취소 버튼
+        keyboard.append([InlineKeyboardButton("❌ 취소 및 닫기", callback_data="RESET:CANCEL")])
+        
         return msg, InlineKeyboardMarkup(keyboard)
 
     def get_reset_confirm_menu(self, ticker):
@@ -192,17 +199,14 @@ class TelegramView:
             else:
                 body_msg += f"⚙️ 🎯 {t_info['target']}% | ⭐ {t_info['star_pct']}% | 🏎️가속 {t_info['turbo_txt']}\n"
                 
-            # 🎯 [V20.0 패치] 스나이퍼 V3 절대 평단가 뷰어 적용 (UI 간소화)
             if v_mode == "V17":
                 hybrid_target = t_info.get('hybrid_target', 0.0)
                 sniper_pct = t_info.get('sniper_trigger', 9.0)
                 trigger_reason = t_info.get('trigger_reason', '')
                 
                 if trigger_reason.startswith("🛑"):
-                    # 타겟가가 평단가보다 비싸서 관망할 때
                     body_msg += f"📉 <b>{trigger_reason}</b>\n"
                 elif hybrid_target > 0:
-                    # 정상적으로 스나이퍼 대기 중일 때
                     body_msg += f"📉 <b>스나이퍼({trigger_reason}): ${hybrid_target:.2f} 이하 대기중</b>\n"
                 else:
                     body_msg += f"📉 <b>스나이퍼: 장전 대기 중</b>\n"

@@ -38,7 +38,6 @@ class ConfigManager:
             "COMPOUND_CFG": "data/compound_config.json",
             "VERSION_CFG": "data/version_config.json",
             "REVERSE_CFG": "data/reverse_config.json",
-            "BB_LOWER": "data/bb_lower.json",
             "SNIPER_CFG": "data/sniper_config.json",
             "SPLIT_HISTORY": "data/split_history.json" 
         }
@@ -476,14 +475,6 @@ class ConfigManager:
             for k in keys_to_delete:
                 del locks[k]
             self._save_json(self.FILES["LOCKS"], locks)
-
-    def get_daily_bb_lower(self, ticker):
-        return float(self._load_json(self.FILES["BB_LOWER"], {}).get(ticker, 0.0))
-
-    def set_daily_bb_lower(self, ticker, value):
-        d = self._load_json(self.FILES["BB_LOWER"], {})
-        d[ticker] = float(value)
-        self._save_json(self.FILES["BB_LOWER"], d)
     
     def get_seed(self, t):
         return float(self._load_json(self.FILES["SEED_CFG"], self.DEFAULT_SEED).get(t, 6720.0))

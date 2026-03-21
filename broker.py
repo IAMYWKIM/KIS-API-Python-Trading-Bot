@@ -11,7 +11,6 @@ import math
 import yfinance as yf
 import pytz
 import tempfile
-import pandas as pd # 🦇 [V19.10] bb_lower 날짜 비교용 추가
 
 class KoreaInvestmentBroker:
     def __init__(self, app_key, app_secret, cano, acnt_prdt_cd="01"):
@@ -22,7 +21,6 @@ class KoreaInvestmentBroker:
         self.base_url = "https://openapi.koreainvestment.com:9443"
         self.token_file = f"data/token_{cano}.dat" 
         self.token = None
-        self._bb_19d_cache = {}  
         self._excg_cd_cache = {} # 🦇 [V19.10] 거래소 코드 캐싱용 메모리 추가
         
         self._get_access_token()
@@ -116,7 +114,7 @@ class KoreaInvestmentBroker:
         try: return float(str(value).replace(',', ''))
         except Exception: return 0.0
 
-    # 🦇 [V19.10] 거래소 코드 동적 획득: 종목 추가 확장성 확보 (외부 모듈 의존성 제거, 자체 통신 로직 사용)
+    # 🦇 [V19.10 & V20.2] 거래소 코드 동적 획득 및 하드코딩 방어 개선
     def _get_exchange_code(self, ticker, target_api="PRICE"):
         if ticker in self._excg_cd_cache:
             codes = self._excg_cd_cache[ticker]
@@ -125,6 +123,7 @@ class KoreaInvestmentBroker:
         # 기본값 세팅 (캐싱 실패 시 최후 방어)
         price_cd = "NAS"
         order_cd = "NASD"
+        dynamic_success = False
 
         try:
             # 512: 나스닥, 513: 뉴욕, 529: 아멕스 (가장 흔한 나스닥부터 찔러봄)
@@ -139,19 +138,23 @@ class KoreaInvestmentBroker:
                     excg_name = str(res['output'].get('ovrs_excg_cd', '')).upper()
                     if "NASD" in excg_name or "NASDAQ" in excg_name:
                         price_cd, order_cd = "NAS", "NASD"
+                        dynamic_success = True
                         break
                     elif "NYSE" in excg_name or "NEW YORK" in excg_name:
                         price_cd, order_cd = "NYS", "NYSE"
+                        dynamic_success = True
                         break
                     elif "AMEX" in excg_name:
                         price_cd, order_cd = "AMS", "AMEX"
+                        dynamic_success = True
                         break
         except Exception as e:
-            print(f"⚠️ [Broker] 거래소 코드 동적 획득 실패 (기본값 NAS/NASD 사용): {ticker} - {e}")
+            print(f"⚠️ [Broker] 거래소 코드 동적 획득 실패: {ticker} - {e}")
 
-        # 수동 핫픽스 (조회 실패 시 최후 보루)
-        if ticker == "SOXL": price_cd, order_cd = "AMS", "AMEX"
-        elif ticker == "TQQQ": price_cd, order_cd = "NAS", "NASD"
+        # 🎯 [V20.2 핫픽스] 동적 조회가 실패하여 여전히 기본값(NAS/NASD)인 경우에만 수동 하드코딩(최후의 보루) 적용
+        if not dynamic_success:
+            if ticker == "SOXL": price_cd, order_cd = "AMS", "AMEX"
+            elif ticker == "TQQQ": price_cd, order_cd = "NAS", "NASD"
 
         self._excg_cd_cache[ticker] = {'PRICE': price_cd, 'ORDER': order_cd}
         return price_cd if target_api == "PRICE" else order_cd
@@ -175,11 +178,6 @@ class KoreaInvestmentBroker:
             cash = math.floor((raw_bp * 0.9945) * 100) / 100.0              
 
         # 🦇 [V19.10 핫픽스] KIS API 보유 종목 조회 시 하드코딩된 NASD를 동적 조회로 변경 (AMEX 종목 누락 방지)
-        # 단, KIS API의 TTTS3012R은 특정 거래소를 넣어야 조회가 되므로, 현재는 보유 종목 조회를 위해 
-        # NASD로 호출한 뒤, 빈 값이 오면 AMEX, NYSE 등을 순차적으로 찔러보는 로직이 가장 안전합니다.
-        # 그러나 기존 코드 구조를 최대한 유지하면서 에러를 방지하기 위해, KIS에서 전체 조회가 가능한
-        # 빈 문자열("") 또는 주요 거래소 코드를 순회하여 조회하도록 수정합니다.
-        
         holdings = {}
         target_excgs = ["NASD", "AMEX", "NYSE"] # 주요 거래소 순회 조회
         
@@ -294,63 +292,7 @@ class KoreaInvestmentBroker:
             
         return 0.0
 
-    def get_bb_lower(self, ticker, current_price=None):
-        est = pytz.timezone('US/Eastern')
-        today_date = datetime.datetime.now(est)
-        today_str = today_date.strftime('%Y-%m-%d')
-        today_kis = today_date.strftime('%Y%m%d')
-        
-        closes_19d = []
-        
-        if ticker in self._bb_19d_cache and self._bb_19d_cache[ticker]['date'] == today_str:
-            closes_19d = self._bb_19d_cache[ticker]['closes']
-        else:
-            try:
-                stock = yf.Ticker(ticker)
-                hist = stock.history(period="30d") 
-                if not hist.empty:
-                    if hist.index.tz is None: hist.index = hist.index.tz_localize('UTC')
-                    hist_est = hist.index.tz_convert('US/Eastern')
-                    
-                    # 🦇 [V19.10 핫픽스] pandas 날짜 비교 에러 수정: 타임존 제거 후 안전하게 Datetime 비교
-                    target_compare_date = pd.to_datetime(today_str).tz_localize(None)
-                    hist_est_no_tz = hist_est.tz_localize(None)
-                    past_hist = hist[hist_est_no_tz < target_compare_date]
-                    
-                    if len(past_hist) >= 19:
-                        closes_19d = past_hist['Close'].tolist()[-19:]
-                        self._bb_19d_cache[ticker] = {'date': today_str, 'closes': closes_19d}
-            except Exception as e:
-                print(f"⚠️ [야후 파이낸스] 19일치 과거 데이터 에러, 한투 API 우회 가동: {e}")
-                
-            if not closes_19d:
-                try:
-                    excg_cd = self._get_exchange_code(ticker, target_api="PRICE")
-                    params = {"AUTH": "", "EXCD": excg_cd, "SYMB": ticker, "GUBN": "0", "BYMD": "", "MODP": "1"}
-                    res = self._call_api("HHDFS76240000", "/uapi/overseas-price/v1/quotations/dailyprice", "GET", params=params)
-                    if res.get('rt_cd') == '0':
-                        output2 = res.get('output2', [])
-                        past_output = [x for x in output2 if x.get('stck_bsop_date', '99999999') < today_kis]
-                        if len(past_output) >= 19:
-                            closes_19d = [float(x['clos']) for x in past_output[:19]]
-                            closes_19d.reverse() 
-                            self._bb_19d_cache[ticker] = {'date': today_str, 'closes': closes_19d}
-                except Exception as e:
-                    print(f"❌ [한투 API] 19일치 과거 데이터 우회 조회 실패: {e}")
-
-        if len(closes_19d) < 19:
-            return 0.0
-
-        target_closes = closes_19d.copy()
-        real_time_p = float(current_price) if current_price and current_price > 0 else self.get_current_price(ticker)
-        target_closes.append(real_time_p)
-        
-        ma20 = sum(target_closes) / 20.0
-        variance = sum([((x - ma20) ** 2) for x in target_closes]) / 19.0
-        std20 = math.sqrt(variance)
-        
-        real_time_bb_lower = float(ma20 - (std20 * 2))
-        return real_time_bb_lower
+    # 🎯 [V20.2 핫픽스] BB 완전 폐기로 인한 무거운 get_bb_lower 함수 통째로 삭제 처리 완료
 
     def get_unfilled_orders(self, ticker):
         excg_cd = self._get_exchange_code(ticker, target_api="ORDER")

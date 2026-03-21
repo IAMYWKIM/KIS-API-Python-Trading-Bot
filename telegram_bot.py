@@ -21,7 +21,7 @@ class TelegramController:
         self.view = TelegramView()
         self.user_states = {} 
         self.admin_id = self.cfg.get_chat_id()
-        self.sync_locks = {} # 🦇 [V19.10] 동시성 충돌(Race Condition) 방어를 위해 asyncio.Lock 객체 저장소로 활용
+        self.sync_locks = {} 
         self.tx_lock = tx_lock or asyncio.Lock()
 
     def _is_admin(self, update: Update):
@@ -135,7 +135,6 @@ class TelegramController:
             status_code, status_text = self._get_market_status()
             
             tickers = self.cfg.get_active_tickers()
-            
             sorted_tickers, allocated_cash, force_turbo_off = self._calculate_budget_allocation(cash, tickers)
             
             ticker_data_list = []
@@ -143,25 +142,18 @@ class TelegramController:
 
             for t in sorted_tickers:
                 h = holdings.get(t, {'qty':0, 'avg':0})
-                
                 curr = await asyncio.to_thread(self.broker.get_current_price, t, is_market_closed=(status_code == "CLOSE"))
                 prev_close = await asyncio.to_thread(self.broker.get_previous_close, t)
                 ma_5day = await asyncio.to_thread(self.broker.get_5day_ma, t)
                 
                 actual_avg = float(h['avg']) if h['avg'] else 0.0
                 
-                # 🎯 [V20.1 핫픽스] 주말(CLOSE)에는 KIS API의 '전일종가'가 목요일 종가에 머물러 있는 현상 방어. 
-                # 금요일 종가(curr)를 다가오는 월요일의 '전일종가'로 삼아 스나이퍼 타겟가를 정확하게 계산.
-                if status_code == "CLOSE" and curr > 0:
-                    safe_prev_close = curr
-                else:
-                    safe_prev_close = prev_close if prev_close else 0.0
+                if status_code == "CLOSE" and curr > 0: safe_prev_close = curr
+                else: safe_prev_close = prev_close if prev_close else 0.0
                 
-                # 🎯 [V20.0] 스나이퍼 V3 (절대 평단가 기준) 타겟가 및 관망 여부 계산
                 sniper_pct = self.cfg.get_sniper_trigger(t)
                 hybrid_target = safe_prev_close * (1 - (sniper_pct / 100.0))
                 
-                # 물타기 룰: 타겟가가 내 평단가보다 싸야만 발동 (아니면 관망 모드로 표시)
                 is_sniper_active = hybrid_target < actual_avg if actual_avg > 0 else True
                 trigger_reason = f"-{sniper_pct}%" if is_sniper_active else "🛑(불타기 금지 관망)"
                 
@@ -209,7 +201,11 @@ class TelegramController:
             res = await self.process_auto_sync(t, chat_id, context, silent_ledger=True)
             if res == "SUCCESS": success_tickers.append(t)
         
-        if success_tickers: await self._display_ledger(success_tickers[0], chat_id, context, message_obj=status_msg)
+        # 🎯 [V20.2 핫픽스] 락 문제를 해결하기 위해 별도의 트랜잭션으로 잔고를 가져와서 뷰어에 던져줌
+        if success_tickers: 
+            async with self.tx_lock:
+                _, holdings = self.broker.get_account_balance()
+            await self._display_ledger(success_tickers[0], chat_id, context, message_obj=status_msg, pre_fetched_holdings=holdings)
         else: await status_msg.edit_text("✅ <b>동기화 완료</b> (표시할 진행 중인 장부가 없거나 에러 대기 중입니다)", parse_mode='HTML')
 
     def _sync_escrow_cash(self, ticker):
@@ -224,15 +220,12 @@ class TelegramController:
         escrow = 0.0
         for r in target_recs:
             amt = r['qty'] * r['price']
-            if r['side'] == 'SELL':
-                escrow += amt
-            elif r['side'] == 'BUY':
-                escrow -= amt
+            if r['side'] == 'SELL': escrow += amt
+            elif r['side'] == 'BUY': escrow -= amt
                 
         self.cfg.set_escrow_cash(ticker, max(0.0, escrow))
 
     async def process_auto_sync(self, ticker, chat_id, context, silent_ledger=False):
-        # 🦇 [V19.10 핫픽스] 동시성 충돌(Race Condition) 완벽 방어: KeyError 선제 방어
         if ticker not in self.sync_locks:
             self.sync_locks[ticker] = asyncio.Lock()
             
@@ -242,15 +235,12 @@ class TelegramController:
         async with self.sync_locks[ticker]:
             async with self.tx_lock:
                 
-                # 🦇 [V19.9] 액면분할/병합 자동 감지 및 백그라운드 소급 적용 엔진
                 last_split_date = self.cfg.get_last_split_date(ticker)
                 split_ratio, split_date = await asyncio.to_thread(self.broker.get_recent_stock_split, ticker, last_split_date)
                 
                 if split_ratio > 0.0 and split_date != "":
-                    # 신규 분할/병합 이벤트가 발견되면 즉시 장부 교정
                     self.cfg.apply_stock_split(ticker, split_ratio)
                     self.cfg.set_last_split_date(ticker, split_date)
-                    
                     split_type = "액면분할" if split_ratio > 1.0 else "액면병합(역분할)"
                     await context.bot.send_message(chat_id, f"✂️ <b>[{ticker}] 야후 파이낸스 {split_type} 자동 감지!</b>\n▫️ 감지된 비율: <b>{split_ratio}배</b> (발생일: {split_date})\n▫️ 봇이 기존 장부의 수량과 평단가를 100% 무인 자동 소급 조정 완료했습니다.", parse_mode='HTML')
                     
@@ -267,9 +257,7 @@ class TelegramController:
                     curr_p = await asyncio.to_thread(self.broker.get_current_price, ticker)
                     if curr_p > 0 and actual_avg > 0:
                         curr_ret = (curr_p - actual_avg) / actual_avg * 100.0
-                        
                         exit_target = rev_state.get("exit_target", 0.0) 
-                        
                         if curr_ret >= exit_target:
                             self.cfg.set_reverse_state(ticker, False, 0, 0.0)
                             self.cfg.clear_escrow_cash(ticker)
@@ -286,15 +274,11 @@ class TelegramController:
                         kst = pytz.timezone('Asia/Seoul')
                         today_str = datetime.datetime.now(kst).strftime('%Y-%m-%d')
                         prev_c = await asyncio.to_thread(self.broker.get_previous_close, ticker)
-                        
                         new_hist, added_seed = self.cfg.archive_graduation(ticker, today_str, prev_c)
-                        
                         msg = f"🎉 <b>[{ticker} 졸업 확인!]</b>\n장부를 명예의 전당에 저장하고 새 사이클을 준비합니다."
-                        if added_seed > 0:
-                            msg += f"\n💸 <b>자동 복리 +${added_seed:,.0f}</b> 이 다음 운용 시드에 완벽하게 추가되었습니다!"
+                        if added_seed > 0: msg += f"\n💸 <b>자동 복리 +${added_seed:,.0f}</b> 이 다음 운용 시드에 완벽하게 추가되었습니다!"
                         await context.bot.send_message(chat_id, msg, parse_mode='HTML')
                     self._sync_escrow_cash(ticker) 
-                    if not silent_ledger: await self._display_ledger(ticker, chat_id, context)
                     return "SUCCESS"
 
                 kst = pytz.timezone('Asia/Seoul')
@@ -316,24 +300,19 @@ class TelegramController:
 
                 target_execs = self.broker.get_execution_history(ticker, target_kis_str, target_kis_str)
                 kis_target_trades = len(target_execs)
-                
                 ledger_target_trades = len([r for r in recs if r['date'] == target_ledger_str and 'INIT' not in str(r.get('exec_id', ''))])
                 
-                # 🦇 [V19.10] 도달 불가 데드코드(Dead Code) 제거로 무결성 로직 선명도 강화
                 if diff == 0 and price_diff < 0.01:
                     micro_mismatch = False
                 else:
                     has_init_today = any('INIT' in str(r.get('exec_id', '')) for r in recs if r['date'] == target_ledger_str)
-                    if has_init_today:
-                        micro_mismatch = False
-                    else:
-                        micro_mismatch = (kis_target_trades != ledger_target_trades)
+                    if has_init_today: micro_mismatch = False
+                    else: micro_mismatch = (kis_target_trades != ledger_target_trades)
 
                 if diff == 0 and price_diff >= 0.01 and not micro_mismatch:
                     self.cfg.calibrate_avg_price(ticker, actual_avg)
                     await context.bot.send_message(chat_id, f"🔧 <b>[{ticker}] 장부 평단가 미세 오차({price_diff:.4f}) 교정 완료!</b> (제네시스 생략)", parse_mode='HTML')
                     self._sync_escrow_cash(ticker)
-                    if not silent_ledger: await self._display_ledger(ticker, chat_id, context)
                     return "SUCCESS"
 
                 if diff != 0 or micro_mismatch:
@@ -356,27 +335,20 @@ class TelegramController:
                                 new_avg = ((temp_sim_qty * temp_sim_avg) + (exec_qty * exec_price)) / (temp_sim_qty + exec_qty) if (temp_sim_qty + exec_qty) > 0 else exec_price
                                 temp_sim_qty += exec_qty
                                 temp_sim_avg = new_avg
-                            else: 
-                                temp_sim_qty -= exec_qty
+                            else: temp_sim_qty -= exec_qty
                                 
                             new_target_records.append({
-                                'date': target_ledger_str,
-                                'side': "BUY" if side_cd == "02" else "SELL",
-                                'qty': exec_qty,
-                                'price': exec_price,
-                                'avg_price': temp_sim_avg
+                                'date': target_ledger_str, 'side': "BUY" if side_cd == "02" else "SELL",
+                                'qty': exec_qty, 'price': exec_price, 'avg_price': temp_sim_avg
                             })
                             
                     if temp_sim_qty == actual_qty:
                         fast_track_success = True
                         if new_target_records:
-                            for r in new_target_records:
-                                r['avg_price'] = actual_avg
-                        elif temp_recs:
-                            temp_recs[-1]['avg_price'] = actual_avg
+                            for r in new_target_records: r['avg_price'] = actual_avg
+                        elif temp_recs: temp_recs[-1]['avg_price'] = actual_avg
                         
-                    if fast_track_success:
-                        self.cfg.overwrite_incremental_ledger(ticker, temp_recs, new_target_records)
+                    if fast_track_success: self.cfg.overwrite_incremental_ledger(ticker, temp_recs, new_target_records)
                     else:
                         reason = "당일 거래지문 불일치" if micro_mismatch else "수량/평단가 불일치"
                         status_msg = await context.bot.send_message(chat_id, f"🔄 <b>[{ticker}] 증분 검증 실패({reason}). KIS 역산 엔진 가동 (Full Rebuild)...</b>", parse_mode='HTML')
@@ -394,11 +366,10 @@ class TelegramController:
                             await status_msg.edit_text(f"⚠️ [{ticker}] 역산 중 통신 오류가 발생했습니다.", parse_mode='HTML')
 
                 self._sync_escrow_cash(ticker)
-
-                if not silent_ledger: await self._display_ledger(ticker, chat_id, context)
                 return "SUCCESS"
 
-    async def _display_ledger(self, ticker, chat_id, context, query=None, message_obj=None):
+    # 🎯 [V20.2 핫픽스] 락 외부에서 잔고를 받아오도록 pre_fetched_holdings 파라미터 추가
+    async def _display_ledger(self, ticker, chat_id, context, query=None, message_obj=None, pre_fetched_holdings=None):
         recs = [r for r in self.cfg.get_ledger() if r['ticker'] == ticker]
         
         if not recs:
@@ -411,24 +382,20 @@ class TelegramController:
             
             for rec in recs:
                 parts = rec['date'].split('-')
-                if len(parts) == 3:
-                    date_short = f"{parts[1]}.{parts[2]}"
-                else:
-                    date_short = rec['date']
+                if len(parts) == 3: date_short = f"{parts[1]}.{parts[2]}"
+                else: date_short = rec['date']
                     
                 side_str = "🔴매수" if rec['side'] == 'BUY' else "🔵매도"
                 key = (date_short, side_str)
                 
-                if key not in agg_dict:
-                    agg_dict[key] = {'qty': 0, 'amt': 0.0}
+                if key not in agg_dict: agg_dict[key] = {'qty': 0, 'amt': 0.0}
                 agg_dict[key]['qty'] += rec['qty']
                 agg_dict[key]['amt'] += (rec['qty'] * rec['price'])
                 
                 if rec['side'] == 'BUY': total_buy += (rec['qty'] * rec['price'])
                 elif rec['side'] == 'SELL': total_sell += (rec['qty'] * rec['price'])
             
-            report = f"📜 <b>[ {ticker} 일자별 매매 (통합 변동분) (총 {len(agg_dict)}일) ]</b>\n\n"
-            report += "<code>No. 일자   구분  평균단가  수량\n"
+            report = f"📜 <b>[ {ticker} 일자별 매매 (통합 변동분) (총 {len(agg_dict)}일) ]</b>\n\n<code>No. 일자   구분  평균단가  수량\n"
             report += "-"*30 + "\n"
             
             idx = 1
@@ -440,9 +407,9 @@ class TelegramController:
                 
             report += "-"*30 + "</code>\n"
             
-            _, holdings = self.broker.get_account_balance()
-            actual_qty = int(holdings.get(ticker, {'qty': 0})['qty']) if holdings else 0
-            actual_avg = float(holdings.get(ticker, {'avg': 0})['avg']) if holdings else 0.0
+            # 🎯 여기서 락 밖에서 안전하게 받아온 잔고(pre_fetched_holdings)를 사용
+            actual_qty = int(pre_fetched_holdings.get(ticker, {'qty': 0})['qty']) if pre_fetched_holdings else 0
+            actual_avg = float(pre_fetched_holdings.get(ticker, {'avg': 0})['avg']) if pre_fetched_holdings else 0.0
             
             split = self.cfg.get_split_count(ticker)
             t_val, _ = self.cfg.get_absolute_t_val(ticker, actual_qty, actual_avg)
@@ -484,7 +451,8 @@ class TelegramController:
 
     async def cmd_reset(self, update, context):
         if not self._is_admin(update): return
-        msg, markup = self.view.get_reset_menu()
+        active_tickers = self.cfg.get_active_tickers()
+        msg, markup = self.view.get_reset_menu(active_tickers) # 🎯 동적 티커 전달
         await update.message.reply_text(msg, reply_markup=markup, parse_mode='HTML')
 
     async def cmd_seed(self, update, context):
@@ -572,7 +540,8 @@ class TelegramController:
 
         elif action == "RESET":
             if sub == "MENU":
-                msg, markup = self.view.get_reset_menu()
+                active_tickers = self.cfg.get_active_tickers()
+                msg, markup = self.view.get_reset_menu(active_tickers) # 🎯 동적 티커 전달
                 await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
             elif sub == "LOCK": 
                 ticker = data[2]
@@ -592,18 +561,22 @@ class TelegramController:
 
         elif action == "REC":
             if sub == "VIEW": 
-                await self._display_ledger(data[2], update.effective_chat.id, context, query=query)
+                async with self.tx_lock:
+                    _, holdings = self.broker.get_account_balance()
+                await self._display_ledger(data[2], update.effective_chat.id, context, query=query, pre_fetched_holdings=holdings)
             elif sub == "SYNC": 
                 ticker = data[2]
                 
-                # 🦇 [V19.10 핫픽스] 여기도 방어 코드 추가 (장부 동기화 버튼 연속 클릭 시 방어)
                 if ticker not in self.sync_locks:
                     self.sync_locks[ticker] = asyncio.Lock()
                     
                 if not self.sync_locks[ticker].locked():
                     await query.edit_message_text(f"🔄 <b>[{ticker}] 잔고 기반 대시보드 업데이트 중...</b>", parse_mode='HTML')
                     res = await self.process_auto_sync(ticker, update.effective_chat.id, context, silent_ledger=True)
-                    if res == "SUCCESS": await self._display_ledger(ticker, update.effective_chat.id, context, message_obj=query.message)
+                    if res == "SUCCESS": 
+                        async with self.tx_lock:
+                            _, holdings = self.broker.get_account_balance()
+                        await self._display_ledger(ticker, update.effective_chat.id, context, message_obj=query.message, pre_fetched_holdings=holdings)
 
         elif action == "HIST":
             if sub == "VIEW":
@@ -647,7 +620,6 @@ class TelegramController:
                     res = self.broker.send_order(t, o['side'], o['qty'], o['price'], o['type'])
                     is_success = res.get('rt_cd') == '0'
                     if not is_success: all_success = False
-                    # 🦇 [V19.10] 구버전 파이썬 f-string 중첩 따옴표 SyntaxError 크래시 방어 완벽 적용
                     err_msg = res.get('msg1', '오류')
                     status_icon = '✅' if is_success else f'❌({err_msg})'
                     msg += f"└ 1차 필수: {o['desc']} {o['qty']}주: {status_icon}\n"
@@ -742,7 +714,6 @@ class TelegramController:
                 ticker = parts[2]
                 self.cfg.apply_stock_split(ticker, val)
                 
-                # 🦇 [V19.9] 수동 보정 시에도 꼬임 방지를 위해 오늘 날짜를 기억 장소에 강제 기록
                 est = pytz.timezone('US/Eastern')
                 today_str = datetime.datetime.now(est).strftime('%Y-%m-%d')
                 self.cfg.set_last_split_date(ticker, today_str)
@@ -750,7 +721,8 @@ class TelegramController:
                 await update.message.reply_text(f"✅ [{ticker}] 수동 액면 보정 완료\n▫️ 모든 장부 기록이 {val}배 비율로 정밀하게 소급 조정되었습니다.")
                 
             elif state.startswith("CONF_SNIPER"):
-                if val < 0: return await update.message.reply_text("❌ 오류: 스나이퍼 타점은 0 이상이어야 합니다.")
+                # 🎯 [V20.2 핫픽스] 스나이퍼 타점 0% 입력 방어막 (0보다 커야 함)
+                if val <= 0: return await update.message.reply_text("❌ 오류: 스나이퍼 타점은 0보다 커야 합니다. (물타기 금지 원칙)")
                 ticker = parts[2]
                 self.cfg.set_sniper_trigger(ticker, val)
                 await update.message.reply_text(f"✅ [{ticker}] 스나이퍼 타점이 -{val}% 로 변경되었습니다.")
