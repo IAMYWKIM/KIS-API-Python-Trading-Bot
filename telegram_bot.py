@@ -1,3 +1,7 @@
+# ==========================================================
+# [telegram_bot.py]
+# ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
+# ==========================================================
 import logging
 import datetime
 import pytz
@@ -233,7 +237,7 @@ class TelegramController:
         self.cfg.set_escrow_cash(ticker, max(0.0, escrow))
 
     async def process_auto_sync(self, ticker, chat_id, context, silent_ledger=False):
-        # 🦇 [V19.10] 동시성 충돌(Race Condition) 완벽 방어: asyncio.Lock 사용
+        # 🦇 [V19.10 핫픽스] 동시성 충돌(Race Condition) 완벽 방어: KeyError 선제 방어
         if ticker not in self.sync_locks:
             self.sync_locks[ticker] = asyncio.Lock()
             
@@ -596,6 +600,11 @@ class TelegramController:
                 await self._display_ledger(data[2], update.effective_chat.id, context, query=query)
             elif sub == "SYNC": 
                 ticker = data[2]
+                
+                # 🦇 [V19.10 핫픽스] 여기도 방어 코드 추가 (장부 동기화 버튼 연속 클릭 시 방어)
+                if ticker not in self.sync_locks:
+                    self.sync_locks[ticker] = asyncio.Lock()
+                    
                 if not self.sync_locks[ticker].locked():
                     await query.edit_message_text(f"🔄 <b>[{ticker}] 잔고 기반 대시보드 업데이트 중...</b>", parse_mode='HTML')
                     res = await self.process_auto_sync(ticker, update.effective_chat.id, context, silent_ledger=True)

@@ -1,3 +1,7 @@
+# ==========================================================
+# [main.py]
+# ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
+# ==========================================================
 import os
 import logging
 import datetime
@@ -612,7 +616,8 @@ def main():
         kst = pytz.timezone('Asia/Seoul')
         
         for tt in [datetime.time(7,0,tzinfo=kst), datetime.time(11,0,tzinfo=kst), datetime.time(16,30,tzinfo=kst), datetime.time(22,0,tzinfo=kst)]:
-            jq.run_daily(scheduled_token_check, time=tt, days=tuple(range(7)), data=app_data)
+            # 🦇 [V19.10 핫픽스] 토큰 갱신 스케줄러에도 chat_id 파라미터 추가
+            jq.run_daily(scheduled_token_check, time=tt, days=tuple(range(7)), chat_id=cfg.get_chat_id(), data=app_data)
         
         jq.run_daily(scheduled_auto_sync_summer, time=datetime.time(8, 30, tzinfo=kst), days=tuple(range(7)), chat_id=cfg.get_chat_id(), data=app_data)
         jq.run_daily(scheduled_auto_sync_winter, time=datetime.time(9, 30, tzinfo=kst), days=tuple(range(7)), chat_id=cfg.get_chat_id(), data=app_data)

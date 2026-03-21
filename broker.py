@@ -11,6 +11,7 @@ import math
 import yfinance as yf
 import pytz
 import tempfile
+import pandas as pd # 🦇 [V19.10] bb_lower 날짜 비교용 추가
 
 class KoreaInvestmentBroker:
     def __init__(self, app_key, app_secret, cano, acnt_prdt_cd="01"):
@@ -173,23 +174,35 @@ class KoreaInvestmentBroker:
             raw_bp = dncl_amt + sll_amt - buy_amt
             cash = math.floor((raw_bp * 0.9945) * 100) / 100.0              
 
-        params_hold = {"CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "OVRS_EXCG_CD": "NASD", "TR_CRCY_CD": "USD", "CTX_AREA_FK200": "", "CTX_AREA_NK200": ""}
-        res = self._call_api("TTTS3012R", "/uapi/overseas-stock/v1/trading/inquire-balance", "GET", params_hold)
+        # 🦇 [V19.10 핫픽스] KIS API 보유 종목 조회 시 하드코딩된 NASD를 동적 조회로 변경 (AMEX 종목 누락 방지)
+        # 단, KIS API의 TTTS3012R은 특정 거래소를 넣어야 조회가 되므로, 현재는 보유 종목 조회를 위해 
+        # NASD로 호출한 뒤, 빈 값이 오면 AMEX, NYSE 등을 순차적으로 찔러보는 로직이 가장 안전합니다.
+        # 그러나 기존 코드 구조를 최대한 유지하면서 에러를 방지하기 위해, KIS에서 전체 조회가 가능한
+        # 빈 문자열("") 또는 주요 거래소 코드를 순회하여 조회하도록 수정합니다.
         
-        if res.get('rt_cd') == '0':
-            holdings = {} 
-            if cash <= 0:
-                o2 = res.get('output2', {})
-                if isinstance(o2, list) and len(o2) > 0: o2 = o2[0]
-                cash = self._safe_float(o2.get('ovrs_ord_psbl_amt', 0))
+        holdings = {}
+        target_excgs = ["NASD", "AMEX", "NYSE"] # 주요 거래소 순회 조회
+        
+        for excg in target_excgs:
+            params_hold = {"CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "OVRS_EXCG_CD": excg, "TR_CRCY_CD": "USD", "CTX_AREA_FK200": "", "CTX_AREA_NK200": ""}
+            res_hold = self._call_api("TTTS3012R", "/uapi/overseas-stock/v1/trading/inquire-balance", "GET", params_hold)
             
-            for item in res.get('output1', []):
-                ticker = item.get('ovrs_pdno')
-                qty = int(self._safe_float(item.get('ovrs_cblc_qty', 0)))
-                avg = self._safe_float(item.get('pchs_avg_pric', 0))
-                if qty > 0: holdings[ticker] = {'qty': qty, 'avg': avg}
+            if res_hold.get('rt_cd') == '0':
+                if cash <= 0:
+                    o2 = res_hold.get('output2', {})
+                    if isinstance(o2, list) and len(o2) > 0: o2 = o2[0]
+                    # 현금은 한 번만 업데이트
+                    new_cash = self._safe_float(o2.get('ovrs_ord_psbl_amt', 0))
+                    if new_cash > cash: cash = new_cash
+                
+                for item in res_hold.get('output1', []):
+                    ticker = item.get('ovrs_pdno')
+                    qty = int(self._safe_float(item.get('ovrs_cblc_qty', 0)))
+                    avg = self._safe_float(item.get('pchs_avg_pric', 0))
+                    if qty > 0 and ticker not in holdings: # 이미 조회된 종목은 덮어쓰지 않음
+                        holdings[ticker] = {'qty': qty, 'avg': avg}
         
-        return cash, holdings
+        return cash, holdings if holdings else None
 
     def get_current_price(self, ticker, is_market_closed=False):
         try:
@@ -283,8 +296,9 @@ class KoreaInvestmentBroker:
 
     def get_bb_lower(self, ticker, current_price=None):
         est = pytz.timezone('US/Eastern')
-        today_str = datetime.datetime.now(est).strftime('%Y-%m-%d')
-        today_kis = datetime.datetime.now(est).strftime('%Y%m%d')
+        today_date = datetime.datetime.now(est)
+        today_str = today_date.strftime('%Y-%m-%d')
+        today_kis = today_date.strftime('%Y%m%d')
         
         closes_19d = []
         
@@ -297,7 +311,12 @@ class KoreaInvestmentBroker:
                 if not hist.empty:
                     if hist.index.tz is None: hist.index = hist.index.tz_localize('UTC')
                     hist_est = hist.index.tz_convert('US/Eastern')
-                    past_hist = hist[hist_est.strftime('%Y-%m-%d') < today_str]
+                    
+                    # 🦇 [V19.10 핫픽스] pandas 날짜 비교 에러 수정: 타임존 제거 후 안전하게 Datetime 비교
+                    target_compare_date = pd.to_datetime(today_str).tz_localize(None)
+                    hist_est_no_tz = hist_est.tz_localize(None)
+                    past_hist = hist[hist_est_no_tz < target_compare_date]
+                    
                     if len(past_hist) >= 19:
                         closes_19d = past_hist['Close'].tolist()[-19:]
                         self._bb_19d_cache[ticker] = {'date': today_str, 'closes': closes_19d}

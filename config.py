@@ -1,3 +1,7 @@
+# ==========================================================
+# [config.py]
+# ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
+# ==========================================================
 import json
 import os
 import datetime
@@ -17,12 +21,6 @@ try:
     from version_archive import VERSION_ARCHIVE
 except ImportError:
     VERSION_ARCHIVE = []
-
-# 🦇 [V19.10] 버전 추가 시 중복 방어
-_NEW_VERSION = "V19.10 [2026.03.21] 시스템 방탄 아키텍처 고도화 및 스나이퍼 로직 개조: JSON 원자적 쓰기(Atomic Write) 도입으로 비정상 종료 시 데이터 손실 원천 차단, 정규장 및 스나이퍼 예산 배분 로직 일치화, 구버전 파이썬 f-string 크래시 방어, 동시성 락(Race Condition) 해결, 타임존 경계 오류 수정, 거래소 하드코딩 제거. 스나이퍼 절대 기준을 '평단가'로 변경하여 공격적인 시장 폭락 줍줍 기회 창출 (수정: config, main, telegram_bot, broker, strategy)"
-
-if _NEW_VERSION not in VERSION_HISTORY:
-    VERSION_HISTORY.append(_NEW_VERSION)
 
 class ConfigManager:
     def __init__(self):
@@ -66,7 +64,7 @@ class ConfigManager:
                 return default if default is not None else {}
         return default if default is not None else {}
 
-    # 🦇 [V19.10] JSON 원자적 쓰기(Atomic Write) 도입: 정전 등 비정상 종료 시 파일 파괴(0 Byte) 원천 차단
+    # 🦇 [V19.10 핫픽스] JSON 원자적 쓰기(Atomic Write)에 fsync 추가: 정전 시 빈 파일 방지 완벽 대응
     def _save_json(self, filename, data):
         try:
             dir_name = os.path.dirname(filename)
@@ -76,6 +74,8 @@ class ConfigManager:
             fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+                f.flush()         # 버퍼에 있는 데이터를 OS로 밀어냄
+                os.fsync(fd)      # OS가 하드디스크에 물리적으로 기록할 때까지 대기
                 
             os.replace(temp_path, filename)
         except Exception as e:
@@ -95,6 +95,7 @@ class ConfigManager:
                 print(f"⚠️ [Config] 파일 로드 에러 ({filename}): {e}")
         return default
 
+    # 🦇 [V19.10 핫픽스] 일반 텍스트 파일 저장에도 fsync 적용 (원자적 쓰기 완성)
     def _save_file(self, filename, content):
         try:
             dir_name = os.path.dirname(filename)
@@ -104,6 +105,8 @@ class ConfigManager:
             fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 f.write(str(content))
+                f.flush()
+                os.fsync(fd)
             os.replace(temp_path, filename)
         except Exception as e:
             print(f"❌ [Config] 텍스트 파일 저장 에러 ({filename}): {e}")
@@ -257,18 +260,22 @@ class ConfigManager:
                 total_qty -= r['qty']
                 total_sold += (r['price'] * r['qty'])
         
+        # 🦇 [V19.10 핫픽스] 비정상 장부 방어: 수량이 0이거나 음수로 꼬였을 때 평단가를 무조건 0으로 교정
         total_qty = max(0, int(total_qty))
         invested_up = math.ceil(total_invested * 100) / 100.0
         sold_up = math.ceil(total_sold * 100) / 100.0
         
-        avg_price = 0.0
-        if total_qty > 0 and target_recs:
-            avg_price = float(target_recs[-1].get('avg_price', 0.0))
-            if avg_price == 0.0:
-                buy_sum = sum(r['price']*r['qty'] for r in target_recs if r['side']=='BUY')
-                buy_qty = sum(r['qty'] for r in target_recs if r['side']=='BUY')
-                if buy_qty > 0:
-                    avg_price = buy_sum / buy_qty
+        if total_qty == 0:
+            avg_price = 0.0
+        else:
+            avg_price = 0.0
+            if target_recs:
+                avg_price = float(target_recs[-1].get('avg_price', 0.0))
+                if avg_price == 0.0:
+                    buy_sum = sum(r['price']*r['qty'] for r in target_recs if r['side']=='BUY')
+                    buy_qty = sum(r['qty'] for r in target_recs if r['side']=='BUY')
+                    if buy_qty > 0:
+                        avg_price = buy_sum / buy_qty
         
         return total_qty, avg_price, invested_up, sold_up
 

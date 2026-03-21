@@ -1,3 +1,7 @@
+# ==========================================================
+# [strategy.py]
+# ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
+# ==========================================================
 import math
 from datetime import datetime, timedelta
 
@@ -89,7 +93,8 @@ class InfiniteStrategy:
             else: star_price = round(avg_price, 2)
 
             escrow_cash = self.cfg.get_escrow_cash(ticker)
-            one_portion_amt = (escrow_cash / 4.0) if escrow_cash > 0 else 0.0
+            # 🦇 [V19.10 핫픽스] 에스크로가 0일 때 리버스 무력화 방지 (기본 예산 할당)
+            one_portion_amt = (escrow_cash / 4.0) if escrow_cash > 0 else base_portion
         else:
             star_price = self._ceil(avg_price * (1 + star_ratio)) if avg_price > 0 else 0
             
