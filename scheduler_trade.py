@@ -1,6 +1,9 @@
 # ==========================================================
-# [scheduler_trade.py] - Part 1/2 (상반부)
-# ⚠️ 수술 내역: NoneType 파싱 에러(TypeError) 방어용 Safe Casting (or 0) 주입
+# [scheduler_trade.py]
+# ⚠️ 수술 내역: 
+# 1. V-REV 잭팟 잔량 강제 청산 (Sweep Finisher) 탑재 완료
+# 2. V_VWAP 0주 새출발 실종 버그 패치 (평단가 15% 할증)
+# 3. 들여쓰기(Indentation) 완벽 교정
 # ==========================================================
 import os
 import logging
@@ -106,7 +109,6 @@ async def scheduled_sniper_monitor(context):
                 
                 h = holdings.get(t, {'qty': 0, 'avg': 0})
                 
-                # 💡 [핵심 수술] KIS API 장애로 None 반환 시 int/float 변환 에러(TypeError) 원천 차단
                 qty = int(float(h.get('qty') or 0))
                 avg_price = float(h.get('avg') or 0.0)
                 if qty == 0: continue
@@ -366,10 +368,6 @@ async def scheduled_vwap_init_and_cancel(context):
         await asyncio.wait_for(_do_init(), timeout=45.0)
     except Exception as e:
         logging.error(f"🚨 VWAP Fail-Safe 초기화 에러: {e}")
-# ==========================================================
-# [scheduler_trade.py] - Part 2/2 (하반부 전체)
-# ⚠️ 수술 내역: NoneType 파싱 에러(TypeError) 원천 차단 (Safe Casting 적용)
-# ==========================================================
 
 # ==========================================================
 # 3. ⏱️ 1분봉 정밀 타격 (VWAP 슬라이싱)
@@ -425,6 +423,48 @@ async def scheduled_vwap_trade(context):
                     prev_c = await asyncio.to_thread(broker.get_previous_close, t)
                     if curr_p <= 0 or prev_c <= 0: continue
                     
+                    # ==========================================================
+                    # 🌪️ [V-REV 잭팟 피니셔] 장 마감 1~2분 전(58~59분) 전량 익절 강제 밀어넣기
+                    # ==========================================================
+                    q_data = queue_ledger.get_queue(t)
+                    total_q = sum(item.get("qty", 0) for item in q_data)
+                    avg_price = (sum(item.get("qty", 0) * item.get("price", 0.0) for item in q_data) / total_q) if total_q > 0 else 0.0
+                    jackpot_trigger = avg_price * 1.010
+                    
+                    if now_est.minute >= 58 and total_q > 0 and curr_p >= jackpot_trigger:
+                        if not vwap_cache.get(f"REV_{t}_sweep_finished"):
+                            vwap_cache[f"REV_{t}_sweep_finished"] = True
+                            
+                            await asyncio.to_thread(broker.cancel_all_orders_safe, t, "SELL")
+                            await asyncio.sleep(0.5)
+                            
+                            bid_price = await asyncio.to_thread(broker.get_bid_price, t)
+                            exec_price = bid_price if bid_price > 0 else curr_p
+                            
+                            res = broker.send_order(t, "SELL", total_q, exec_price, "LIMIT")
+                            odno = res.get('odno', '')
+                            
+                            if res.get('rt_cd') == '0' and odno:
+                                msg = f"🌪️ <b>[{t}] 잭팟 잔량 강제 청산 (Sweep Finisher) 발동!</b>\n"
+                                msg += f"▫️ 장 마감을 2분 앞두고 잭팟 커트라인({jackpot_trigger:.2f}) 돌파를 확인했습니다.\n"
+                                msg += f"▫️ 미체결 잔량 <b>{total_q}주</b>를 시장 매수호가(${exec_price:.2f})로 100% 폭격하여 사이클을 완벽하게 강제 종료합니다! 🏆"
+                                await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
+                                
+                                ccld_qty = 0
+                                for _ in range(4):
+                                    await asyncio.sleep(2.0)
+                                    execs = await asyncio.to_thread(broker.get_execution_history, t, today_str, today_str)
+                                    my_execs = [ex for ex in execs if ex.get('odno') == odno]
+                                    if my_execs:
+                                        ccld_qty = sum(int(float(ex.get('ft_ccld_qty') or 0)) for ex in my_execs)
+                                        if ccld_qty >= total_q: break
+                                        
+                                if ccld_qty > 0:
+                                    strategy_rev.record_execution(t, "SELL", ccld_qty, exec_price)
+                                    queue_ledger.pop_lots(t, ccld_qty)
+                        continue 
+                    # ==========================================================
+                    
                     try:
                         df_1min = await asyncio.to_thread(broker.get_1min_candles_df, t)
                         vwap_status = strategy.analyze_vwap_dominance(df_1min)
@@ -456,7 +496,6 @@ async def scheduled_vwap_trade(context):
                         continue
 
                     rev_daily_budget = cfg.get_seed(t) * 0.15
-                    q_data = queue_ledger.get_queue(t)
                     
                     rev_plan = strategy_rev.get_dynamic_plan(
                         ticker=t, curr_p=curr_p, prev_c=prev_c, 
@@ -502,14 +541,12 @@ async def scheduled_vwap_trade(context):
                                 unfilled_check = await asyncio.to_thread(broker.get_unfilled_orders_detail, t)
                                 my_order = next((ox for ox in unfilled_check if ox.get('odno') == odno), None)
                                 if my_order:
-                                    # 💡 [핵심 수술] None 방어
                                     ccld_qty = int(float(my_order.get('tot_ccld_qty') or 0))
                                     break
                                     
                                 execs = await asyncio.to_thread(broker.get_execution_history, t, today_str, today_str)
                                 my_execs = [ex for ex in execs if ex.get('odno') == odno]
                                 if my_execs:
-                                    # 💡 [핵심 수술] None 방어
                                     ccld_qty = sum(int(float(ex.get('ft_ccld_qty') or 0)) for ex in my_execs)
                                     if ccld_qty >= slice_qty: break
                                     
@@ -534,9 +571,11 @@ async def scheduled_vwap_trade(context):
                     if is_rev: continue
                         
                     h = holdings.get(t, {'qty': 0, 'avg': 0})
-                    # 💡 [핵심 수술] 보유 잔고 파싱 시 None 에러 완벽 차단
-                    actual_avg = float(h.get('avg') or 0.0)
                     actual_qty = int(float(h.get('qty') or 0))
+                    
+                    # 💡 [긴급 수술] 0주(새출발)일 경우 평단가($0.00) 방어벽을 해제하기 위해 강제로 전일종가의 15% 할증 적용
+                    prev_c_for_fix = await asyncio.to_thread(broker.get_previous_close, t)
+                    actual_avg = (prev_c_for_fix * 1.15) if actual_qty == 0 else float(h.get('avg') or 0.0)
                     
                     curr_p = await asyncio.to_thread(broker.get_current_price, t)
                     prev_c = await asyncio.to_thread(broker.get_previous_close, t)
@@ -652,14 +691,12 @@ async def scheduled_vwap_trade(context):
                                     unfilled_check = await asyncio.to_thread(broker.get_unfilled_orders_detail, t)
                                     my_order = next((ox for ox in unfilled_check if ox.get('odno') == odno), None)
                                     if my_order:
-                                        # 💡 [핵심 수술] None 방어
                                         ccld_qty = int(float(my_order.get('tot_ccld_qty') or 0))
                                         break
                                         
                                     execs = await asyncio.to_thread(broker.get_execution_history, t, today_str, today_str)
                                     my_execs = [ex for ex in execs if ex.get('odno') == odno]
                                     if my_execs:
-                                        # 💡 [핵심 수술] None 방어
                                         ccld_qty = sum(int(float(ex.get('ft_ccld_qty') or 0)) for ex in my_execs)
                                         if ccld_qty >= valid_buy_qty:
                                             break
@@ -700,14 +737,12 @@ async def scheduled_vwap_trade(context):
                                             unfilled_check = await asyncio.to_thread(broker.get_unfilled_orders_detail, t)
                                             my_order = next((ox for ox in unfilled_check if ox.get('odno') == odno), None)
                                             if my_order:
-                                                # 💡 [핵심 수술] None 방어
                                                 ccld_qty = int(float(my_order.get('tot_ccld_qty') or 0))
                                                 break
                                                 
                                             execs = await asyncio.to_thread(broker.get_execution_history, t, today_str, today_str)
                                             my_execs = [ex for ex in execs if ex.get('odno') == odno]
                                             if my_execs:
-                                                # 💡 [핵심 수술] None 방어
                                                 ccld_qty = sum(int(float(ex.get('ft_ccld_qty') or 0)) for ex in my_execs)
                                                 if ccld_qty >= o['qty']:
                                                     break
@@ -856,7 +891,6 @@ async def scheduled_regular_trade(context):
                 
                 ma_5day = await asyncio.to_thread(broker.get_5day_ma, t)
                 
-                # 💡 [핵심 수술] NoneType 방어를 위한 안전한 float/int 변환 적용
                 safe_avg = float(h.get('avg') or 0.0)
                 safe_qty = int(float(h.get('qty') or 0))
                 
