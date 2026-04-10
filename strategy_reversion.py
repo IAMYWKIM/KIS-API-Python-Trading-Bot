@@ -1,10 +1,10 @@
 # ==========================================================
-# [strategy_reversion.py] - 🌟 앵커 절대 원칙(전일 종가) 적용 완료
+# [strategy_reversion.py]
 # ⚠️ V-REV 하이브리드 엔진 전용 수학적 타격 모듈
-# 💡 모든 1층 매도(Pop1) 타점을 전일 종가(prev_c) 기반으로 절대 고정
 # 💡 5년 백테스트 기반 VWAP 유동성 정밀 가중치(U_CURVE_WEIGHTS) 적용 완료
-# 💡 [V24.04 패치] 0주 새출발 시 타점 디커플링 (Buy1 15% 할증 / Buy2 2.5% 하락 딥매수)
-# 💡 [V24.05 패치] 매도 1배수(15%) 상한선(Cap) 전면 철거. 타점 도달 지층 100% 전량 익절.
+# 💡 [V24.16 팩트 동기화] 0주 새출발 디커플링 타점 (Buy1: 0.999, Buy2: /0.935)
+# 💡 [V24.16 팩트 동기화] 하락장 방어 매수 Buy2 타점 (0.9725) 교정
+# 💡 [V24.16 팩트 동기화] 1층 전량 익절 타점 고유 매수가 기반(layer_price * 1.006) 원복
 # ==========================================================
 import math
 
@@ -45,12 +45,12 @@ class ReversionStrategy:
         if total_q == 0:
             side = "BUY"
             # 💡 [핵심 수술] 0주 보유 새출발 시 타점 분할 (디커플링) 적용
-            p1_trigger = round(prev_c * 1.15, 2)
-            p2_trigger = round(prev_c * 0.975, 2)
+            p1_trigger = round(prev_c * 0.999, 2)
+            p2_trigger = round(prev_c / 0.935, 2)
         else:
             side = "SELL" if curr_p > prev_c else "BUY"
             p1_trigger = round(prev_c * 0.995, 2)
-            p2_trigger = round(prev_c * 0.975, 2)
+            p2_trigger = round(prev_c * 0.9725, 2)
 
         is_strong_up = vwap_status.get('is_strong_up', False)
         is_strong_down = vwap_status.get('is_strong_down', False)
@@ -104,9 +104,10 @@ class ReversionStrategy:
                         grp_qty = sum(item.get('qty', 0) for item in lots_for_date)
                         if grp_qty == 0: continue
                         
-                        # 💡 [핵심 수술] 예외 룰 철거 완료. 1층(i==0)은 무조건 전일 종가(prev_c) 앵커 적용
+                        # 💡 [핵심 수술] 1층(i==0)은 고유 매수가(layer_price) 앵커 적용
                         if i == 0:
-                            trigger = round(prev_c * 1.006, 2)
+                            layer_price = sum(item.get('qty', 0) * item.get('price', 0.0) for item in lots_for_date) / grp_qty if grp_qty > 0 else prev_c
+                            trigger = round(layer_price * 1.006, 2)
                         else:
                             trigger = round(avg_price * 1.005, 2)
                             
@@ -115,8 +116,6 @@ class ReversionStrategy:
                             
                         target_sell_qty += grp_qty
 
-                    # 💡 [핵심 수술] 1배수(15%) 매도 상한선(Cap) 철거 완료 (trigger_loc 구간)
-                
                 safe_sell_qty = min(target_sell_qty, rem_qty)
                 if safe_sell_qty > 0 and target_p > 0:
                     orders.append({"side": "SELL", "qty": safe_sell_qty, "price": target_p})
@@ -171,9 +170,10 @@ class ReversionStrategy:
                         grp_qty = sum(item.get('qty', 0) for item in lots_for_date)
                         if grp_qty == 0: continue
                         
-                        # 💡 [핵심 수술] 예외 룰 철거 완료. 1층(i==0)은 무조건 전일 종가(prev_c) 앵커 적용
+                        # 💡 [핵심 수술] 1층(i==0)은 고유 매수가(layer_price) 앵커 적용
                         if i == 0:
-                            trigger = round(prev_c * 1.006, 2)
+                            layer_price = sum(item.get('qty', 0) * item.get('price', 0.0) for item in lots_for_date) / grp_qty if grp_qty > 0 else prev_c
+                            trigger = round(layer_price * 1.006, 2)
                         else:
                             trigger = round(avg_price * 1.005, 2)
                             
@@ -184,8 +184,6 @@ class ReversionStrategy:
                             
                     if target_p > 0.0:
                         sell_price_target = target_p
-
-                    # 💡 [핵심 수술] 1배수(15%) 매도 상한선(Cap) 철거 완료 (VWAP 슬라이싱 구간)
 
                 rem_qty_to_sell = max(0, target_sell_qty - self.executed["SELL_QTY"].get(ticker, 0))
                 

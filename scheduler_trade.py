@@ -7,6 +7,7 @@
 # 4. [V-REV 데드존 구축] 목표가 미만 시 매도 보류 및 잔량 누적(Carry-over) 적용
 # 5. [애프터마켓 3% 로터리 덫 신설] KST 05:05 (16:05 EST) 잔여 물량 전량 +3% 지정가 전송
 # 💡 [V24.15 대수술] V_VWAP 스케줄러 100% 영구 소각 및 2대 코어(V14, V-REV) 최적화
+# 💡 [V24.16 팩트 동기화] 스윕 피니셔 1층 잔량 타점 고유 단가(layer_1_price) 앵커 교정
 # ==========================================================
 import os
 import logging
@@ -280,6 +281,7 @@ async def scheduled_vwap_init_and_cancel(context):
 # ==========================================================
 # [scheduler_trade.py] (2부 / 2부)
 # 💡 [V24.15 대수술] 후반부 스케줄러 최적화 및 V_VWAP 종속성 100% 탈피
+# 💡 [V24.16 팩트 동기화] 스윕 피니셔 1층 잔량 타점 고유 단가(layer_1_price) 앵커 교정
 # ==========================================================
 
 # ==========================================================
@@ -347,13 +349,16 @@ async def scheduled_vwap_trade(context):
                     avg_price = (sum(item.get("qty", 0) * item.get("price", 0.0) for item in q_data) / total_q) if total_q > 0 else 0.0
                     jackpot_trigger = avg_price * 1.010
                     
-                    # 💡 [수술] 1층 물량 및 타점 산출
+                    # 💡 [V24.16 수술] 1층 물량 및 타점 산출 (고유 단가 앵커 적용)
                     dates_in_queue = sorted(list(set(item.get('date') for item in q_data if item.get('date'))), reverse=True)
                     layer_1_qty = 0
                     layer_1_trigger = round(prev_c * 1.006, 2)
                     if dates_in_queue:
                         lots_for_date = [item for item in q_data if item.get('date') == dates_in_queue[0]]
                         layer_1_qty = sum(item.get('qty', 0) for item in lots_for_date)
+                        if layer_1_qty > 0:
+                            layer_1_price = sum(item.get('qty', 0) * item.get('price', 0.0) for item in lots_for_date) / layer_1_qty
+                            layer_1_trigger = round(layer_1_price * 1.006, 2)
                     
                     if now_est.minute >= 58 and not vwap_cache.get(f"REV_{t}_sweep_finished"):
                         target_sweep_qty = 0
@@ -769,3 +774,4 @@ async def scheduled_after_market_lottery(context):
         await asyncio.wait_for(_do_lottery(), timeout=60.0)
     except Exception as e:
         logging.error(f"🚨 애프터마켓 로터리 덫 에러: {e}")
+

@@ -4,6 +4,8 @@
 # 1. /reset 시 삼위일체(본장부, 에스크로, 백업장부, 큐장부) 100% 소각 엔진 탑재
 # 2. 0주 도달 시 마이너스 수익이라도 장부를 비우는(강제 손절 리셋) 로직 개방
 # 💡 [V24.15 대수술] vwap_strategy 의존성 100% 적출 및 2대 코어 최적화
+# 💡 [V24.16 팩트 동기화] /sync 지시서 V-REV 0주 및 1층 가이던스 타점 코어 엔진 동기화 완료
+# 💡 [V24.16 팩트 동기화] 누락된 핸들러 및 콜백 라우터 100% 무손실 복원 완료
 # ==========================================================
 import logging
 import datetime
@@ -244,6 +246,7 @@ class TelegramController:
         latest_version = self.cfg.get_latest_version() 
         msg = self.view.get_start_message(target_hour, season_icon, latest_version) 
         await update.message.reply_text(msg, parse_mode='HTML')
+        
     async def cmd_sync(self, update, context):
         if not self._is_admin(update): return
         await update.message.reply_text("🔄 시장 분석 및 지시서 작성 중...")
@@ -352,7 +355,8 @@ class TelegramController:
                         recent_lots = list(reversed(q_list))[:3]
                         for idx, lot in enumerate(recent_lots):
                             if idx == 0:
-                                target_sell_price = round(safe_prev_close * 1.006, 2)
+                                # 💡 [V24.16 수술] 1층은 전일 종가가 아닌 해당 지층(lot)의 고유 평단가 기반으로 1.006 동기화
+                                target_sell_price = round(lot.get('price', safe_prev_close) * 1.006, 2)
                             else:
                                 target_sell_price = round(actual_avg * 1.005, 2)
                                 
@@ -364,8 +368,9 @@ class TelegramController:
                     else:
                         v_rev_guidance += f" 🔵 매도(Pop): 대기 물량 없음 (관망)\n"
                     
-                    b1_price = round(safe_prev_close * 1.10 if v_rev_q_qty == 0 else safe_prev_close * 0.995, 2)
-                    b2_price = round(safe_prev_close * 1.10 if v_rev_q_qty == 0 else safe_prev_close * 0.975, 2)
+                    # 💡 [V24.16 수술] 0주 새출발 타점 디커플링 (0.999 및 /0.935) 및 하락 방어 Buy2 타점(0.9725) 코어 엔진 동기화 완료
+                    b1_price = round(safe_prev_close * 0.999 if v_rev_q_qty == 0 else safe_prev_close * 0.995, 2)
+                    b2_price = round(safe_prev_close / 0.935 if v_rev_q_qty == 0 else safe_prev_close * 0.9725, 2)
                     
                     b1_qty = math.floor(half_portion_cash / b1_price) if b1_price > 0 else 0
                     b2_qty = math.floor(half_portion_cash / b2_price) if b2_price > 0 else 0
@@ -684,6 +689,12 @@ class TelegramController:
         if query: await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
         elif message_obj: await message_obj.edit_text(msg, reply_markup=markup, parse_mode='HTML')
         else: await context.bot.send_message(chat_id, msg, reply_markup=markup, parse_mode='HTML')
+# ==========================================================
+# [telegram_bot.py] - Part 2/2 부 (하반부)
+# ⚠️ 수술 내역: 
+# 1. 누락되었던 7개 명령어 핸들러(cmd_history ~ cmd_version) 100% 무손실 복원
+# 2. 인라인 버튼 중앙 통제 라우터(handle_callback) 및 텍스트 핸들러 완벽 복원
+# ==========================================================
 
     async def cmd_history(self, update, context):
         if not self._is_admin(update): return
@@ -1248,3 +1259,4 @@ class TelegramController:
         finally:
             if chat_id in self.user_states:
                 del self.user_states[chat_id]
+
