@@ -8,6 +8,9 @@
 # 🚨 [V25.02 스냅샷 패치] V-REV 0주 스윕 시 장부 소각 전 메모리 스냅샷 캡처 및 졸업카드 렌더링 연결
 # 🚨 [V25.06 롤오버 및 복리 패치] 장외 시간 타점 왜곡 방어(YF 치환) 및 V-REV 스윕 익절 복리(Seed) 100% 자동 증식 이식
 # 🚨 [V25.07 수학적 교정] 구버전 승수 잔재 완전 철거 및 최신 디커플링 공식(0.999 및 ÷0.935) 팩트 주입
+# 🚨 [V25.10 줍줍 복원 패치] /sync 및 수동 EXEC 시 V-REV 줍줍(Grid) 덫 누락 완벽 복구
+# 🚨 [V25.11 긴급 버그픽스] cmd_sync 라우터 내 prev_c 참조 변수명을 safe_prev_close로 팩트 교정 완료
+# 🚨 [V25.13 디커플링 스왑 패치] 0주 보유 시 Buy1(/0.935)과 Buy2(*0.999)의 변수를 근본적으로 교환하여 고가->저가 순서 완벽 통일
 # ==========================================================
 import logging
 import datetime
@@ -379,15 +382,28 @@ class TelegramController:
                     else:
                         v_rev_guidance += f" 🔵 매도(Pop): 대기 물량 없음 (관망)\n"
                     
-                    # 🚨 MODIFIED: [수학적 교정] 1.15 및 0.975 잔재를 0.999 및 /0.935 팩트로 완벽 덮어쓰기
-                    b1_price = round(safe_prev_close * 0.999 if v_rev_q_qty == 0 else safe_prev_close * 0.995, 2)
-                    b2_price = round(safe_prev_close / 0.935 if v_rev_q_qty == 0 else safe_prev_close * 0.9725, 2)
-                    
-                    b1_qty = math.floor(half_portion_cash / b1_price) if b1_price > 0 else 0
-                    b2_qty = math.floor(half_portion_cash / b2_price) if b2_price > 0 else 0
-                    
-                    v_rev_guidance += f" 🔴 매수1(Buy1): ${b1_price:.2f} 진입 시 <b>{b1_qty}주</b>\n"
-                    v_rev_guidance += f" 🔴 매수2(Buy2): ${b2_price:.2f} 진입 시 <b>{b2_qty}주</b>"
+                    # 🚨 MODIFIED: [V25.13 디커플링 스왑 패치] 0주 보유 시 Buy1(/0.935)과 Buy2(*0.999) 변수 스왑.
+                    # 불필요한 UI 정렬 로직 철거. 고가 -> 저가 순서 자동 정렬 확립.
+                    if safe_prev_close > 0:
+                        b1_price = round(safe_prev_close / 0.935 if v_rev_q_qty == 0 else safe_prev_close * 0.995, 2)
+                        b2_price = round(safe_prev_close * 0.999 if v_rev_q_qty == 0 else safe_prev_close * 0.9725, 2)
+                        
+                        b1_qty = math.floor(half_portion_cash / b1_price) if b1_price > 0 else 0
+                        b2_qty = math.floor(half_portion_cash / b2_price) if b2_price > 0 else 0
+                        
+                        if b1_qty > 0:
+                            v_rev_guidance += f" 🔴 매수1(Buy1): ${b1_price:.2f} 진입 시 <b>{b1_qty}주</b>\n"
+                        if b2_qty > 0:
+                            v_rev_guidance += f" 🔴 매수2(Buy2): ${b2_price:.2f} 진입 시 <b>{b2_qty}주</b>\n"
+                            
+                        if b2_qty > 0 and b2_price > 0:
+                            grid_start = round(half_portion_cash / (b2_qty + 1), 2)
+                            grid_end = round(half_portion_cash / (b2_qty + 5), 2)
+                            if grid_start >= 0.01 and grid_start < b2_price:
+                                grid_end = max(grid_end, 0.01)
+                                v_rev_guidance += f" 🧹 줍줍(5개): ${grid_start:.2f} ~ ${grid_end:.2f} (LOC)"
+                    else:
+                        v_rev_guidance += f" 🔴 매수 대기: 타점 연산 대기 중"
 
                     if hasattr(self.cfg, 'get_avwap_hybrid_mode') and self.cfg.get_avwap_hybrid_mode(t):
                         is_avwap_active = True
@@ -788,6 +804,7 @@ class TelegramController:
 # 🚨 [긴급 수술] V-REV 예방적 LOC 덫 수동 장전 라우터(EXEC) 완벽 분리 이식
 # 🚨 [V25.06 롤오버 패치] 수동 EXEC 시 장외시간 낡은 전일종가(T-2)를 최신 현재가(T-1)로 치환(Overwrite)하여 타점 불일치 해결
 # 🚨 [V25.07 수학적 교정] 구버전 승수 잔재 완전 철거 및 최신 디커플링 공식(0.999 및 /0.935) 팩트 주입
+# 🚨 [V25.10 줍줍 복원 패치] 수동 EXEC 시 5개의 줍줍(Grid) LOC 주문이 KIS 서버로 정상 장전되도록 격발 알고리즘 복원
 # ==========================================================
 
     async def cmd_history(self, update, context):
@@ -1219,10 +1236,10 @@ class TelegramController:
                             if sell_qty > 0:
                                 loc_orders.append({'side': 'SELL', 'qty': sell_qty, 'price': target_sell_price, 'type': 'LOC', 'desc': f'예방적 매도(Pop{idx+1})'})
                     
-                    # 🚨 MODIFIED: [V25.07 수학적 교정] 1.15 및 0.975 잔재를 0.999 및 /0.935 팩트로 완벽 덮어쓰기
+                    # 🚨 MODIFIED: [V25.13 디커플링 스왑 패치] 0주 보유 시 Buy1(/0.935)과 Buy2(*0.999) 변수 스왑.
                     if prev_c > 0:
-                        b1_price = round(prev_c * 0.999 if v_rev_q_qty == 0 else prev_c * 0.995, 2)
-                        b2_price = round(prev_c / 0.935 if v_rev_q_qty == 0 else prev_c * 0.9725, 2)
+                        b1_price = round(prev_c / 0.935 if v_rev_q_qty == 0 else prev_c * 0.995, 2)
+                        b2_price = round(prev_c * 0.999 if v_rev_q_qty == 0 else prev_c * 0.9725, 2)
                         
                         b1_qty = math.floor(half_portion_cash / b1_price) if b1_price > 0 else 0
                         b2_qty = math.floor(half_portion_cash / b2_price) if b2_price > 0 else 0
@@ -1231,6 +1248,13 @@ class TelegramController:
                             loc_orders.append({'side': 'BUY', 'qty': b1_qty, 'price': b1_price, 'type': 'LOC', 'desc': '예방적 매수(Buy1)'})
                         if b2_qty > 0:
                             loc_orders.append({'side': 'BUY', 'qty': b2_qty, 'price': b2_price, 'type': 'LOC', 'desc': '예방적 매수(Buy2)'})
+                            
+                        # 0주 새출발이든 보유 상태이든 5개의 줍줍(Grid) 타점 전송 목록에 동시 장전
+                        if b2_qty > 0 and b2_price > 0:
+                            for n in range(1, 6):
+                                grid_p = round(half_portion_cash / (b2_qty + n), 2)
+                                if grid_p >= 0.01 and grid_p < b2_price:
+                                    loc_orders.append({'side': 'BUY', 'qty': 1, 'price': grid_p, 'type': 'LOC', 'desc': f'예방적 줍줍({n})'})
 
                     msg = f"🛡️ <b>[{t}] V-REV 예방적 양방향 LOC 방어선 수동 장전 완료</b>\n"
                     all_success = True

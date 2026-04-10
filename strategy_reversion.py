@@ -5,6 +5,7 @@
 # 💡 [V24.16 팩트 동기화] 0주 새출발 디커플링 타점 (Buy1: 0.999, Buy2: /0.935)
 # 💡 [V24.16 팩트 동기화] 하락장 방어 매수 Buy2 타점 (0.9725) 교정
 # 💡 [V24.16 팩트 동기화] 1층 전량 익절 타점 고유 매수가 기반(layer_price * 1.006) 원복
+# 🚨 [V25.13 디커플링 스왑 패치] UI와 동일하게 Buy1과 Buy2의 타점을 고가->저가 순으로 스왑 연동
 # ==========================================================
 import math
 
@@ -44,9 +45,9 @@ class ReversionStrategy:
         
         if total_q == 0:
             side = "BUY"
-            # 💡 [핵심 수술] 0주 보유 새출발 시 타점 분할 (디커플링) 적용
-            p1_trigger = round(prev_c * 0.999, 2)
-            p2_trigger = round(prev_c / 0.935, 2)
+            # 🚨 MODIFIED: [V25.13 디커플링 스왑 패치] 무조건 Buy1(p1)이 고가, Buy2(p2)가 저가가 되도록 변수 스왑
+            p1_trigger = round(prev_c / 0.935, 2)
+            p2_trigger = round(prev_c * 0.999, 2)
         else:
             side = "SELL" if curr_p > prev_c else "BUY"
             p1_trigger = round(prev_c * 0.995, 2)
