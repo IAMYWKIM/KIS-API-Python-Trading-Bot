@@ -10,8 +10,14 @@
 # 🚨 [V25.15 잔여물량 격리] SELL_L1 / SELL_UPPER / SELL_JACKPOT 독립 큐(Residual) 분리 및 줍줍 무손실 복원 완료
 # 🚨 [V25.17 잔재 소각] 수동 통제망(Telegram) 전환에 따른 자동 긴급 수혈(get_emergency_liquidation_qty) 레거시 함수 영구 삭제
 # 🚨 [V25.20 엣지 케이스 패치] 0주 새출발 시 줍줍(Sweep) 타점 생성 원천 차단 (단일 라우터 방어막 이식)
+# 🚀 [V26.03 영속성 캐시 이식] 서버 재시작 시 잔차 증발(기억상실)을 방어하는 L1/L2 듀얼 캐싱 엔진 탑재
 # ==========================================================
 import math
+# NEW: [V26.03 영속성 캐시 이식] 파일 시스템 I/O 및 시간 처리를 위한 내장 모듈 임포트
+import os
+import json
+import tempfile
+from datetime import datetime
 
 class ReversionStrategy:
     def __init__(self):
@@ -22,6 +28,9 @@ class ReversionStrategy:
         }
         self.executed = {"BUY_BUDGET": {}, "SELL_QTY": {}}
         
+        # NEW: [V26.03] 메모리 로드 상태 추적 (중복 로드 방지용 L1 캐시 플래그)
+        self.state_loaded = {}
+        
         # 5년치 실데이터 기반 장마감 30분 비중 정규화 적용 (합산 1.0)
         self.U_CURVE_WEIGHTS = [
             0.0252, 0.0213, 0.0192, 0.0210, 0.0189, 0.0187, 0.0228, 0.0203, 0.0200, 0.0209,
@@ -29,7 +38,64 @@ class ReversionStrategy:
             0.0434, 0.0294, 0.0327, 0.0362, 0.0549, 0.0566, 0.0407, 0.0470, 0.0582, 0.1515
         ]
 
+    # NEW: [V26.03] L1/L2 듀얼 캐싱을 위한 파일 경로 생성기
+    def _get_state_file(self, ticker):
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        return f"data/vwap_state_REV_{today_str}_{ticker}.json"
+
+    # NEW: [V26.03] 봇 재시작(기절) 시 L2 캐시(.json)에서 L1 캐시(Memory)로 팩트 복원
+    def _load_state_if_needed(self, ticker):
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        if self.state_loaded.get(ticker) == today_str:
+            return # 이미 오늘 자 상태가 메모리에 로드됨
+            
+        state_file = self._get_state_file(ticker)
+        if os.path.exists(state_file):
+            try:
+                with open(state_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if data.get("date") == today_str:
+                        for k in self.residual.keys():
+                            self.residual[k][ticker] = data.get("residual", {}).get(k, 0.0)
+                        for k in self.executed.keys():
+                            self.executed[k][ticker] = data.get("executed", {}).get(k, 0.0)
+                        self.state_loaded[ticker] = today_str
+                        return
+            except Exception:
+                pass
+                
+        # 파일이 없거나 어제 데이터면 영구 0으로 초기화
+        for k in self.residual.keys():
+            self.residual[k][ticker] = 0.0
+        self.executed["BUY_BUDGET"][ticker] = 0.0
+        self.executed["SELL_QTY"][ticker] = 0
+        self.state_loaded[ticker] = today_str
+
+    # NEW: [V26.03] 상태 변경 시 L1 캐시(Memory)를 L2 캐시(.json)에 원자적(fsync)으로 영구 동기화
+    def _save_state(self, ticker):
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        state_file = self._get_state_file(ticker)
+        data = {
+            "date": today_str,
+            "residual": {k: self.residual[k].get(ticker, 0.0) for k in self.residual.keys()},
+            "executed": {k: self.executed[k].get(ticker, 0.0) for k in self.executed.keys()}
+        }
+        try:
+            dir_name = os.path.dirname(state_file)
+            if dir_name and not os.path.exists(dir_name):
+                os.makedirs(dir_name, exist_ok=True)
+            fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+                f.flush()
+                os.fsync(fd)
+            os.replace(temp_path, state_file)
+        except Exception:
+            pass
+
     def reset_residual(self, ticker):
+        # MODIFIED: [V26.03] 메모리 초기화 후 L2 캐시(.json)에도 영구 각인하여 리셋 사실 보존
+        self._load_state_if_needed(ticker)
         self.residual["BUY1"][ticker] = 0.0
         self.residual["BUY2"][ticker] = 0.0
         self.residual["SELL_L1"][ticker] = 0.0
@@ -37,15 +103,22 @@ class ReversionStrategy:
         self.residual["SELL_JACKPOT"][ticker] = 0.0
         self.executed["BUY_BUDGET"][ticker] = 0.0
         self.executed["SELL_QTY"][ticker] = 0
+        self._save_state(ticker)
 
     def record_execution(self, ticker, side, qty, exec_price):
+        # MODIFIED: [V26.03] 체결량 누적 후 L2 캐시(.json)에 안전하게 영구 저장
+        self._load_state_if_needed(ticker)
         if side == "BUY":
             spent = qty * exec_price
             self.executed["BUY_BUDGET"][ticker] = self.executed["BUY_BUDGET"].get(ticker, 0.0) + spent
         else:
             self.executed["SELL_QTY"][ticker] = self.executed["SELL_QTY"].get(ticker, 0) + qty
+        self._save_state(ticker)
 
     def get_dynamic_plan(self, ticker, curr_p, prev_c, current_weight, vwap_status, min_idx, alloc_cash, q_data):
+        # NEW: [V26.03] VWAP 연산 전, 봇 재시작 등으로 인한 L1/L2 메모리 유실이 없는지 동기화 검증
+        self._load_state_if_needed(ticker)
+
         if min_idx < 0 or min_idx >= 30:
             if not vwap_status.get('is_strong_up') and not vwap_status.get('is_strong_down'):
                 return {"orders": [], "trigger_loc": False}
@@ -194,4 +267,6 @@ class ReversionStrategy:
                     if alloc_upper > 0:
                         orders.append({"side": "SELL", "qty": alloc_upper, "price": trigger_upper})
 
+        # MODIFIED: [V26.03] 잔차(residual) 업데이트가 발생했으므로 L2 캐시(.json)에 안전하게 영구 저장
+        self._save_state(ticker)
         return {"orders": orders, "trigger_loc": False}
