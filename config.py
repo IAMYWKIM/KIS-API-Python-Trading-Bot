@@ -7,6 +7,7 @@
 # 🚨 [V25.19 핫픽스] 에스크로(Escrow) 3대 관리 함수(set/add/clear) 팩트 기반 완전 구현
 # 🚀 [V26.00 승격] 수동 VWAP 시그널 모드(Manual Mode) 독립 플래그 및 캐싱 엔진 신설 탑재
 # 🚀 [V26.07 확정 순수익 렌더링 패치] 명예의 전당 및 졸업 카드 발급 시 한투 OpenAPI 왕복 수수료(0.5%) 완벽 차감 이식
+# 🚨 [V27.10 그랜드 수술] 에스크로 캐시 영구 박제(Ghost Escrow 방어), 액면분할 수학적 반올림(Banker's Rounding) 오류 교정 및 fsync 무결성 확보
 # ==========================================================
 import json
 import os
@@ -80,16 +81,14 @@ class ConfigManager:
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
                 f.flush()         
-                os.fsync(fd)      
+                os.fsync(f.fileno()) # 🚨 [수술 완료] 파일 무결성 확보
                 
             os.replace(temp_path, filename)
         except Exception as e:
             print(f"❌ [Config] JSON 저장 중 치명적 에러 발생 ({filename}): {e}")
             if 'temp_path' in locals() and os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except Exception:
-                    pass
+                try: os.remove(temp_path)
+                except Exception: pass
 
     def _load_file(self, filename, default=None):
         if os.path.exists(filename):
@@ -110,7 +109,7 @@ class ConfigManager:
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 f.write(str(content))
                 f.flush()
-                os.fsync(fd)
+                os.fsync(f.fileno()) # 🚨 [수술 완료] 파일 무결성 확보
             os.replace(temp_path, filename)
         except Exception as e:
             print(f"❌ [Config] 텍스트 파일 저장 에러 ({filename}): {e}")
@@ -126,7 +125,16 @@ class ConfigManager:
     def get_ledger(self):
         return self._load_json(self.FILES["LEDGER"], [])
 
+    # ==========================================================
+    # 🚨 [V27.10 수술] 에스크로 캐시 영구 박제 (Ghost Escrow 방어)
+    # ==========================================================
     def get_escrow_cash(self, ticker):
+        locks = self._load_json(self.FILES["LOCKS"], {})
+        persistent_escrow = locks.get(f"ESCROW_{ticker}", None)
+        
+        if persistent_escrow is not None:
+            return max(0.0, float(persistent_escrow))
+
         ledger = self.get_ledger()
         escrow = 0.0
         for r in reversed(ledger):
@@ -138,32 +146,26 @@ class ConfigManager:
                         escrow -= (r['qty'] * r['price'])
                 else:
                     break
-                    
-        calc_escrow = max(0.0, float(escrow))
-        if calc_escrow == 0.0:
-            calc_escrow = self._escrow_cache.get(ticker, 0.0)
-            
-        return calc_escrow
+        return max(0.0, float(escrow))
 
     def set_escrow_cash(self, ticker, amount):
-        if not hasattr(self, '_escrow_cache'):
-            self._escrow_cache = {}
-        self._escrow_cache[ticker] = max(0.0, float(amount))
+        validated = max(0.0, float(amount))
+        locks = self._load_json(self.FILES["LOCKS"], {})
+        locks[f"ESCROW_{ticker}"] = validated
+        self._save_json(self.FILES["LOCKS"], locks)
 
     def add_escrow_cash(self, ticker, amount):
-        if not hasattr(self, '_escrow_cache'):
-            self._escrow_cache = {}
-        current = self._escrow_cache.get(ticker, 0.0)
-        self._escrow_cache[ticker] = max(0.0, current + float(amount))
+        locks = self._load_json(self.FILES["LOCKS"], {})
+        current = locks.get(f"ESCROW_{ticker}", 0.0)
+        new_val = max(0.0, current + float(amount))
+        locks[f"ESCROW_{ticker}"] = new_val
+        self._save_json(self.FILES["LOCKS"], locks)
 
     def clear_escrow_cash(self, ticker):
         locks = self._load_json(self.FILES["LOCKS"], {})
         if f"ESCROW_{ticker}" in locks:
             del locks[f"ESCROW_{ticker}"]
             self._save_json(self.FILES["LOCKS"], locks)
-            
-        if hasattr(self, '_escrow_cache') and ticker in self._escrow_cache:
-            self._escrow_cache[ticker] = 0.0
 
     def get_total_locked_cash(self, exclude_ticker=None):
         total = 0.0
@@ -204,7 +206,9 @@ class ConfigManager:
         changed = False
         for r in ledger:
             if r.get('ticker') == ticker:
-                new_qty = round(r['qty'] * ratio)
+                # 🚨 [수술 완료] Banker's Rounding 소수점 증발 오류 교정 (사사오입 강제 적용)
+                raw_new_qty = r['qty'] * ratio
+                new_qty = math.floor(raw_new_qty + 0.5)
                 r['qty'] = new_qty if new_qty > 0 else (1 if r['qty'] > 0 else 0)
                 r['price'] = round(r['price'] / ratio, 4)
                 if 'avg_price' in r:
@@ -411,7 +415,7 @@ class ConfigManager:
                     schedule = nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
                     is_trading_day = not schedule.empty
                 except Exception as e:
-                    print(f"⚠️ [Config] 달력 라이브러 에러 발생. 평일 강제 개장 처리합니다: {e}")
+                    print(f"⚠️ [Config] 달력 라이브러리 에러 발생. 평일 강제 개장 처리합니다: {e}")
                     is_trading_day = now_est.weekday() < 5
                 
                 if is_trading_day:
@@ -514,7 +518,6 @@ class ConfigManager:
 
             self._save_json(self.FILES["LEDGER"], ledger)
 
-        # MODIFIED: [V26.07 확정 순수익 렌더링 패치] 한투 OpenAPI 왕복 수수료(0.5%) 팩트 차감 로직 이식
         raw_total_buy = sum(r['price']*r['qty'] for r in target_recs if r['side']=='BUY')
         raw_total_sell = sum(r['price']*r['qty'] for r in target_recs if r['side']=='SELL')
         
@@ -591,35 +594,26 @@ class ConfigManager:
                 del locks[k]
             self._save_json(self.FILES["LOCKS"], locks)
     
-    def get_seed(self, t):
-        return float(self._load_json(self.FILES["SEED_CFG"], self.DEFAULT_SEED).get(t, 6720.0))
-
+    def get_seed(self, t): return float(self._load_json(self.FILES["SEED_CFG"], self.DEFAULT_SEED).get(t, 6720.0))
     def set_seed(self, t, v): 
         d = self._load_json(self.FILES["SEED_CFG"], self.DEFAULT_SEED)
         d[t] = v
         self._save_json(self.FILES["SEED_CFG"], d)
 
-    def get_compound_rate(self, t):
-        return float(self._load_json(self.FILES["COMPOUND_CFG"], self.DEFAULT_COMPOUND).get(t, 70.0))
-
+    def get_compound_rate(self, t): return float(self._load_json(self.FILES["COMPOUND_CFG"], self.DEFAULT_COMPOUND).get(t, 70.0))
     def set_compound_rate(self, t, v):
         d = self._load_json(self.FILES["COMPOUND_CFG"], self.DEFAULT_COMPOUND)
         d[t] = v
         self._save_json(self.FILES["COMPOUND_CFG"], d)
 
-    def get_version(self, t):
-        return self._load_json(self.FILES["VERSION_CFG"], self.DEFAULT_VERSION).get(t, "V14")
-
+    def get_version(self, t): return self._load_json(self.FILES["VERSION_CFG"], self.DEFAULT_VERSION).get(t, "V14")
     def set_version(self, t, v):
         d = self._load_json(self.FILES["VERSION_CFG"], self.DEFAULT_VERSION)
         d[t] = v
         self._save_json(self.FILES["VERSION_CFG"], d)
 
-    def get_split_count(self, t):
-        return self._load_json(self.FILES["SPLIT"], self.DEFAULT_SPLIT).get(t, 40.0)
-
-    def get_target_profit(self, t):
-        return self._load_json(self.FILES["PROFIT_CFG"], self.DEFAULT_TARGET).get(t, 10.0)
+    def get_split_count(self, t): return self._load_json(self.FILES["SPLIT"], self.DEFAULT_SPLIT).get(t, 40.0)
+    def get_target_profit(self, t): return self._load_json(self.FILES["PROFIT_CFG"], self.DEFAULT_TARGET).get(t, 10.0)
         
     def get_sniper_multiplier(self, t):
         default_val = self.DEFAULT_SNIPER_MULTIPLIER.get(t, 1.0)
@@ -630,48 +624,29 @@ class ConfigManager:
         d[t] = float(v)
         self._save_json(self.FILES["SNIPER_MULTIPLIER_CFG"], d)
 
-    def get_upward_sniper_mode(self, ticker):
-        d = self._load_json(self.FILES["UPWARD_SNIPER"], {})
-        return d.get(ticker, False)
-
+    def get_upward_sniper_mode(self, ticker): return self._load_json(self.FILES["UPWARD_SNIPER"], {}).get(ticker, False)
     def set_upward_sniper_mode(self, ticker, v):
         d = self._load_json(self.FILES["UPWARD_SNIPER"], {})
         d[ticker] = bool(v)
         self._save_json(self.FILES["UPWARD_SNIPER"], d)
 
-    def get_avwap_hybrid_mode(self, ticker):
-        d = self._load_json(self.FILES["AVWAP_HYBRID_CFG"], {})
-        return d.get(ticker, False)
-
+    def get_avwap_hybrid_mode(self, ticker): return self._load_json(self.FILES["AVWAP_HYBRID_CFG"], {}).get(ticker, False)
     def set_avwap_hybrid_mode(self, ticker, v):
         d = self._load_json(self.FILES["AVWAP_HYBRID_CFG"], {})
         d[ticker] = bool(v)
         self._save_json(self.FILES["AVWAP_HYBRID_CFG"], d)
 
-    def get_manual_vwap_mode(self, ticker):
-        d = self._load_json(self.FILES["MANUAL_VWAP_CFG"], {})
-        return d.get(ticker, False)
-
+    def get_manual_vwap_mode(self, ticker): return self._load_json(self.FILES["MANUAL_VWAP_CFG"], {}).get(ticker, False)
     def set_manual_vwap_mode(self, ticker, v):
         d = self._load_json(self.FILES["MANUAL_VWAP_CFG"], {})
         d[ticker] = bool(v)
         self._save_json(self.FILES["MANUAL_VWAP_CFG"], d)
 
-    def get_secret_mode(self):
-        return self._load_file(self.FILES["SECRET_MODE"]) == 'True'
-
-    def set_secret_mode(self, v):
-        self._save_file(self.FILES["SECRET_MODE"], str(v))
-
-    def get_active_tickers(self):
-        return self._load_json(self.FILES["TICKER"], ["SOXL", "TQQQ"])
-
-    def set_active_tickers(self, v):
-        self._save_json(self.FILES["TICKER"], v)
-
+    def get_secret_mode(self): return self._load_file(self.FILES["SECRET_MODE"]) == 'True'
+    def set_secret_mode(self, v): self._save_file(self.FILES["SECRET_MODE"], str(v))
+    def get_active_tickers(self): return self._load_json(self.FILES["TICKER"], ["SOXL", "TQQQ"])
+    def set_active_tickers(self, v): self._save_json(self.FILES["TICKER"], v)
     def get_chat_id(self): 
         v = self._load_file(self.FILES["CHAT_ID"])
         return int(v) if v else None
-
-    def set_chat_id(self, v):
-        self._save_file(self.FILES["CHAT_ID"], v)
+    def set_chat_id(self, v): self._save_file(self.FILES["CHAT_ID"], v)
