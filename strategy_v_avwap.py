@@ -5,6 +5,7 @@
 # ⚠️ 옵션 B 아키텍처: 기초자산(SOXX) 시그널 스캔 + 파생상품(SOXL) 미시구조 타격
 # 🚨 [PEP 8 포맷팅 패치] 미사용 변수(time_0930) 소각 (Ruff F841 교정 완료)
 # 🚨 [V25.23 디커플링] KIS API 하드코딩 종속성 적출 및 범용 1분봉 컬럼 정규화 완비
+# 🚨 [V27.06 긴급 수술] NameError (#ffffff) 소각 및 ZeroDivision 방어막 구축
 # ==========================================================
 import logging
 import datetime
@@ -115,8 +116,9 @@ class VAvwapHybridPlugin:
         # --------------------------------------------------------
         if avwap_qty > 0:
             # ① [하드스탑] 펀더멘털 스케일 손절 (SOXL의 손익률을 기초자산 비율로 역산하여 노이즈 방어)
-            # MODIFIED: 파생상품의 변동성 끌림을 배제한 순수 기초자산 손실률 기반 스탑로스
-            exec_return = (exec_curr_p - avwap_avg_price) / avwap_avg_price
+            # 🚨 [V27.06 수술 완료] ZeroDivision 방어 및 안전 평단가 적용
+            safe_avg = avwap_avg_price if avwap_avg_price > 0 else exec_curr_p
+            exec_return = (exec_curr_p - safe_avg) / safe_avg
             base_equivalent_return = exec_return / self.leverage
             
             if base_equivalent_return <= -self.base_stop_loss_pct:
@@ -156,6 +158,7 @@ class VAvwapHybridPlugin:
             
         # ③ [구조적 붕괴 RVOL 필터] 10:00 EST 시점 기초자산 거래량 폭발 판단
         if curr_time >= time_1000:
+            # 🚨 [V27.06 수술 완료] #ffffff 오타 소각 및 정상 변수(avg_vol_20) 할당
             if avg_vol_20 > 0 and base_current_30m_vol >= (avg_vol_20 * 2.0) and base_curr_p < base_vwap:
                 return {'action': 'SHUTDOWN', 'reason': '기초자산_RVOL_스파이크_영구동결', 'vwap': base_vwap}
                 
