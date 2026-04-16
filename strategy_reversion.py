@@ -2,7 +2,7 @@
 # [strategy_reversion.py]
 # ⚠️ V-REV 하이브리드 엔진 전용 수학적 타격 모듈
 # 💡 5년 백테스트 기반 VWAP 유동성 정밀 가중치(U_CURVE_WEIGHTS) 적용 완료
-# 💡 [V24.16 팩트 동기화] 0주 새출발 디커플링 타점 (Buy1: 0.999, Buy2: /0.935)
+# 💡 [V24.16 팩트 동기화] 0주 새출발 디커플링 타점 (Buy1: 0.999, Buy2: /0.935) 원본 유지
 # 💡 [V24.16 팩트 동기화] 하락장 방어 매수 Buy2 타점 (0.9725) 교정
 # 💡 [V24.16 팩트 동기화] 1층 전량 익절 타점 고유 매수가 기반(layer_price * 1.006) 원복
 # 🚨 [V25.13 디커플링 스왑 패치] UI와 동일하게 Buy1과 Buy2의 타점을 고가->저가 순으로 스왑 연동
@@ -14,6 +14,7 @@
 # 🚀 [V27.01 지시서 스냅샷] 매일 17:05 확정 지시서를 박제하여 장중 잔고 변이에 따른 타점 왜곡 원천 차단
 # 🚨 [V27.03 핫픽스] 스냅샷 로드 시 내부 날짜 검사(Validation) 전면 폐기로 무한루프 영구 방어
 # 🚨 [V27.05 그랜드 수술] API Reject 방어(소수점 덤핑 차단), ZeroDivision 방어 및 Safe Casting 완벽 이식
+# 🚨 [V27.15 코파일럿 합작] FD 누수 방어, 스냅샷 덮어쓰기 락온, 0달러 로트 배제 및 TypeError 런타임 붕괴 방어막 이식 완료
 # ==========================================================
 import math
 import os
@@ -57,7 +58,6 @@ class ReversionStrategy:
                     for k in self.residual.keys():
                         self.residual[k][ticker] = float(data.get("residual", {}).get(k, 0.0))
                     for k in self.executed.keys():
-                        # 🚨 [수술 완료] SELL_QTY는 반드시 정수(int)로 로드하여 API 붕괴 차단
                         raw_val = data.get("executed", {}).get(k, 0)
                         self.executed[k][ticker] = int(raw_val) if k == "SELL_QTY" else float(raw_val)
                     self.state_loaded[ticker] = today_str
@@ -82,26 +82,38 @@ class ReversionStrategy:
                 "SELL_QTY": int(self.executed.get("SELL_QTY", {}).get(ticker, 0))
             }
         }
+        temp_path = None
         try:
             dir_name = os.path.dirname(state_file)
             if dir_name and not os.path.exists(dir_name):
                 os.makedirs(dir_name, exist_ok=True)
             fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
+            # MODIFIED: [파일 디스크립터 누수 및 fsync 붕괴 방어] os.fsync(f.fileno()) 표준화 및 자원 해제 보장
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
                 f.flush()
-                os.fsync(fd)
+                os.fsync(f.fileno())
             os.replace(temp_path, state_file)
+            temp_path = None
         except Exception:
-            pass
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
 
     def save_daily_snapshot(self, ticker, plan_data):
-        today_str = datetime.now().strftime("%Y-%m-%d")
         snap_file = self._get_snapshot_file(ticker)
+        # MODIFIED: [스냅샷 덮어쓰기 붕괴 방어] 당일 최초 1회 박제(Idempotency) 로직 적용하여 장중 변이 완벽 차단
+        if os.path.exists(snap_file):
+            return
+            
+        today_str = datetime.now().strftime("%Y-%m-%d")
         data = {
             "date": today_str,
             "plan": plan_data
         }
+        temp_path = None
         try:
             dir_name = os.path.dirname(snap_file)
             if dir_name and not os.path.exists(dir_name):
@@ -110,10 +122,15 @@ class ReversionStrategy:
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
                 f.flush()
-                os.fsync(fd)
+                os.fsync(f.fileno())
             os.replace(temp_path, snap_file)
+            temp_path = None
         except Exception:
-            pass
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
 
     def load_daily_snapshot(self, ticker):
         snap_file = self._get_snapshot_file(ticker)
@@ -139,13 +156,16 @@ class ReversionStrategy:
 
     def record_execution(self, ticker, side, qty, exec_price):
         self._load_state_if_needed(ticker)
+        # MODIFIED: [실행 기록 TypeError 및 예산 증발 방어] 명시적 형변환(Safe Casting)을 통한 런타임 보호
+        safe_qty = int(float(qty or 0))
+        safe_price = float(exec_price or 0.0)
+        
         if side == "BUY":
-            spent = float(qty * exec_price)
-            self.executed["BUY_BUDGET"][ticker] = float(self.executed["BUY_BUDGET"].get(ticker, 0.0)) + spent
+            spent = safe_qty * safe_price
+            self.executed["BUY_BUDGET"][ticker] = float(self.executed.get("BUY_BUDGET", {}).get(ticker, 0.0)) + spent
         else:
-            self.executed["SELL_QTY"][ticker] = int(self.executed["SELL_QTY"].get(ticker, 0)) + int(qty)
+            self.executed["SELL_QTY"][ticker] = int(self.executed.get("SELL_QTY", {}).get(ticker, 0)) + safe_qty
         self._save_state(ticker)
-
     def get_dynamic_plan(self, ticker, curr_p, prev_c, current_weight, vwap_status, min_idx, alloc_cash, q_data, is_snapshot_mode=False):
         if not is_snapshot_mode:
             cached_plan = self.load_daily_snapshot(ticker)
@@ -154,19 +174,23 @@ class ReversionStrategy:
 
         self._load_state_if_needed(ticker)
 
+        # MODIFIED: [min_idx 결측치 런타임 붕괴 방어] int 캐스팅 및 None 폴백 적용
+        min_idx = int(min_idx) if min_idx is not None else -1
         if min_idx < 0 or min_idx >= 30:
             if not vwap_status.get('is_strong_up') and not vwap_status.get('is_strong_down'):
-                return {"orders": [], "trigger_loc": False}
+                return {"orders": [], "trigger_loc": False, "total_q": 0}
 
-        total_q = sum(int(item.get("qty", 0)) for item in q_data)
-        total_inv = sum(float(item.get('qty', 0)) * float(item.get('price', 0.0)) for item in q_data)
+        # MODIFIED: [무상증자/0달러 로트 평단가 붕괴 방어] 가격이 0 초과인 정상 로트만 연산에 참여하여 ZeroDivision 및 왜곡 차단
+        valid_q_data = [item for item in q_data if float(item.get('price', 0.0)) > 0]
+        total_q = sum(int(item.get("qty", 0)) for item in valid_q_data)
+        total_inv = sum(float(item.get('qty', 0)) * float(item.get('price', 0.0)) for item in valid_q_data)
         avg_price = (total_inv / total_q) if total_q > 0 else 0.0
         
-        dates_in_queue = sorted(list(set(item.get('date') for item in q_data if item.get('date'))), reverse=True)
+        dates_in_queue = sorted(list(set(item.get('date') for item in valid_q_data if item.get('date'))), reverse=True)
         l1_qty, l1_price = 0, 0.0
         
         if dates_in_queue:
-            lots_1 = [item for item in q_data if item.get('date') == dates_in_queue[0]]
+            lots_1 = [item for item in valid_q_data if item.get('date') == dates_in_queue[0]]
             l1_qty = sum(int(item.get('qty', 0)) for item in lots_1)
             l1_price = sum(float(item.get('qty', 0)) * float(item.get('price', 0.0)) for item in lots_1) / l1_qty if l1_qty > 0 else 0.0
             
@@ -224,11 +248,14 @@ class ReversionStrategy:
                 if curr_p >= trigger_jackpot:
                     orders.append({"side": "SELL", "qty": rem_qty_total, "price": trigger_jackpot})
                 else:
+                    # MODIFIED: [상위 레이어 초과 매도 산출 오류 차단] 실제로 1층에서 할당된 수량만 차감하도록 로직 분리
                     available_l1 = min(l1_qty, rem_qty_total)
+                    l1_queued = 0
                     if available_l1 > 0 and curr_p >= trigger_l1:
                         orders.append({"side": "SELL", "qty": available_l1, "price": trigger_l1})
+                        l1_queued = available_l1
                         
-                    available_upper = min(upper_qty, rem_qty_total - available_l1)
+                    available_upper = min(upper_qty, rem_qty_total - l1_queued)
                     if available_upper > 0 and trigger_upper > 0 and curr_p >= trigger_upper:
                         orders.append({"side": "SELL", "qty": available_upper, "price": trigger_upper})
             
@@ -253,7 +280,6 @@ class ReversionStrategy:
             b1_budget_slice = (alloc_cash * 0.5) * slice_ratio_buy
             b2_budget_slice = (alloc_cash * 0.5) * slice_ratio_buy
 
-            # 🚨 [수술 완료] curr_p > 0 조건을 추가하여 API 에러 시 ZeroDivision 붕괴 원천 차단
             if curr_p > 0 and curr_p <= p1_trigger:
                 exact_q1 = (b1_budget_slice / curr_p) + float(self.residual["BUY1"].get(ticker, 0.0))
                 alloc_q1 = int(math.floor(exact_q1))
