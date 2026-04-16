@@ -19,11 +19,14 @@
 # 🚀 [V27.00 자가 업데이트 라우터 이식] 2단계 승인 대기 확인 UI 렌더링 추가
 # 🚨 [V27.01 UI 팩트 교정] 휴먼 에러 방지를 위한 /update 명령어 최하단 격리 렌더링 적용
 # 🚨 [V27.16 그랜드 수술] 코파일럿 합작 - KeyError 런타임 즉사 방어(Safe Get), FileNotFoundError 졸업카드 증발 차단, 외화 RP 이중 계산 환각 UI 제거 및 유령 지층(None Date) 통제망 구축 완료
+# 🚀 [V27.24 그랜드 수술] 도파민 폭발! GIF 애니메이션 렌더링을 위한 멀티 프레임 스티칭(Stitching) 코어 및 Fallback 엔진 탑재 완료
 # ==========================================================
 import os
 import math
+import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from PIL import Image, ImageDraw, ImageFont
+# 🚨 [수술 완료] 움짤 분해/압축을 위한 ImageSequence 팩트 주입
+from PIL import Image, ImageDraw, ImageFont, ImageSequence
 
 class TelegramView:
     def __init__(self):
@@ -169,7 +172,6 @@ class TelegramView:
             for idx, item in enumerate(reversed(q_data)):
                 qty = item.get('qty', 0)
                 price = item.get('price', 0.0)
-                # 🚨 [수술 완료] 유령 지층(None Date) 접근 런타임 방어 및 UI 통제 (Bug #4)
                 item_date = item.get('date')
                 real_idx = len(q_data) - idx
                 
@@ -293,8 +295,6 @@ class TelegramView:
         
         return msg, InlineKeyboardMarkup(keyboard)
 
-    # 🚨 [수술 완료] 죽은 파라미터(rp_amount)의 이중 계산(환각)을 제거하고, 
-    # caller(telegram_bot.py)가 전달한 권장 금액을 그대로 팩트 표출하도록 디커플링 완료 (Bug #3)
     def create_sync_report(self, status_text, dst_text, cash, rp_amount, ticker_data, is_trade_active, p_trade_data=None):
         total_locked = sum(t_info.get('escrow', 0.0) for t_info in ticker_data)
         
@@ -440,12 +440,10 @@ class TelegramView:
                 plan_orders = t_info.get('plan', {}).get('orders', [])
                 
                 if plan_orders:
-                    # 🚨 [수술 완료] Safe Get(.get) 방어막으로 KeyError 런타임 즉사 버그 영구 적출 (Bug #1)
                     jup_orders = [o for o in plan_orders if "줍줍" in o.get('desc', '')]
                     n_orders = [o for o in plan_orders if "줍줍" not in o.get('desc', '')]
     
                     for o in n_orders:
-                        # 무결성 검증 가드 (이상한 dict 구조면 스킵)
                         if not all(k in o for k in ('side', 'desc', 'type', 'price', 'qty')):
                             body_msg += " ⚠️ <i>[렌더링 오류: 주문 데이터 불완전 - 렌더링 스킵]</i>\n"
                             continue
@@ -661,63 +659,100 @@ class TelegramView:
 
         return msg, InlineKeyboardMarkup(keyboard)
 
+    # 🚨 [수술 완료] 움짤(GIF) 프레임 단위 스티칭 렌더러 이식
     def create_profit_image(self, ticker, profit, yield_pct, invested, revenue, end_date):
         W, H = 600, 920 
         IMG_H = 430 
+        os.makedirs("data", exist_ok=True)
         
-        img = Image.new('RGB', (W, H), color='#1E222D')
-        draw = ImageDraw.Draw(img)
-        
-        try:
-            if os.path.exists("background.png"):
-                bg = Image.open("background.png").convert("RGB")
-                bg_ratio = bg.width / bg.height
-                if bg_ratio > (W / IMG_H):
-                    new_w = int(IMG_H * bg_ratio)
-                    bg = bg.resize((new_w, IMG_H), Image.Resampling.LANCZOS).crop(((new_w - W) // 2, 0, (new_w + W) // 2, IMG_H))
-                else:
-                    new_h = int(W / bg_ratio)
-                    bg = bg.resize((W, new_h), Image.Resampling.LANCZOS).crop((0, (new_h - IMG_H) // 2, W, (new_h + IMG_H) // 2))
-                img.paste(bg, (0, 0))
-            else:
-                draw.rectangle([0, 0, W, IMG_H], fill="#111217")
-        except Exception: 
-            draw.rectangle([0, 0, W, IMG_H], fill="#111217")
-
+        # 폰트 로드
         f_title = self._load_best_font(self.bold_font_paths, 65)
         f_p = self._load_best_font(self.bold_font_paths, 85)
         f_y = self._load_best_font(self.reg_font_paths, 40)
         f_b_val = self._load_best_font(self.bold_font_paths, 32)
         f_b_lbl = self._load_best_font(self.reg_font_paths, 22)
+        
+        # 반복되는 텍스트 도장 찍기 내부 함수화 (DRY 원칙)
+        def apply_overlay(img_canvas):
+            draw = ImageDraw.Draw(img_canvas)
+            y_title = IMG_H + 60
+            draw.rectangle([W/2 - 140, y_title - 45, W/2 + 140, y_title + 45], fill="#2A2F3D")
+            self._safe_draw_text(draw, (W/2, y_title), f"{ticker}", font=f_title, fill="white", anchor="mm")
+            
+            color = "#007AFF" if profit < 0 else "#FF3B30"
+            sign = "-" if profit < 0 else "+"
+            
+            y_profit = y_title + 105
+            self._safe_draw_text(draw, (W/2, y_profit), f"{sign}${abs(profit):,.2f}", font=f_p, fill=color, anchor="mm")
+            y_yield = y_profit + 75
+            self._safe_draw_text(draw, (W/2, y_yield), f"YIELD {sign}{abs(yield_pct):,.2f}%", font=f_y, fill=color, anchor="mm")
+            
+            y_box = y_yield + 60
+            draw.rectangle([40, y_box, 290, y_box + 100], fill="#2A2F3D")
+            self._safe_draw_text(draw, (165, y_box + 35), f"${invested:,.2f}", font=f_b_val, fill="white", anchor="mm")
+            self._safe_draw_text(draw, (165, y_box + 75), "TOTAL INVESTED", font=f_b_lbl, fill="#8E8E93", anchor="mm")
+            
+            draw.rectangle([310, y_box, 560, y_box + 100], fill="#2A2F3D")
+            self._safe_draw_text(draw, (435, y_box + 35), f"${revenue:,.2f}", font=f_b_val, fill="white", anchor="mm")
+            self._safe_draw_text(draw, (435, y_box + 75), "TOTAL REVENUE", font=f_b_lbl, fill="#8E8E93", anchor="mm")
+            
+            self._safe_draw_text(draw, (W/2, H - 35), f"{end_date}", font=f_b_lbl, fill="#636366", anchor="mm")
+            return img_canvas
 
-        y_title = IMG_H + 60
-        draw.rectangle([W/2 - 140, y_title - 45, W/2 + 140, y_title + 45], fill="#2A2F3D")
-        
-        self._safe_draw_text(draw, (W/2, y_title), f"{ticker}", font=f_title, fill="white", anchor="mm")
-        
-        color = "#007AFF" if profit < 0 else "#FF3B30"
-        sign = "-" if profit < 0 else "+"
-        
-        y_profit = y_title + 105
-        self._safe_draw_text(draw, (W/2, y_profit), f"{sign}${abs(profit):,.2f}", font=f_p, fill=color, anchor="mm")
-        
-        y_yield = y_profit + 75
-        self._safe_draw_text(draw, (W/2, y_yield), f"YIELD {sign}{abs(yield_pct):,.2f}%", font=f_y, fill=color, anchor="mm")
-        
-        y_box = y_yield + 60
-        
-        draw.rectangle([40, y_box, 290, y_box + 100], fill="#2A2F3D")
-        self._safe_draw_text(draw, (165, y_box + 35), f"${invested:,.2f}", font=f_b_val, fill="white", anchor="mm")
-        self._safe_draw_text(draw, (165, y_box + 75), "TOTAL INVESTED", font=f_b_lbl, fill="#8E8E93", anchor="mm")
-        
-        draw.rectangle([310, y_box, 560, y_box + 100], fill="#2A2F3D")
-        self._safe_draw_text(draw, (435, y_box + 35), f"${revenue:,.2f}", font=f_b_val, fill="white", anchor="mm")
-        self._safe_draw_text(draw, (435, y_box + 75), "TOTAL REVENUE", font=f_b_lbl, fill="#8E8E93", anchor="mm")
-        
-        self._safe_draw_text(draw, (W/2, H - 35), f"{end_date}", font=f_b_lbl, fill="#636366", anchor="mm")
-        
-        # 🚨 [수술 완료] 이미지 생성/저장 시 data 폴더가 없으면 뻗어버리는 FileNotFoundError 원천 방어 (Bug #2)
-        os.makedirs("data", exist_ok=True)
+        def resize_and_crop(bg_frame):
+            bg_ratio = bg_frame.width / bg_frame.height
+            if bg_ratio > (W / IMG_H):
+                new_w = int(IMG_H * bg_ratio)
+                bg_res = bg_frame.resize((new_w, IMG_H), Image.Resampling.LANCZOS)
+                return bg_res.crop(((new_w - W) // 2, 0, (new_w + W) // 2, IMG_H))
+            else:
+                new_h = int(W / bg_ratio)
+                bg_res = bg_frame.resize((W, new_h), Image.Resampling.LANCZOS)
+                return bg_res.crop((0, (new_h - IMG_H) // 2, W, (new_h + IMG_H) // 2))
+
+        # 🚀 1순위: GIF 파일(움짤)이 존재할 경우 멀티 프레임 스티칭 처리
+        if os.path.exists("background.gif"):
+            try:
+                bg_gif = Image.open("background.gif")
+                duration = bg_gif.info.get('duration', 100)
+                loop = bg_gif.info.get('loop', 0)
+                
+                frames = []
+                for frame in ImageSequence.Iterator(bg_gif):
+                    frame_rgba = frame.convert("RGBA")
+                    # 배경이 되는 검은색 캔버스 신규 생성
+                    canvas = Image.new('RGB', (W, H), color='#1E222D')
+                    # 프레임 이미지를 규격에 맞게 리사이징 & 크롭
+                    bg_cropped = resize_and_crop(frame_rgba)
+                    # 캔버스 상단에 움짤 1개 프레임 부착
+                    canvas.paste(bg_cropped.convert("RGB"), (0, 0))
+                    # 하단에 텍스트 데이터 오버레이(도장 찍기)
+                    canvas = apply_overlay(canvas)
+                    frames.append(canvas)
+                
+                fname = f"data/profit_{ticker}.gif"
+                if frames:
+                    # 30~50장의 프레임을 다시 하나의 애니메이션으로 압축 저장 (Save_all=True)
+                    frames[0].save(fname, save_all=True, append_images=frames[1:], duration=duration, loop=loop)
+                    return fname
+            except Exception as e:
+                logging.error(f"🚨 GIF 렌더링 실패, PNG로 강제 폴백: {e}")
+
+        # 🛡️ 2순위: GIF가 없거나 렌더링 에러 발생 시 PNG 이미지로 폴백(Fallback) 처리
+        img = Image.new('RGB', (W, H), color='#1E222D')
+        try:
+            if os.path.exists("background.png"):
+                bg = Image.open("background.png").convert("RGB")
+                bg_cropped = resize_and_crop(bg)
+                img.paste(bg_cropped, (0, 0))
+            else:
+                draw = ImageDraw.Draw(img)
+                draw.rectangle([0, 0, W, IMG_H], fill="#111217")
+        except Exception:
+            draw = ImageDraw.Draw(img)
+            draw.rectangle([0, 0, W, IMG_H], fill="#111217")
+            
+        img = apply_overlay(img)
         fname = f"data/profit_{ticker}.png"
         img.save(fname)
         return fname
