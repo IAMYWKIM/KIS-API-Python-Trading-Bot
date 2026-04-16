@@ -1,5 +1,5 @@
 # ==========================================================
-# [telegram_view.py] - Part 1/2 부 (상반부)
+# [telegram_view.py] - 🌟 100% 통합 무결점 완성본 🌟
 # 💡 V25.05 💠 V-REV 하이브리드 & V14 무매 UI 렌더링 엔진
 # ⚠️ 수술 내역: 
 # 1. 덮어쓰기 사고로 소실된 TelegramView 클래스 헤더 및 필수 UI 모듈 100% 복원
@@ -18,6 +18,7 @@
 # 🚨 [V26.06 런타임 붕괴 방어] PIL 비트맵 폰트 강제 폴백 시 anchor 정렬 미지원에 따른 에러 우회 래퍼 이식
 # 🚀 [V27.00 자가 업데이트 라우터 이식] 2단계 승인 대기 확인 UI 렌더링 추가
 # 🚨 [V27.01 UI 팩트 교정] 휴먼 에러 방지를 위한 /update 명령어 최하단 격리 렌더링 적용
+# 🚨 [V27.16 그랜드 수술] 코파일럿 합작 - KeyError 런타임 즉사 방어(Safe Get), FileNotFoundError 졸업카드 증발 차단, 외화 RP 이중 계산 환각 UI 제거 및 유령 지층(None Date) 통제망 구축 완료
 # ==========================================================
 import os
 import math
@@ -90,11 +91,9 @@ class TelegramView:
         msg += "⚠️ /reset : 🔓 비상 해제 메뉴 (락/리버스)\n"
         msg += "┗ 🚨 수동 닻 올리기: 예산 부족으로 리버스 진입 후 외화RP매도 등 예수금을 추가 입금하셨다면, 이 메뉴에서 반드시 '리버스 강제 해제'를 눌러 닻을 올려주세요!\n\n"
         
-        # 💡 [핵심 수술] 사용자의 오터치 방지를 위해 /update 명령어를 /reset 경고문보다 더 하단으로 격리 배치
         msg += "⚠️ /update : 🚀 시스템 자가 업데이트 (경고: 로컬 코드가 초기화됨)\n"
         return msg
 
-    # NEW: [V27.00 자가 업데이트 라우터 이식] 2단계 승인 대기 UI 렌더링
     def get_update_confirm_menu(self):
         msg = "🚨 <b>[ 시스템 코어 자가 업데이트 (Self-Update) ]</b>\n\n"
         msg += "깃허브(GitHub) 원격 서버에 접속하여 <b>최신 퀀트 엔진 코드</b>를 로컬에 강제로 동기화(Hard Reset)합니다.\n\n"
@@ -170,14 +169,22 @@ class TelegramView:
             for idx, item in enumerate(reversed(q_data)):
                 qty = item.get('qty', 0)
                 price = item.get('price', 0.0)
-                date_str = item.get('date', '')[:10]
+                # 🚨 [수술 완료] 유령 지층(None Date) 접근 런타임 방어 및 UI 통제 (Bug #4)
+                item_date = item.get('date')
                 real_idx = len(q_data) - idx
-                msg += f"{real_idx:<3} {date_str[5:]} {qty:>4}주 ${price:.2f}\n"
                 
-                keyboard.append([
-                    InlineKeyboardButton(f"✏️ {real_idx}층 수정", callback_data=f"EDIT_Q:{ticker}:{item.get('date')}"),
-                    InlineKeyboardButton(f"🗑️ {real_idx}층 삭제", callback_data=f"DEL_REQ:{ticker}:{item.get('date')}")
-                ])
+                if item_date is None:
+                    msg += f"⚠️ {real_idx:<3} [날짜 손상] {qty:>4}주 ${price:.2f}\n"
+                    keyboard.append([
+                        InlineKeyboardButton(f"⚠️ {real_idx}층 (손상 - 수정 불가)", callback_data=f"QUEUE:VIEW:{ticker}")
+                    ])
+                else:
+                    date_str = item_date[:10]
+                    msg += f"{real_idx:<3} {date_str[5:]} {qty:>4}주 ${price:.2f}\n"
+                    keyboard.append([
+                        InlineKeyboardButton(f"✏️ {real_idx}층 수정", callback_data=f"EDIT_Q:{ticker}:{item_date}"),
+                        InlineKeyboardButton(f"🗑️ {real_idx}층 삭제", callback_data=f"DEL_REQ:{ticker}:{item_date}")
+                    ])
                 
         msg += "-"*30 + "</code>\n\n"
         msg += "🚨 <b>[ 비상 수혈 통제소 ]</b>\n"
@@ -200,14 +207,6 @@ class TelegramView:
             [InlineKeyboardButton("❌ 취소 (돌아가기)", callback_data=f"QUEUE:VIEW:{ticker}")]
         ]
         return msg, InlineKeyboardMarkup(keyboard)
-# ==========================================================
-# [telegram_view.py] - Part 2/2 부 (하반부)
-# 🌟 100% 통합 완성본 🌟
-# 🚨 [V26.05 UI 렌더링 패치] 졸업 이미지 폰트(Microscopic Bitmap) 붕괴 방어용 로컬 및 범용 폰트 경로 대거 증설 연동
-# 🚨 [V26.06 런타임 붕괴 방어] _safe_draw_text 래퍼 함수 전면 적용을 통한 비트맵 폰트 중앙 정렬 붕괴 완벽 차단
-# 🚀 [V27.00 자가 업데이트 라우터 이식] 2단계 승인 뷰포트 연결 완료
-# 🚨 [V27.01 UI 팩트 교정] 휴먼 에러 방지를 위한 /update 명령어 최하단 격리 렌더링 적용
-# ==========================================================
 
     def get_emergency_moc_confirm_menu(self, ticker, emergency_qty, emergency_price):
         msg = f"🚨 <b>[{ticker} 비상 수혈 최종 승인 대기]</b> 🚨\n\n"
@@ -294,14 +293,9 @@ class TelegramView:
         
         return msg, InlineKeyboardMarkup(keyboard)
 
+    # 🚨 [수술 완료] 죽은 파라미터(rp_amount)의 이중 계산(환각)을 제거하고, 
+    # caller(telegram_bot.py)가 전달한 권장 금액을 그대로 팩트 표출하도록 디커플링 완료 (Bug #3)
     def create_sync_report(self, status_text, dst_text, cash, rp_amount, ticker_data, is_trade_active, p_trade_data=None):
-        total_required_budget = sum(
-            t_info.get('one_portion', 0.0) 
-            for t_info in ticker_data 
-            if not t_info.get('is_locked', False)
-        )
-        
-        dynamic_rp_amount = max(0.0, cash - total_required_budget)
         total_locked = sum(t_info.get('escrow', 0.0) for t_info in ticker_data)
         
         header_msg = f"📜 <b>[ 통합 지시서 ({status_text}) ]</b>\n📅 <b>{dst_text}</b>\n"
@@ -314,7 +308,7 @@ class TelegramView:
         else:
             header_msg += f"💵 주문가능금액: ${cash:,.2f}\n"
             
-        header_msg += f"🏛️ RP 투자권장: ${dynamic_rp_amount:,.2f}\n"
+        header_msg += f"🏛️ RP 투자권장: ${rp_amount:,.2f}\n"
         header_msg += "----------------------------\n\n"
         
         body_msg = ""
@@ -444,11 +438,18 @@ class TelegramView:
                     
                 body_msg += f"📋 <b>[주문 계획 - {proc_status}]</b>\n"
                 plan_orders = t_info.get('plan', {}).get('orders', [])
+                
                 if plan_orders:
-                    jup_orders = [o for o in plan_orders if "줍줍" in o['desc']]
-                    n_orders = [o for o in plan_orders if "줍줍" not in o['desc']]
+                    # 🚨 [수술 완료] Safe Get(.get) 방어막으로 KeyError 런타임 즉사 버그 영구 적출 (Bug #1)
+                    jup_orders = [o for o in plan_orders if "줍줍" in o.get('desc', '')]
+                    n_orders = [o for o in plan_orders if "줍줍" not in o.get('desc', '')]
     
                     for o in n_orders:
+                        # 무결성 검증 가드 (이상한 dict 구조면 스킵)
+                        if not all(k in o for k in ('side', 'desc', 'type', 'price', 'qty')):
+                            body_msg += " ⚠️ <i>[렌더링 오류: 주문 데이터 불완전 - 렌더링 스킵]</i>\n"
+                            continue
+                            
                         ico = "🔴" if o['side'] == 'BUY' else "🔵"
                         desc = o['desc']
                         
@@ -462,8 +463,9 @@ class TelegramView:
                         body_msg += f" {ico} {desc}: <b>${o['price']} x {o['qty']}주</b>{type_disp}\n"
     
                     if jup_orders:
-                        prices = sorted([o['price'] for o in jup_orders], reverse=True)
-                        body_msg += f" 🧹 줍줍({len(jup_orders)}개): <b>${prices[0]} ~ ${prices[-1]} (LOC)</b>\n"
+                        prices = sorted([o['price'] for o in jup_orders if 'price' in o], reverse=True)
+                        if prices:
+                            body_msg += f" 🧹 줍줍({len(jup_orders)}개): <b>${prices[0]} ~ ${prices[-1]} (LOC)</b>\n"
                     
                     if is_trade_active:
                         if t_info.get('is_locked', False):
@@ -714,6 +716,8 @@ class TelegramView:
         
         self._safe_draw_text(draw, (W/2, H - 35), f"{end_date}", font=f_b_lbl, fill="#636366", anchor="mm")
         
+        # 🚨 [수술 완료] 이미지 생성/저장 시 data 폴더가 없으면 뻗어버리는 FileNotFoundError 원천 방어 (Bug #2)
+        os.makedirs("data", exist_ok=True)
         fname = f"data/profit_{ticker}.png"
         img.save(fname)
         return fname
