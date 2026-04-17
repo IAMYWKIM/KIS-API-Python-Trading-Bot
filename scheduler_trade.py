@@ -17,6 +17,7 @@
 # 🚨 [V27.13 그랜드 수술] 코파일럿 합작 - all_success 딕셔너리 붕괴 차단, 상위 평단가 음수 오류 해결, 스냅샷 은폐 사고(finally) 방어 및 0주 새출발 확정 매수(/ 0.935) 원본 완벽 복구
 # 🚨 [V27.14 핫픽스] AVWAP 예산 중복 소진 차단, 스윕 잔여 주문 취소, VWAP 예외 전파 붕괴 방어막 이식
 # 🚀 [V28.01 핫픽스] 정규장 스케줄러 타임 윈도우 15분 확장 (APScheduler 지연 붕괴 원천 차단)
+# 🚀 [V28.02 그랜드 수술] 코파일럿 엣지 케이스 3대 결함(DST 데드락 65분 확장, prev_c 결측 텔레그램 타전, tx_lock 콜드스타트 가드) 전면 수술 완료
 # ==========================================================
 import os
 import logging
@@ -204,7 +205,7 @@ async def scheduled_vwap_init_and_cancel(context):
                             vwap_cache[f"REV_{t}_nuked"] = True
                             
                             msg = f"🌅 <b>[{t}] 장 마감 33분 전 엔진 기상 (Fail-Safe 전환)</b>\n"
-                            msg += f"▫️ 프리장에 선제 전송해둔 '예방적 양방향 LOC 덫'을 전량 취소(Nuke)합니다.\n"
+                            msg += f"▫️ 프리장에 선제 전송해둔 '예방적 양방향 LOC 덫'을 전량 취소(Nuke)했습니다.\n"
                             msg += f"▫️ 1분 단위 정밀 타격(VWAP 슬라이싱) 모드로 교전 수칙을 변경합니다. ⚔️"
                             await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML', disable_notification=True)
                             await asyncio.sleep(1.0)
@@ -537,6 +538,9 @@ async def scheduled_vwap_trade(context):
         await asyncio.wait_for(_do_vwap(), timeout=45.0)
     except Exception as e:
         logging.error(f"🚨 VWAP 스케줄러 에러: {e}")
+# ==========================================================
+# [scheduler_trade.py] - 🌟 100% 통합 완성본 🌟 (Part 2)
+# ==========================================================
 
 # ==========================================================
 # 4. 🌅 정규장 오픈 (17:05) 전송 (V14 통합 & V-REV 예방 방어선)
@@ -550,8 +554,8 @@ async def scheduled_regular_trade(context):
     now_minutes = now.hour * 60 + now.minute
     target_minutes = target_hour * 60 + 5
     
-    # MODIFIED: [V28.01 아키텍처 수술] APScheduler 스레드 블로킹이나 서버 부하로 인해 정각(17:05) 타격을 수 분 늦게 시작하더라도 스케줄이 영구 침묵하지 않도록 허용 오차(Tolerance)를 15분으로 대폭 확장
-    if abs(now_minutes - target_minutes) > 15 and abs(now_minutes - target_minutes) < (24*60 - 15):
+    # MODIFIED: [Bug #1 수술] 서머타임(DST) 경계일 거래 누락 및 Jitter 오차 방어를 위해 윈도우를 65분으로 대폭 확장
+    if abs(now_minutes - target_minutes) > 65 and abs(now_minutes - target_minutes) < (24*60 - 65):
         return
         
     if not is_market_open():
@@ -561,6 +565,12 @@ async def scheduled_regular_trade(context):
     cfg, broker, strategy, tx_lock = app_data['cfg'], app_data['broker'], app_data['strategy'], app_data['tx_lock']
     strategy_rev = app_data.get('strategy_rev')
     queue_ledger = app_data.get('queue_ledger')
+    
+    # MODIFIED: [Bug #3 수술] 극희귀 콜드 스타트 시 tx_lock 미초기화로 인한 TypeError 런타임 붕괴 가드
+    if tx_lock is None:
+        logging.warning("⚠️ [regular_trade] tx_lock 미초기화. 이번 사이클 스킵.")
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ <b>[시스템 경고]</b> tx_lock 미초기화로 정규장 주문을 1회 스킵합니다.", parse_mode='HTML')
+        return
     
     jitter_seconds = random.randint(0, 180)
 
@@ -679,6 +689,15 @@ async def scheduled_regular_trade(context):
                                         grid_p = round(half_portion_cash / (b2_qty + n), 2)
                                         if grid_p >= 0.01 and grid_p < b2_price:
                                             loc_orders.append({'side': 'BUY', 'qty': 1, 'price': grid_p, 'type': 'LOC', 'desc': f'예방적 줍줍({n})'})
+                        # MODIFIED: [Bug #2 수술] prev_c = 0 (API 결측치)일 때 조용히 매수 방어선 누락되는 맹점 타전 및 락 차단
+                        else:
+                            logging.error(f"🚨 [{t}] V-REV 전일 종가(prev_c) 취득 실패(0). 매수 방어선(Buy1/Buy2/줍줍) 미장전!")
+                            msgs[t] += (
+                                f"🚨 <b>[{t}] 전일 종가 API 결측치 감지!</b>\n"
+                                f"▫️ prev_c = 0 수신 → 매수 방어선(Buy1/Buy2/줍줍)을 <b>장전하지 못했습니다.</b>\n"
+                                f"▫️ 매도 방어선만 전송된 상태입니다. 수동으로 [🚀 V-REV 방어선 수동 장전] 버튼을 눌러 재장전하거나 다음 날 확인하십시오.\n"
+                            )
+                            all_success_map[t] = False
                         
                         plan_result = {
                             "orders": loc_orders,
