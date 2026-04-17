@@ -21,6 +21,7 @@
 # 🚨 [V27.16 그랜드 수술] 코파일럿 합작 - KeyError 런타임 즉사 방어(Safe Get), FileNotFoundError 졸업카드 증발 차단, 외화 RP 이중 계산 환각 UI 제거 및 유령 지층(None Date) 통제망 구축 완료
 # 🚀 [V27.24 그랜드 수술] 도파민 폭발! GIF 애니메이션 렌더링을 위한 멀티 프레임 스티칭(Stitching) 코어 및 Fallback 엔진 탑재 완료
 # 🚨 [V27.25 UI 팩트 교정] 시작화면(/start) 스케줄러 타임라인 08:30 -> 10:00 KST 확정 정산 시간으로 시각적 동기화 완료
+# MODIFIED: [V28.04 개념 패치] 자동(자체 U-Curve 엔진)/수동(한투 알고리즘 위임) 모드 수수료 오해 텍스트 전면 교정 완료
 # ==========================================================
 import os
 import math
@@ -77,7 +78,6 @@ class TelegramView:
         
         msg += f"🕒 [ 운영 스케줄 ({dst_state}) ]\n"
         msg += "🔹 6시간 간격 : 🔑 API 토큰 자동 갱신\n"
-        # 🚨 [V27.25 팩트 교정] 08:30 가결제 스캔을 10:00 확정 정산 스캔 텍스트로 동기화 완료
         msg += "🔹 10:00 : 📝 확정 정산 스캔 & 졸업 발급\n"
         msg += f"🔹 {target_hour}:00 : 🔐 매매 초기화 및 변동성 락온\n"
         msg += f"🔹 {target_hour}:05 : 🌃 통합 주문 자동 실행\n\n"
@@ -327,8 +327,9 @@ class TelegramView:
                 body_msg += "💡 <b>원인 역산 추정:</b> 수동 매수로 수량이 급증했거나, '/seed' 시드머니 설정이 대폭 축소되었습니다.\n"
                 body_msg += "🛡️ <b>가동 조치:</b> 마이너스 호가 차단용 절대 하한선($0.01) 방어막 가동 중!\n\n"
 
+            # MODIFIED: 자체 엔진(자동) vs 한투 위임(수동) 개념 교정 텍스트 반영
             if v_mode == "V_REV":
-                v_mode_display = "V_REV 역추세(수동)" if is_manual_vwap else "V_REV 역추세"
+                v_mode_display = "V_REV 역추세(한투위임)" if is_manual_vwap else "V_REV 역추세(자체엔진)"
                 main_icon = "⚖️"
             else:
                 v_mode_display = "무매4 (VWAP)" if is_manual_vwap else "무매4 (LOC)"
@@ -409,7 +410,10 @@ class TelegramView:
                             body_msg += f"🎯 상방 스나이퍼: ${sn_target:.2f} 이상 대기\n"
             elif v_mode == "V_REV":
                 body_msg += "⚖️ <b>역추세 LIFO 큐(Queue) 엔진 스탠바이</b>\n"
-                if not is_manual_vwap:
+                # MODIFIED: 수동 모드(한투위임) 시 스케줄 텍스트 교정
+                if is_manual_vwap:
+                    body_msg += "⏱️ <b>VWAP 스케줄:</b> <b>(수동) 한투 앱에서 직접 알고리즘 장전 대기</b>\n"
+                else:
                     body_msg += "⏱️ <b>VWAP 스케줄:</b> 15:30 EST 앵커 세팅 ➔ 1분 단위 교차 타격\n"
             
             if v_mode == "V_REV":
@@ -490,7 +494,6 @@ class TelegramView:
             final_msg += "⛔ 장마감/애프터마켓: 주문 불가"
             
         return final_msg, InlineKeyboardMarkup(keyboard) if keyboard else None
-
     def get_settlement_message(self, active_tickers, config, atr_data, dynamic_target_data=None):
         msg = "⚙️ <b>[ 현재 설정 및 복리 상태 ]</b>\n\n"
         keyboard = []
@@ -504,7 +507,8 @@ class TelegramView:
                 ver_display = "V_REV 역추세"
             else:
                 icon = "💎"
-                ver_display = "무매4 (VWAP)" if is_manual_vwap else "무매4 (LOC)"
+                # MODIFIED: 수동 모드의 텍스트를 한투 알고리즘 위임 개념으로 변경
+                ver_display = "무매4 (VWAP/위임)" if is_manual_vwap else "무매4 (LOC)"
                 
             split_cnt = int(config.get_split_count(t))
             target_pct = config.get_target_profit(t)
@@ -523,7 +527,8 @@ class TelegramView:
                 keyboard.append(row_init)
             else:
                 msg += f"▫️ 분할: {split_cnt}회\n▫️ 목표: {target_pct}%\n▫️ 자동복리: {comp_rate}%\n"
-                v14_mode_txt = "VWAP 타임 슬라이싱 (유동성 추적)" if is_manual_vwap else "LOC 단일 타격 (초안정성)"
+                # MODIFIED: 수동/자동 집행 방식 텍스트 팩트 교정
+                v14_mode_txt = "🖐️ 수동 위임 (한투 VWAP 알고리즘)" if is_manual_vwap else "📉 LOC 단일 타격 (초안정성)"
                 msg += f"▫️ 집행: <b>{v14_mode_txt}</b>\n\n"
                 
             row1 = [
@@ -559,20 +564,21 @@ class TelegramView:
         return msg, InlineKeyboardMarkup(keyboard)
 
     def get_vrev_mode_selection_menu(self, ticker):
-        msg = f"⚠️ <b>[{ticker} 운용 방식 (수수료) 선택]</b>\n\n"
-        msg += "V-REV 전략은 1분 단위 교차 타격이 핵심이므로 <b>OpenAPI 수수료</b>가 일반 앱 매매보다 비싸게 청구될 수 있습니다.\n\n"
-        msg += "<b>1. 🤖 API 자동매매 모드</b>\n"
-        msg += "▫️ 장 마감 30분 전 1분 단위 VWAP 타임 슬라이싱 자동 격발\n"
-        msg += "▫️ 편리함 극대화 (수수료 감수)\n\n"
-        msg += "<b>2. 🖐️ 수동 VWAP 모드 (수수료 회피)</b>\n"
-        msg += "▫️ 봇은 타점 시그널 알림만 제공 (API 자동주문 영구 셧다운)\n"
-        msg += "▫️ <b>[필수]</b> 지시서를 보고 한투 앱(MTS)에서 직접 <b>'장 마감 30분 전'</b> VWAP 조건으로 수동 장전해야 함\n"
-        msg += "▫️ 수익률 보존 극대화\n\n"
+        # MODIFIED: 수수료 오해 문구 영구 소각 및 봇 자체 엔진 vs 한투 자체 알고리즘 개념으로 렌더링 텍스트 전면 수술
+        msg = f"⚠️ <b>[{ticker} 운용 방식 (알고리즘 주체) 선택]</b>\n\n"
+        msg += "V-REV 전략의 장 마감 전 VWAP 집행 주체를 선택해 주십시오.\n"
+        msg += "(※ 두 방식 모두 한국투자증권 매매 수수료는 동일하게 적용됩니다.)\n\n"
+        msg += "<b>1. 🤖 자동 모드 (자체 U-Curve 엔진)</b>\n"
+        msg += "▫️ 봇이 장 마감 30분 전부터 1분 단위로 VWAP 타임 슬라이싱 자동 격발\n"
+        msg += "▫️ 세밀한 정밀 타격 및 편의성 극대화\n\n"
+        msg += "<b>2. 🖐️ 수동 모드 (한투 자체 알고리즘 위임)</b>\n"
+        msg += "▫️ 봇은 타점 시그널 알림만 제공하며 API 자동주문을 100% 락다운함\n"
+        msg += "▫️ <b>[필수]</b> 지시서를 보고 한투 앱(MTS)에서 직접 <b>'장 마감 30분 전' VWAP 조건</b>으로 수동 장전해야 함\n\n"
         msg += "원하시는 운용 방식을 선택해 주십시오."
         
         keyboard = [
-            [InlineKeyboardButton("🤖 자동매매 (1분 정밀타격)", callback_data=f"SET_VER_CONFIRM:AUTO:{ticker}")],
-            [InlineKeyboardButton("🖐️ 수동매매 (수수료 100% 절약)", callback_data=f"SET_VER_CONFIRM:MANUAL:{ticker}")],
+            [InlineKeyboardButton("🤖 자동 모드 (자체 엔진 1분 타격)", callback_data=f"SET_VER_CONFIRM:AUTO:{ticker}")],
+            [InlineKeyboardButton("🖐️ 수동 모드 (한투 알고리즘 위임)", callback_data=f"SET_VER_CONFIRM:MANUAL:{ticker}")],
             [InlineKeyboardButton("❌ 작전 취소 (이전 버전 유지)", callback_data="RESET:CANCEL")]
         ]
         return msg, InlineKeyboardMarkup(keyboard)

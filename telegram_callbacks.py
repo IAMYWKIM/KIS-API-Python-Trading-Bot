@@ -174,7 +174,6 @@ class TelegramCallbacks:
                 page_idx = int(data[2])
                 msg, markup = self.view.get_version_message(history_data, page_index=page_idx)
                 await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-
         elif action == "RESET":
             if sub == "MENU":
                 active_tickers = self.cfg.get_active_tickers()
@@ -298,7 +297,8 @@ class TelegramCallbacks:
             ver = self.cfg.get_version(t)
             
             if ver == "V_REV" and getattr(self.cfg, 'get_manual_vwap_mode', lambda x: False)(t):
-                await query.answer("🚨 [격발 차단] 수동 VWAP 모드가 가동 중입니다. 지시서를 참고하여 한투 앱(V앱)에서 직접 매매를 걸어주십시오.", show_alert=True)
+                # MODIFIED: 수동 VWAP 개념 변경(한투 자체 VWAP 위임)에 따른 텍스트 수정
+                await query.answer("🚨 [격발 차단] 수동(한투 알고리즘) 모드가 가동 중입니다. 지시서를 참고하여 한투 앱(V앱)에서 직접 매매를 걸어주십시오.", show_alert=True)
                 return
             
             await query.edit_message_text(f"🚀 {t} 수동 강제 전송 시작 (교차 분리)...")
@@ -506,12 +506,13 @@ class TelegramCallbacks:
                 if hasattr(self.cfg, 'set_avwap_hybrid_mode'):
                     self.cfg.set_avwap_hybrid_mode(ticker, False)
                     
+                # MODIFIED: 수동 VWAP 개념 변경에 따른 문구 수정 (한투 자체 알고리즘 / 자체 U-Curve 엔진)
                 if mode_type == "MANUAL":
                     self.cfg.set_manual_vwap_mode(ticker, True)
-                    mode_txt = "🖐️ 수동 VWAP 모드 (수수료 회피)"
+                    mode_txt = "🖐️ 수동 모드 (한투 VWAP 알고리즘 위임)"
                 else:
                     self.cfg.set_manual_vwap_mode(ticker, False)
-                    mode_txt = "🤖 API 자동매매 모드 (1분 정밀타격)"
+                    mode_txt = "🤖 자동 모드 (자체 VWAP 엔진 정밀타격)"
                     
                 await query.edit_message_text(f"✅ <b>[{ticker}]</b> 퀀트 엔진이 <b>V_REV 역추세 하이브리드</b>로 전환되었습니다.\n▫️ <b>운용 방식:</b> {mode_txt}\n▫️ /sync 지시서를 확인해 주십시오.", parse_mode='HTML')
             
