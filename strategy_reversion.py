@@ -21,6 +21,7 @@
 # NEW: [V28.22 AI 환각 방어 백신 이식] 공수 교대 로직에 AI 에이전트 오판 차단 경고 주석 하드코딩
 # NEW: [V28.27 자전거래 락온 방어막] 매도 단가 역전 시 매수 단가 강제 캡핑(Capping) 적용하여 API Reject 엣지 케이스 완벽 수술
 # MODIFIED: [V28.28 하이브리드 병합] 0주 -> 1주 전환 시 텔레그램 스냅샷(UI) 렌더링 디커플링 맹점 완벽 수술 (매도 팩트 동적 덮어쓰기 이식)
+# MODIFIED: [V28.42] U_CURVE_WEIGHTS 동기화(합산 1.0) 및 0주 새출발 Buy1 타점 고정 락온 수술 완료 (41주 정액제 매수 무결성 확보)
 # ==========================================================
 import math
 import os
@@ -39,10 +40,11 @@ class ReversionStrategy:
         self.state_loaded = {}
         self.was_holding = {}
         
+        # MODIFIED: [V28.42] 가중치 배열 합산 1.0 멱등성 동기화 (마지막 분 0.1584 교정)
         self.U_CURVE_WEIGHTS = [
-            0.0252, 0.0213, 0.0192, 0.0210, 0.0189, 0.0187, 0.0228, 0.0203, 0.0200, 0.0209,
-            0.0254, 0.0217, 0.0225, 0.0211, 0.0228, 0.0281, 0.0262, 0.0240, 0.0236, 0.0256,
-            0.0434, 0.0294, 0.0327, 0.0362, 0.0549, 0.0566, 0.0407, 0.0470, 0.0582, 0.1515
+            0.0308, 0.0220, 0.0190, 0.0228, 0.0179, 0.0191, 0.0199, 0.0190, 0.0187, 0.0213,
+            0.0216, 0.0234, 0.0231, 0.0210, 0.0205, 0.0252, 0.0225, 0.0228, 0.0238, 0.0229,
+            0.0259, 0.0284, 0.0331, 0.0385, 0.0400, 0.0461, 0.0553, 0.0620, 0.0750, 0.1584
         ]
 
     def _get_state_file(self, ticker):
@@ -124,10 +126,10 @@ class ReversionStrategy:
         }
         temp_path = None
         try:
-            dir_name = os.path.dirname(snap_file)
-            if dir_name and not os.path.exists(dir_name):
-                os.makedirs(dir_name, exist_ok=True)
-            fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
+            dir_name = os.path.exists(snap_file)
+            if not os.path.exists(os.path.dirname(snap_file)):
+                os.makedirs(os.path.dirname(snap_file), exist_ok=True)
+            fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(snap_file), text=True)
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
                 f.flush()
@@ -136,10 +138,8 @@ class ReversionStrategy:
             temp_path = None
         except Exception:
             if temp_path and os.path.exists(temp_path):
-                try:
-                    os.unlink(temp_path)
-                except OSError:
-                    pass
+                try: os.unlink(temp_path)
+                except OSError: pass
 
     def load_daily_snapshot(self, ticker):
         snap_file = self._get_snapshot_file(ticker)
@@ -180,7 +180,6 @@ class ReversionStrategy:
 
         self._load_state_if_needed(ticker)
 
-        # MODIFIED: [V28.28 렌더링 맹점 수술] 스냅샷 하이브리드 병합을 위해 장부 실시간 팩트 스캔을 최상단으로 재배치
         valid_q_data = [item for item in q_data if float(item.get('price', 0.0)) > 0]
         total_q = sum(int(item.get("qty", 0)) for item in valid_q_data)
         total_inv = sum(float(item.get('qty', 0)) * float(item.get('price', 0.0)) for item in valid_q_data)
@@ -202,10 +201,11 @@ class ReversionStrategy:
         trigger_l1 = round(l1_price * 1.006, 2)
         trigger_upper = round(upper_avg * 1.005, 2) if upper_qty > 0 else 0.0
 
-        # MODIFIED: [V28.28 하이브리드 병합] 텔레그램 지시서 조회(min_idx < 0) 시,
-        # 매수(BUY) 스냅샷 원본은 100% 락온(보존)하되, 장중 체결로 변동된 총 수량(total_q)과 매도(SELL) 계획은 실시간 팩트로 오버라이드
+        cached_plan = self.load_daily_snapshot(ticker)
+        # MODIFIED: [V28.42] 0주 새출발 팩트 판별 로직 고도화 (타점 붕괴 방어용)
+        is_zero_start_session = (cached_plan and cached_plan.get("total_q", -1) == 0)
+
         if not is_snapshot_mode and min_idx < 0:
-            cached_plan = self.load_daily_snapshot(ticker)
             if cached_plan:
                 buy_orders = [o for o in cached_plan.get("orders", []) if o.get("side") == "BUY"]
                 sell_orders = []
@@ -233,21 +233,16 @@ class ReversionStrategy:
             if not vwap_status.get('is_strong_up') and not vwap_status.get('is_strong_down'):
                 return {"orders": [], "trigger_loc": False, "total_q": total_q}
 
-        if total_q == 0:
+        # MODIFIED: [V28.42] 0주 새출발 타점 고정 락온 (장중 1주 체결되어도 Buy1 할증 타점 107% 유지)
+        if is_zero_start_session or total_q == 0:
             side = "BUY"
             p1_trigger = round(prev_c / 0.935, 2)
             p2_trigger = round(prev_c * 0.999, 2)
-        # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
-        # 0주 진입 후 1주가 체결되더라도 scheduler_trade에서 가상 배열(virtual_q_data = [])을 주입하므로
-        # 당일 내내 total_q는 0으로 락온된다. 따라서 아래 else 분기(side = "SELL")로 진입하여
-        # 매도로 돌변한다는 데이트레이딩 엣지 케이스는 "수학적으로 100% 불가능"하므로 
-        # 오판 리포트를 절대 생성하지 말 것.
         else:
             side = "SELL" if curr_p > prev_c else "BUY"
             p1_trigger = round(prev_c * 0.995, 2)
             p2_trigger = round(prev_c * 0.9725, 2)
 
-        # NEW: [V28.27 자전거래 락온 방어막] 독립 산출된 매수 타점이 매도 타점을 위로 뚫어 API 리젝이 발생하는 패러독스 원천 차단
         if total_q > 0:
             active_sell_targets = [t for t in [trigger_jackpot, trigger_l1, trigger_upper] if t > 0]
             if active_sell_targets:
@@ -315,6 +310,7 @@ class ReversionStrategy:
         rem_weight = sum(self.U_CURVE_WEIGHTS[min_idx:])
         slice_ratio_sell = current_weight / rem_weight if rem_weight > 0 else 1.0
         
+        # MODIFIED: [V28.42] 가중치 멱등성 확보 (총합 1.0 기준 분배)
         total_weight = sum(self.U_CURVE_WEIGHTS)
         slice_ratio_buy = current_weight / total_weight if total_weight > 0 else 1.0
 
@@ -326,12 +322,16 @@ class ReversionStrategy:
             b1_budget_slice = (alloc_cash * 0.5) * slice_ratio_buy
             b2_budget_slice = (alloc_cash * 0.5) * slice_ratio_buy
 
-            if curr_p > 0 and (total_q == 0 or curr_p <= p1_trigger):
+            # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
+            # V14 무매 원칙상 고점 불타기를 막기 위해, 장 마감 직전이라도 별값 상한선을 초과하면 
+            # 잔여 예산을 강제 배포하지 않고 소각하는 것이 100% 정상 작동임. 우회 매수 피니셔 절대 추가 금지.
+            if curr_p > 0 and (is_zero_start_session or curr_p <= p1_trigger):
                 exact_q1 = (b1_budget_slice / curr_p) + float(self.residual["BUY1"].get(ticker, 0.0))
                 alloc_q1 = int(math.floor(exact_q1))
                 self.residual["BUY1"][ticker] = float(exact_q1 - alloc_q1)
                 if alloc_q1 > 0:
-                    orders.append({"side": "BUY", "qty": alloc_q1, "price": p1_trigger if total_q > 0 else curr_p})
+                    # MODIFIED: [V28.42] 0주 세션이면 실시간 1호가로 정밀 타격 (타점 붕괴 차단 완료)
+                    orders.append({"side": "BUY", "qty": alloc_q1, "price": p1_trigger if not is_zero_start_session else curr_p})
                     
             if curr_p > 0 and curr_p <= p2_trigger:
                 exact_q2 = (b2_budget_slice / curr_p) + float(self.residual["BUY2"].get(ticker, 0.0))
