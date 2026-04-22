@@ -32,6 +32,7 @@
 # MODIFIED: [V28.35] 0주 새출발 락온 시 엔진에서 누수된 잭팟/상방 가이던스 UI 렌더링 강제 은폐 및 스나이퍼 텍스트 디커플링 (상태 전이 맹점 방어)
 # 🚨 [V29.00 NEW] AVWAP 암살자 조기퇴근 제어 콘솔 진입 버튼 및 실시간 상태 텍스트 렌더링 파이프라인 이식 완료
 # 🚨 [V29.01 MODIFIED] GIF 화질 저하 팩트 진단: 애니메이션 병합 로직 100% 소각 및 background.png 기반 무손실 고화질(Quality 100) PNG 렌더링 엔진 원상 복구 완료
+# 🚨 [V29.07 UX 팩트 패치] AVWAP 암살자 제어 콘솔 진입 버튼 텍스트 통일화 (직관성 강화)
 # ==========================================================
 import os
 import math
@@ -571,7 +572,8 @@ class TelegramView:
                 keyboard.append([InlineKeyboardButton(avwap_txt, callback_data=avwap_cb)])
                 
                 if is_avwap and t == "SOXL":
-                    keyboard.append([InlineKeyboardButton(f"🏃‍♂️ {t} 조기퇴근 및 암살자 제어", callback_data=f"AVWAP:MENU:{t}")])
+                    # 🟢 팩트 패치 완료: 콘솔 타이틀과 버튼 텍스트를 직관적으로 100% 통일!
+                    keyboard.append([InlineKeyboardButton(f"🔫 {t} AVWAP 암살자 제어 콘솔", callback_data=f"AVWAP:MENU:{t}")])
             
             if ver == "V_REV":
                 row2 = [
