@@ -31,6 +31,7 @@
 # MODIFIED: [V28.34 UX 팩트 패치] V14 무매4 VWAP 모드의 settlement UI 렌더링 텍스트 맹점(수동 위임 표기) 팩트 교정 완료
 # MODIFIED: [V28.35] 0주 새출발 락온 시 엔진에서 누수된 잭팟/상방 가이던스 UI 렌더링 강제 은폐 및 스나이퍼 텍스트 디커플링 (상태 전이 맹점 방어)
 # 🚨 [V29.00 NEW] AVWAP 암살자 조기퇴근 제어 콘솔 진입 버튼 및 실시간 상태 텍스트 렌더링 파이프라인 이식 완료
+# 🚨 [V29.01 MODIFIED] GIF 화질 저하 팩트 진단: 애니메이션 병합 로직 100% 소각 및 background.png 기반 무손실 고화질(Quality 100) PNG 렌더링 엔진 원상 복구 완료
 # ==========================================================
 import os
 import math
@@ -703,6 +704,7 @@ class TelegramView:
 
         return msg, InlineKeyboardMarkup(keyboard)
 
+    # 🚨 V29.01 MODIFIED: GIF Fallback 제거 및 고화질 PNG 렌더링 원복
     def create_profit_image(self, ticker, profit, yield_pct, invested, revenue, end_date):
         W, H = 600, 920 
         IMG_H = 430 
@@ -751,28 +753,7 @@ class TelegramView:
                 bg_res = bg_frame.resize((W, new_h), Image.Resampling.LANCZOS)
                 return bg_res.crop((0, (new_h - IMG_H) // 2, W, (new_h + IMG_H) // 2))
 
-        if os.path.exists("background.gif"):
-            try:
-                bg_gif = Image.open("background.gif")
-                duration = bg_gif.info.get('duration', 100)
-                loop = bg_gif.info.get('loop', 0)
-                
-                frames = []
-                for frame in ImageSequence.Iterator(bg_gif):
-                    frame_rgba = frame.convert("RGBA")
-                    canvas = Image.new('RGB', (W, H), color='#1E222D')
-                    bg_cropped = resize_and_crop(frame_rgba)
-                    canvas.paste(bg_cropped.convert("RGB"), (0, 0))
-                    canvas = apply_overlay(canvas)
-                    frames.append(canvas)
-                
-                fname = f"data/profit_{ticker}.gif"
-                if frames:
-                    frames[0].save(fname, save_all=True, append_images=frames[1:], duration=duration, loop=loop)
-                    return fname
-            except Exception as e:
-                logging.error(f"🚨 GIF 렌더링 실패, PNG로 강제 폴백: {e}")
-
+        # 🟢 [수정 완료: GIF 로직 100% 소각, 고화질 정지화면 PNG 강제 렌더링]
         img = Image.new('RGB', (W, H), color='#1E222D')
         try:
             if os.path.exists("background.png"):
@@ -782,13 +763,14 @@ class TelegramView:
             else:
                 draw = ImageDraw.Draw(img)
                 draw.rectangle([0, 0, W, IMG_H], fill="#111217")
-        except Exception:
+        except Exception as e:
+            logging.error(f"🚨 배경 이미지 로드 실패: {e}")
             draw = ImageDraw.Draw(img)
             draw.rectangle([0, 0, W, IMG_H], fill="#111217")
             
         img = apply_overlay(img)
         fname = f"data/profit_{ticker}.png"
-        img.save(fname)
+        img.save(fname, format="PNG", quality=100)
         return fname
 
     def get_ticker_menu(self, current_tickers):
