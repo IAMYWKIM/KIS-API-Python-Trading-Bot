@@ -14,7 +14,7 @@
 # MODIFIED: [V28.27] 수동 매도로 인한 0주 락온 디커플링 상태 감지 및 /reset 유도 방어막 추가
 # MODIFIED: [V28.32] 코파일럿 아키텍처 채택: V14 전용 상방 스나이퍼 로직 충돌 방지를 위한 V-REV 락다운 방어막 원상 복구
 # MODIFIED: [V28.33] TQQQ 등 타 종목의 V-REV 횡단 진입 맹점 100% 소각 (SOXL 하드웨어 락온 이식)
-# 🚨 [V28.50 NEW] AVWAP 조기 퇴근 모드(EARLY ON/OFF) 및 타겟 수익률(TARGET_SET) 콜백 라우터 개통
+# 🚨 [V29.00 NEW] AVWAP 조기 퇴근 모드(EARLY ON/OFF) 및 타겟 수익률(TARGET_SET) 콜백 라우터 전면 개통 완료
 # ==========================================================
 import logging
 import datetime
@@ -25,7 +25,7 @@ import time
 import math
 import asyncio
 import yfinance as yf
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 class TelegramCallbacks:
@@ -549,7 +549,6 @@ class TelegramCallbacks:
             ticker = data[2]
             current_ver = self.cfg.get_version(ticker)
             
-            # MODIFIED: [V28.33] SOXL 전용 V-REV 서버사이드 방어막 추가 (타 종목 UI 우회 원천 차단)
             if new_ver == "V_REV" and ticker != "SOXL":
                 await update.callback_query.answer("⚠️ V-REV 모드는 SOXL 전용 아키텍처입니다. 전환이 차단되었습니다.", show_alert=True)
                 return
@@ -608,7 +607,6 @@ class TelegramCallbacks:
             
             target_ver = "V_REV" if mode_type in ["AUTO", "MANUAL"] else "V14"
 
-            # MODIFIED: [V28.33] SOXL 전용 V-REV 서버사이드 방어막 추가 (타 종목 UI 우회 원천 차단)
             if target_ver == "V_REV" and ticker != "SOXL":
                 await update.callback_query.answer("⚠️ V-REV 모드는 SOXL 전용 아키텍처입니다. 전환이 차단되었습니다.", show_alert=True)
                 return
@@ -668,9 +666,42 @@ class TelegramCallbacks:
                     
                 await query.edit_message_text(f"✅ <b>[{ticker}]</b> 퀀트 엔진이 <b>V14 무매4</b> 모드로 전환되었습니다.\n▫️ <b>집행 방식:</b> {mode_txt}\n▫️ /sync 명령어에서 변경된 지시서를 확인하세요.", parse_mode='HTML')
 
-        # 🚨 [V28.50 NEW] 암살자 전용 조기퇴근 콜백 라우터
+        # 🚨 [V29.00 NEW] 암살자 전용 조기퇴근 콜백 라우터 및 콘솔 렌더링
         elif action == "AVWAP":
-            if sub == "EARLY":
+            if sub == "MENU":
+                ticker = data[2]
+                is_hybrid_on = self.cfg.get_avwap_hybrid_mode(ticker)
+                
+                if not is_hybrid_on:
+                    await query.answer(f"⚠️ [{ticker}] AVWAP 하이브리드 모드가 꺼져있습니다. 먼저 바로 위 버튼을 눌러 활성화해주세요.", show_alert=True)
+                    return
+                    
+                early_mode = self.cfg.get_avwap_early_exit_mode(ticker)
+                early_target = self.cfg.get_avwap_early_target(ticker)
+                
+                msg = f"🔫 <b>[ {ticker} AVWAP 암살자 제어 콘솔 ]</b>\n\n"
+                
+                if early_mode:
+                    msg += "🏃‍♂️ <b>현재 모드: [조기 퇴근 (사용자 맞춤형)]</b>\n"
+                    msg += f"▫️ 장중 시간에 구애받지 않고 <b>+{early_target}%</b> 수익 도달 시 즉각 전량 익절하고 퇴근합니다.\n"
+                    msg += "▫️ 장막판 변동성 리스크를 회피하고 일일 수익을 확정 짓는 데 유리합니다.\n"
+                else:
+                    msg += "🦅 <b>현재 모드: [오리지널 스퀴즈 타겟팅]</b>\n"
+                    msg += "▫️ 수익이 나도 기다렸다가 <b>오후 2시 30분(EST)</b> 이후 발생하는 기관 숏커버링 스퀴즈(+3% 이상)를 노립니다.\n"
+                    msg += "▫️ 휩소 장세에서는 종가에 수익을 반납할 리스크가 있습니다.\n"
+
+                keyboard = [
+                    [
+                        InlineKeyboardButton(f"⚪ 오리지널 모드로 전환" if early_mode else "🎯 오리지널 모드 (현재 적용)", callback_data=f"AVWAP:EARLY:OFF:{ticker}"),
+                        InlineKeyboardButton(f"🎯 조기 퇴근 모드 (현재 적용)" if early_mode else "🏃‍♂️ 조기 퇴근 모드로 전환", callback_data=f"AVWAP:EARLY:ON:{ticker}")
+                    ],
+                    [
+                        InlineKeyboardButton(f"⚙️ 목표 수익률 설정 (현재: {early_target}%)", callback_data=f"AVWAP:TARGET_SET:{ticker}")
+                    ]
+                ]
+                await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+
+            elif sub == "EARLY":
                 mode = data[2]
                 ticker = data[3]
                 
