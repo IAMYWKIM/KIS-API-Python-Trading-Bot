@@ -19,6 +19,7 @@
 # NEW: [V28.31] 하단 고정 키보드 한글 신호 무응답 맹점 완벽 수술 (라우팅 복구)
 # 🚨 [V28.50 NEW] AVWAP 암살자 전용 '조기퇴근/타겟설정' 독립 UI 라우터 개통
 # 🚨 [V29.04 MODIFIED] UI 렌더링 파편화 수술: /history 명령어(cmd_history)의 구형 출력을 최신형 콜백 UI(HIST:LIST)와 100% 동일하게 통일화 완료.
+# 🚨 [V29.05 핵심 수술] 평단가 하방 오염 디커플링: V-REV 지시서(가이던스) 연산 시 한투 평단가(actual_avg) 개입을 영구 차단하고, 큐(Queue) 지층 기반 순수 역산 로직 100% 이식 완료.
 # ==========================================================
 import logging
 import datetime
@@ -478,6 +479,11 @@ class TelegramController:
                 
                 tag = "VWAP" if is_manual_vwap else "LOC"
                 
+                # ==========================================================
+                # 🚨 [V29.05 핵심 수술] V-REV 매도가 가이던스(지시서) 100% 디커플링 이식
+                # KIS 평단가(actual_avg) 접근을 영구 차단하고, 
+                # 오직 큐(q_list)의 [수량 * 가격] 역산 결과만 사용하여 안전 타점을 산출함!
+                # ==========================================================
                 if cached_snap and "orders" in cached_snap and v_rev_q_qty > 0:
                     sell_idx = 1
                     for o in cached_snap["orders"]:
@@ -486,8 +492,15 @@ class TelegramController:
                             sell_idx += 1
                             
                     if not is_manual_vwap:
-                        snap_avg = cached_snap.get('avg_price', actual_avg)
-                        target_jackpot = round(snap_avg * 1.01, 2)
+                        # 잭팟 타점 역시 스냅샷 평균가 우선, 없으면 큐(Queue) 순수 평균가 사용
+                        if 'avg_price' in cached_snap:
+                            snap_avg = cached_snap['avg_price']
+                        else:
+                            total_q = sum(item.get('qty', 0) for item in q_list)
+                            total_inv = sum(item.get('qty', 0) * item.get('price', 0.0) for item in q_list)
+                            snap_avg = total_inv / total_q if total_q > 0 else 0.0
+                            
+                        target_jackpot = round(snap_avg * 1.01, 2) if snap_avg > 0 else 0.0
                         v_rev_guidance += f" 🎯 [전체 잭팟] ${target_jackpot:.2f} <b>{logic_qty}주</b> (옵션)\n"
                 
                 elif q_list and logic_qty > 0:
@@ -497,17 +510,20 @@ class TelegramController:
                     target_l1 = round(l1_price * 1.006, 2)
                     v_rev_guidance += f" 🔵 매도1(Pop1) ${target_l1:.2f} <b>{l1_qty}주</b> ({tag})\n"
                     
-                    upper_qty = logic_qty - l1_qty
+                    upper_qty = sum(item.get('qty', 0) for item in q_list[:-1])
                     if upper_qty > 0:
-                        upper_invested = (logic_qty * actual_avg) - (l1_qty * l1_price)
-                        safe_fallback = curr if curr and curr > 0 else actual_avg
-                        upper_avg = upper_invested / upper_qty if upper_invested > 0 and upper_qty > 0 else safe_fallback
+                        upper_invested = sum(item.get('qty', 0) * item.get('price', 0.0) for item in q_list[:-1])
+                        upper_avg = upper_invested / upper_qty
                         
                         target_upper = round(upper_avg * 1.005, 2)
                         v_rev_guidance += f" 🔵 매도2(Pop2) ${target_upper:.2f} <b>{upper_qty}주</b> ({tag})\n"
                         
                     if not is_manual_vwap:
-                        target_jackpot = round(actual_avg * 1.01, 2)
+                        total_q = sum(item.get('qty', 0) for item in q_list)
+                        total_inv = sum(item.get('qty', 0) * item.get('price', 0.0) for item in q_list)
+                        pure_queue_avg = total_inv / total_q if total_q > 0 else 0.0
+                        
+                        target_jackpot = round(pure_queue_avg * 1.01, 2) if pure_queue_avg > 0 else 0.0
                         v_rev_guidance += f" 🎯 [전체 잭팟] ${target_jackpot:.2f} <b>{logic_qty}주</b> (옵션)\n"
                 else:
                     v_rev_guidance += " 🔵 매도: 대기 물량 없음 (관망)\n"
@@ -539,7 +555,7 @@ class TelegramController:
                 if is_manual_vwap:
                     v_rev_guidance += "\n\n🚨 <b>[ ⛔ 치명적 경고: 수동 VWAP 설정 ]</b> 🚨\n"
                     v_rev_guidance += "한투 앱(V앱)에서 수동 주문을 거실 때, <b>절대로 '하루 종일'로 설정하지 마십시오!</b>\n"
-                    v_rev_guidance += "작 작동 시간은 반드시 \n<b>[장 마감 30분 전 ~ 장 마감]</b>\n으로만 세팅하셔야 합니다.\n"
+                    v_rev_guidance += "작동 시간은 반드시 \n<b>[장 마감 30분 전 ~ 장 마감]</b>\n으로만 세팅하셔야 합니다.\n"
                     v_rev_guidance += "장중 내내 작동하게 둘 경우 V-REV 코어 전략의 수익률이 심각하게 파괴됩니다."
 
                 if hasattr(self.cfg, 'get_avwap_hybrid_mode') and self.cfg.get_avwap_hybrid_mode(t):
@@ -616,7 +632,6 @@ class TelegramController:
         else:
             await status_msg.edit_text("✅ <b>동기화 완료</b> (표시할 진행 중인 장부가 없거나 에러 대기 중입니다)", parse_mode='HTML')
 
-    # 🟢 [수술 완료] cmd_history를 콜백과 완전히 동일한 UI 렌더링으로 통일화
     async def cmd_history(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update):
             return

@@ -24,6 +24,7 @@
 # MODIFIED: [V28.42] U_CURVE_WEIGHTS 동기화(합산 1.0) 및 0주 새출발 Buy1 타점 고정 락온 수술 완료
 # MODIFIED: [V28.43] 0주 새출발 예산 분리 팩트 체크 및 안심 주석 하드코딩 (Buy1: 무제한 50% 20주 / Buy2: 조건부 50% 21주 락온)
 # MODIFIED: [V28.44] 0주 새출발 Buy1 상한제 완전 철거 (50% 예산 20주 무조건 매수 락온 및 타점 붕괴 영구 방어)
+# 🚨 [V29.06 팩트 증명] 한투 평단가 하방 오염 100% 영구 차단 검증. 본 엔진은 외부 평단가(actual_avg) 개입을 일절 불허하며 오직 큐(q_data) 기반 순수 역산 평단가만 사용함이 검증됨.
 # ==========================================================
 import math
 import os
@@ -182,6 +183,7 @@ class ReversionStrategy:
 
         self._load_state_if_needed(ticker)
 
+        # 🛡️ [순도 100% 디커플링 연산] 한투 평단가는 절대 개입할 수 없음
         valid_q_data = [item for item in q_data if float(item.get('price', 0.0)) > 0]
         total_q = sum(int(item.get("qty", 0)) for item in valid_q_data)
         total_inv = sum(float(item.get('qty', 0)) * float(item.get('price', 0.0)) for item in valid_q_data)
