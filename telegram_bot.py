@@ -24,8 +24,11 @@
 # 🚨 [V29.10 팩트 교정] V-REV 0주 새출발 렌더링 시 스냅샷 수량(logic_qty) 의존성 전면 소각 및 실잔고(v_rev_q_qty) 기반 100% 디커플링 완성 (타점 오염 및 줍줍 렌더링 버그 영구 차단)
 # 🚨 [V30.01 팩트 수술] AVWAP 암살자 실시간 레이더(Radar) 시각화 엔진의 혈관(Sync Engine) 개통
 # 🚨 [V30.02 팩트 교정] 버전 기록(V28.40/V29.10)의 0주 락온 디커플링 환각 사태 완벽 수술
-# 🚨 [V30.04 팩트 교정] AVWAP 암살자 타임라인 시간 표기 100% 소각
-# 🚨 [V30.05 팩트 수술] AVWAP 암살자 모니터링 타임라인 1시간 연장 (14:00 -> 15:00 EST) 렌더링 디커플링 교정.
+# 🚨 [V30.04 팩트 교정] AVWAP 암살자 타임라인 시간 표기 100% 소각 및 직관적 상태 위주 렌더링
+# 🚨 [V30.05 팩트 수술] AVWAP 암살자 모니터링 타임라인 1시간 연장 (15:00 EST 마감) 렌더링 동기화
+# 🚨 [V30.06 NEW] 장중 업데이트 레드존(Update Red-Zone) 원천 차단:
+# VWAP 타임 슬라이싱 및 장마감 정산의 무결성을 위해 EST 14:55 ~ 16:10 사이의
+# /update 명령어를 시스템적으로 차단하고 팩트 메시지를 타전하도록 수술 완료.
 # ==========================================================
 import logging
 import datetime
@@ -219,13 +222,18 @@ class TelegramController:
     async def cmd_update(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update):
             return
+            
+        # 🚨 [V30.06 NEW] 장중 업데이트 레드존 체크 (14:55 ~ 16:10 EST)
+        from plugin_updater import SystemUpdater
+        updater = SystemUpdater()
+        
+        allowed, fail_msg = updater.is_update_allowed()
+        if not allowed:
+            return await update.message.reply_text(f"🛑 <b>[작전 중 업데이트 거부]</b>\n\n{fail_msg}", parse_mode='HTML')
         
         status_msg = await update.message.reply_text("⏳ <b>[시스템 업데이트]</b> 깃허브 원격 서버와 통신을 시작합니다...", parse_mode='HTML')
         
         try:
-            from plugin_updater import SystemUpdater
-            updater = SystemUpdater()
-            
             success, msg = await updater.pull_latest_code()
             
             safe_msg = html.escape(msg)
@@ -605,14 +613,14 @@ class TelegramController:
                         except Exception as e:
                             logging.error(f"🚨 [{t}] AVWAP 실시간 레이더 스캔 타임아웃/에러: {e}")
 
-                    # 🚨 [V30.05 팩트 교정] AVWAP 감시 시간 15시로 연장
+                    # 🚨 [V30.04/V30.05 팩트 교정] 타임라인 동적 오버라이드 및 시간 표기 제거
                     if not tracking_cache.get(f"AVWAP_BOUGHT_{t}") and not tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"):
                         curr_time = now_est.time()
                         time_1000 = datetime.time(10, 0)
-                        time_1500 = datetime.time(15, 0)
+                        time_1500 = datetime.time(15, 0) # [V30.05] 15:00 EST 연장
                         
                         if curr_time < time_1000:
-                            avwap_status_txt = "⏳  금일 감시 대기 "
+                            avwap_status_txt = "⏳ 금일 감시 대기"
                         elif curr_time >= time_1500:
                             avwap_status_txt = "⛔ 금일 감시 종료"
 
