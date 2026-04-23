@@ -22,10 +22,12 @@
 # 🚨 [V29.05 핵심 수술] 평단가 하방 오염 디커플링: V-REV 지시서(가이던스) 연산 시 한투 평단가(actual_avg) 개입을 영구 차단하고, 큐(Queue) 지층 기반 순수 역산 로직 100% 이식 완료.
 # 🚨 [V29.08 팩트 교정] 장마감(CLOSE) 현재가 출력 수술: 애프터마켓 종료 후에는 실시간 가격($100.25) 대신 '정규장 종가($98.09)'를 현재가(curr)로 강제 고정하여 HTS와 100% 동기화 완료.
 # 🚨 [V29.10 팩트 교정] V-REV 0주 새출발 렌더링 시 스냅샷 수량(logic_qty) 의존성 전면 소각 및 실잔고(v_rev_q_qty) 기반 100% 디커플링 완성 (타점 오염 및 줍줍 렌더링 버그 영구 차단)
-# 🚨 [V30.01 팩트 수술] AVWAP 암살자 실시간 레이더(Radar) 시각화 엔진의 혈관(Sync Engine) 개통:
-# /sync 명령어 조립 파이프라인에서 기초자산 1분봉 데이터와 현재가를 팩트로 스캔한 뒤,
-# strategy의 get_decision() 블랙박스를 돌려 추출한 base_vwap, gap_pct 값을
-# t_info 딕셔너리에 원자적으로 주입(Lock-on)하여 렌더링 뷰포트에 100% 동기화 완료.
+# 🚨 [V30.01 팩트 수술] AVWAP 암살자 실시간 레이더(Radar) 시각화 엔진의 혈관(Sync Engine) 개통
+# 🚨 [V30.02 팩트 교정] 버전 기록(V28.40/V29.10)의 0주 락온 디커플링 환각 사태 완벽 수술:
+# telegram_view.py 에는 방어막이 이식되었으나 telegram_bot.py 에서 is_zero_start 팩트를 
+# 넘겨주지 않아 발생한 절반의 수술(의존성 누수)을 원천 차단. 
+# 스냅샷의 is_zero_start 팩트를 추출하여 뷰포트로 직결(Lock-on)하고, Buy1/Buy2 타점 연산 시에도 
+# 실시간 잔고(v_rev_q_qty == 0) 대신 스냅샷 팩트를 바라보도록 아키텍처 배선 100% 팩트 교정 완료.
 # ==========================================================
 import logging
 import datetime
@@ -146,7 +148,6 @@ class TelegramController:
         application.add_handler(CommandHandler("reset", self.cmd_reset))
         application.add_handler(CommandHandler("update", self.cmd_update))
         
-        # 🚨 [V28.50 NEW] 암살자 전용 명령어 신설
         application.add_handler(CommandHandler("avwap", self.cmd_avwap))
         
         application.add_handler(CallbackQueryHandler(self.handle_callback))
@@ -173,13 +174,11 @@ class TelegramController:
             return await self.cmd_mode(update, context)
         elif "명예의 전당" in text or "졸업" in text:
             return await self.cmd_history(update, context)
-        # 🚨 [V28.50 NEW] 다이렉트 패스에 암살자 키워드 이식
         elif "암살자" in text or "조기" in text:
             return await self.cmd_avwap(update, context)
             
         await self.states_handler.handle_message(update, context, self)
 
-    # 🚨 [V28.50 NEW] 암살자 전용 조기퇴근 UI 라우터
     async def cmd_avwap(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update):
             return
@@ -439,12 +438,15 @@ class TelegramController:
                     if hasattr(self.strategy, 'v14_plugin') and hasattr(self.strategy.v14_plugin, 'load_daily_snapshot'):
                         cached_snap = self.strategy.v14_plugin.load_daily_snapshot(t)
             
+            # 🚨 [V30.02 팩트 교정] 스냅샷의 is_zero_start 팩트 추출 락온
             logic_qty = actual_qty
+            is_zero_start_fact = (actual_qty == 0)
             if cached_snap:
                 if "total_q" in cached_snap:
                     logic_qty = cached_snap["total_q"]
                 elif "initial_qty" in cached_snap:
                     logic_qty = cached_snap["initial_qty"]
+                is_zero_start_fact = cached_snap.get("is_zero_start", logic_qty == 0)
 
             plan = self.strategy.get_plan(
                 t, curr, actual_avg, logic_qty, safe_prev_close, ma_5day=ma_5day,
@@ -473,7 +475,6 @@ class TelegramController:
             avwap_avg = 0.0
             avwap_status_txt = ""
             
-            # 🚨 [V30.01 수술] AVWAP 실시간 기초자산 팩트 스캔을 위한 변수 초기화
             avwap_base_ticker = 'N/A'
             avwap_base_price = 0.0
             avwap_base_vwap = 0.0
@@ -538,8 +539,9 @@ class TelegramController:
                     v_rev_guidance += " 🔵 매도: 대기 물량 없음 (관망)\n"
                 
                 if safe_prev_close > 0:
-                    b1_price = round(safe_prev_close / 0.935 if v_rev_q_qty == 0 else safe_prev_close * 0.995, 2)
-                    b2_price = round(safe_prev_close * 0.999 if v_rev_q_qty == 0 else safe_prev_close * 0.9725, 2)
+                    # 🚨 [V30.02 팩트 교정] 타점 연산 시 실잔고 대신 스냅샷 is_zero_start_fact 팩트 절대 의존
+                    b1_price = round(safe_prev_close / 0.935 if is_zero_start_fact else safe_prev_close * 0.995, 2)
+                    b2_price = round(safe_prev_close * 0.999 if is_zero_start_fact else safe_prev_close * 0.9725, 2)
                     
                     b1_qty = math.floor(half_portion_cash / b1_price) if b1_price > 0 else 0
                     b2_qty = math.floor(half_portion_cash / b2_price) if b2_price > 0 else 0
@@ -549,7 +551,7 @@ class TelegramController:
                     if b2_qty > 0:
                         v_rev_guidance += f" 🔴 매수2(Buy2) ${b2_price:.2f} <b>{b2_qty}주</b> ({tag})\n"
                         
-                    if v_rev_q_qty == 0:
+                    if is_zero_start_fact:
                         v_rev_guidance += " 🚫 <code>[0주 새출발] 기준 평단가 부재로 줍줍 생략 (1층 확보에 예산 100% 집중)</code>"
                     elif b2_qty > 0 and b2_price > 0:
                         if not is_manual_vwap:
@@ -580,7 +582,6 @@ class TelegramController:
                     else:
                         avwap_status_txt = "👀 장초반 필터 스캔 및 타점 대기"
 
-                    # 🚨 [V30.01 팩트 수술] AVWAP 실시간 레이더(Radar) 시각화 엔진의 혈관(Sync Engine) 개통
                     avwap_base_ticker = 'SOXX' if t == 'SOXL' else ('QQQ' if t == 'TQQQ' else t)
 
                     if status_code in ["PRE", "REG"] and not tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"):
@@ -608,6 +609,7 @@ class TelegramController:
                         except Exception as e:
                             logging.error(f"🚨 [{t}] AVWAP 실시간 레이더 스캔 타임아웃/에러: {e}")
 
+            # 🚨 [V30.02 팩트 교정] 뷰포트로 쏘는 딕셔너리에 is_zero_start 팩트 직결 락온 추가
             ticker_data_list.append({
                 'ticker': t, 'version': ver, 't_val': t_val, 'split': split, 'curr': curr, 'avg': actual_avg, 'qty': actual_qty,
                 'profit_amt': (curr - actual_avg) * actual_qty if actual_qty > 0 else 0, 
@@ -641,7 +643,8 @@ class TelegramController:
                 'avwap_base_price': avwap_base_price if is_avwap_active else 0.0,
                 'avwap_base_vwap': avwap_base_vwap if is_avwap_active else 0.0,
                 'avwap_gap_pct': avwap_gap_pct if is_avwap_active else 0.0,
-                'is_manual_vwap': is_manual_vwap
+                'is_manual_vwap': is_manual_vwap,
+                'is_zero_start': is_zero_start_fact
             })
             
             total_buy_needed += sum(o['price']*o['qty'] for o in plan.get('orders', []) if o.get('side')=='BUY')
@@ -821,4 +824,3 @@ class TelegramController:
         history_data = self.cfg.get_full_version_history()
         msg, markup = self.view.get_version_message(history_data, page_index=None)
         await update.message.reply_text(msg, reply_markup=markup, parse_mode='HTML')
-
