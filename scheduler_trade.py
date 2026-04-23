@@ -1,5 +1,5 @@
 # ==========================================================
-# [scheduler_trade.py] - 🌟 100% 통합 전투 사령부 (V29.11) 🌟
+# [scheduler_trade.py] - 🌟 100% 통합 전투 사령부 (V29.12) 🌟
 # ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
 # 🚨 [V27.13 그랜드 수술] 코파일럿 합작 5대 엣지 케이스 완벽 수술 완료
 # 🚀 [V28.01 그랜드 수술] 서머타임 데드락 방어 윈도우 65분 확장, 결측치 락온 차단, tx_lock 런타임 붕괴 가드 완비
@@ -19,6 +19,7 @@
 # MODIFIED: [V29.09 핫픽스] 0주 새출발 예방적 LOC 덫 타점 역배선(Swap) 팩트 교정 완료
 # MODIFIED: [V29.10 핫픽스] 스나이퍼 모니터링 들여쓰기(Indentation) 붕괴 복구 및 SyntaxError 원천 차단
 # MODIFIED: [V29.11 핫픽스] AVWAP 엔진 get_decision() 매개변수 불일치(TypeError) 팩트 교정 완료 (ticker 인자 제거)
+# MODIFIED: [V29.12 핫픽스] 스나이퍼 모니터링 AttributeError(get_master_switch) Safe Casting 방어막 이식
 # ==========================================================
 import logging
 import datetime
@@ -30,6 +31,7 @@ import os
 import time
 import json
 import random
+import glob
 import pandas_market_calendars as mcal
 
 from scheduler_core import is_market_open, get_budget_allocation, get_target_hour
@@ -226,7 +228,8 @@ async def scheduled_sniper_monitor(context):
                 # ------------------------------------------------------
                 # 🔴 일반/하방 및 상방 스나이퍼 감시 (들여쓰기 교정 완료)
                 # ------------------------------------------------------
-                master_switch = cfg.get_master_switch(t)
+                # MODIFIED: [V29.12 핫픽스] get_master_switch 누락에 따른 AttributeError 런타임 붕괴 원천 차단 (Safe Casting)
+                master_switch = getattr(cfg, 'get_master_switch', lambda x: "ALL")(t)
                 sniper_buy_locked = getattr(cfg, 'get_sniper_buy_locked', lambda x: False)(t)
                 sniper_sell_locked = getattr(cfg, 'get_sniper_sell_locked', lambda x: False)(t)
 
