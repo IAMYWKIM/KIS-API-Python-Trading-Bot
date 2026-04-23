@@ -1,5 +1,5 @@
 # ==========================================================
-# [scheduler_trade.py] - 🌟 100% 통합 전투 사령부 (V29.13) 🌟
+# [scheduler_trade.py] - 🌟 100% 통합 전투 사령부 (V29.14) 🌟
 # ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
 # 🚨 [V27.13 그랜드 수술] 코파일럿 합작 5대 엣지 케이스 완벽 수술 완료
 # 🚀 [V28.01 그랜드 수술] 서머타임 데드락 방어 윈도우 65분 확장, 결측치 락온 차단, tx_lock 런타임 붕괴 가드 완비
@@ -9,18 +9,19 @@
 # 🚀 [V28.07 그랜드 수술] 스냅샷 강제 은폐 적출 및 VWAP 디커플링 무결성 확보
 # 🚀 [V28.13 그랜드 수술] 애프터마켓 스냅샷 소각 맹점 적출 및 24시간 디커플링 보존
 # 🚀 [V28.30 그랜드 수술] 애프터마켓 로터리 덫 휴장일 오발탄(False Fire) 원천 차단 쉴드 이식
-# 🚀 [V28.31 그랜드 수술] V14 상방 스나이퍼 코어 100% 이식 및 V-REV 락다운 복원 완료
-# 🚀 [V28.37 그랜드 수술] 스윕 피니셔 발화 후 '잔고 증발' 오발탄 원천 차단: sweep_msg_sent 플래그 교차 참조 바이패스 가드 이식 (sniper_monitor + vwap_trade 2중 수술)
-# MODIFIED: [V28.41] U_CURVE_WEIGHTS 배열 합산 불일치(0.9596)로 인한 예산 누수 버그 완벽 수술 (합산 1.0 멱등성 동기화)
+# 🚀 [V28.31 그랜드 수술] V14 상방 스나이퍼 코어 100% 이식 및 V-REV 락다운 복 복원 완료
+# 🚀 [V28.37 그랜드 수술] 스윕 피니셔 발화 후 '잔고 증발' 오발탄 원천 차단: sweep_msg_sent 플래그 교차 참조 바이패스 가드 이식
+# MODIFIED: [V28.41] U_CURVE_WEIGHTS 배열 합산 불일치(0.9596)로 인한 예산 누수 버그 완벽 수술
 # 🚨 [V28.50 NEW] AVWAP 조기퇴근 모드(Early Exit) 파이프라인 배선 개통 및 타겟 수익률 팩트 캐스팅
-# 🚨 [V28.51 팩트 수술] 정규장 스케줄러 통신 지연(가짜 에러) 진단망 이식: 재시도 루프 시 첫 실패 사유(fail_reason 및 예외 타입)를 텔레그램으로 즉시 타전하여 원격 진단 100% 개통.
-# 🚨 [V29.03 팩트 수술] AVWAP 영속성(Persistence) 듀얼 캐시 동기화 이식 완료: GCP 서버 재부팅(Amnesia) 시 json 파일에서 과거 상태를 자가 복구(Self-Healing)하고 팩트 매매를 즉시 재개하는 파이프라인 완벽 개통.
+# 🚨 [V28.51 팩트 수술] 정규장 스케줄러 통신 지연(가짜 에러) 진단망 이식
+# 🚨 [V29.03 팩트 수술] AVWAP 영속성(Persistence) 듀얼 캐시 동기화 이식 완료
 # MODIFIED: [V29.08 핫픽스] AVWAP 암살자 런타임 라우팅 누수(AttributeError) 팩트 교정 완료
 # MODIFIED: [V29.09 핫픽스] 0주 새출발 예방적 LOC 덫 타점 역배선(Swap) 팩트 교정 완료
 # MODIFIED: [V29.10 핫픽스] 스나이퍼 모니터링 들여쓰기(Indentation) 붕괴 복구 및 SyntaxError 원천 차단
-# MODIFIED: [V29.11 핫픽스] AVWAP 엔진 get_decision() 매개변수 불일치(TypeError) 팩트 교정 완료 (ticker 인자 제거)
+# MODIFIED: [V29.11 핫픽스] AVWAP 엔진 get_decision() 매개변수 불일치(TypeError) 팩트 교정 완료
 # MODIFIED: [V29.12 핫픽스] 스나이퍼 모니터링 AttributeError(get_master_switch) Safe Casting 방어막 이식
 # MODIFIED: [V29.13 핫픽스] 스나이퍼 모니터링 이중 락(Nested tx_lock) 데드락 붕괴 현상 원천 적출 완료
+# MODIFIED: [V29.14 핫픽스] InfiniteStrategy check_sniper_condition 모듈 누락(AttributeError) Safe Bypass 방어막 이식
 # ==========================================================
 import logging
 import datetime
@@ -175,7 +176,7 @@ async def scheduled_sniper_monitor(context):
                     early_exit_mode = cfg.get_avwap_early_exit_mode(t)
                     early_target_profit = cfg.get_avwap_early_target(t) / 100.0
                     
-                    # MODIFIED: [V29.11 핫픽스] AVWAP 엔진 get_decision() 매개변수 불일치(TypeError) 팩트 교정 완료 (ticker 인자 제거)
+                    # MODIFIED: [V29.11 핫픽스] AVWAP 엔진 get_decision() 매개변수 불일치(TypeError) 팩트 교정 완료
                     decision = strategy.v_avwap_plugin.get_decision(
                         base_df=df_1min_base,
                         target_df=None,
@@ -195,7 +196,6 @@ async def scheduled_sniper_monitor(context):
                         qty = decision.get("qty", 0)
                         
                         if qty > 0:
-                            # 🚨 [V29.13 수술] 중첩 락(Nested Lock) 데드락 해소
                             # 🚨 [V29.04 수술] AVWAP 유령 매수(Phantom Buy) 원천 차단 - 8초 교차 검증 엔진
                             has_unfilled = False
                             for _ in range(4):
@@ -219,7 +219,6 @@ async def scheduled_sniper_monitor(context):
                         price = decision.get("price", 0)
                         qty = decision.get("qty", 0)
                         if qty > 0:
-                            # 🚨 [V29.13 수술] 중첩 락 해소
                             res = await asyncio.to_thread(broker.send_order, t, "SELL", qty, price, "LIMIT")
                             if res and res.get('rt_cd') == '0':
                                 msg = f"⚔️ <b>[AVWAP] 암살자 전량 청산(Exit) 덤핑!</b>\n▫️ 타겟: {t}\n▫️ 타점: ${price}\n▫️ 수량: {qty}주\n▫️ 사유: {reason}\n🛡️ 금일 해당 종목의 추가 단타 작전을 영구 셧다운합니다."
@@ -234,12 +233,17 @@ async def scheduled_sniper_monitor(context):
                 sniper_buy_locked = getattr(cfg, 'get_sniper_buy_locked', lambda x: False)(t)
                 sniper_sell_locked = getattr(cfg, 'get_sniper_sell_locked', lambda x: False)(t)
 
-                # 🚨 [V29.13 수술] 중첩 락(Deadlock) 해소
                 curr_p = await asyncio.to_thread(broker.get_current_price, t)
                 if curr_p is None or float(curr_p) <= 0:
                     continue
 
-                res = await asyncio.to_thread(strategy.check_sniper_condition, t, cfg, broker, chat_id)
+                # 🚨 [V29.14 수술] strategy 내 check_sniper_condition 누락 방어막 (Safe Casting)
+                sniper_func = getattr(strategy, 'check_sniper_condition', None)
+                if sniper_func:
+                    res = await asyncio.to_thread(sniper_func, t, cfg, broker, chat_id)
+                else:
+                    res = {"action": "HOLD", "reason": "스나이퍼 모듈 누락(Bypass)", "limit_price": 0.0}
+                    
                 action = res.get("action")
                 reason = res.get("reason", "")
                 limit_p = res.get("limit_price", 0.0)
@@ -247,7 +251,6 @@ async def scheduled_sniper_monitor(context):
                 if action == "BUY" and not is_rev and not sniper_buy_locked and master_switch != "UP_ONLY":
                     qty = res.get("qty", 0)
                     if qty > 0:
-                        # 🚨 [V29.13 수술] 중첩 락 해소
                         cancelled = await asyncio.to_thread(broker.cancel_targeted_orders, t, "02", "03")
                         await asyncio.sleep(1.0)
                         
@@ -277,13 +280,12 @@ async def scheduled_sniper_monitor(context):
                             await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
                 
                 # [V28.31] 🚨 V14 상방 스나이퍼 로직 분리 복원 (V-REV 락다운 유지)
-                upward_mode = cfg.get_upward_sniper_mode(t)
+                upward_mode = getattr(cfg, 'get_upward_sniper_mode', lambda x: False)(t)
                 is_upward_active = upward_mode and not is_rev and not sniper_sell_locked and master_switch != "DOWN_ONLY"
 
                 if is_upward_active and action in ["SELL_QUARTER", "SELL_JACKPOT"]:
                     qty = res.get("qty", 0)
                     if qty > 0:
-                        # 🚨 [V29.13 수술] 중첩 락 해소
                         cancelled = await asyncio.to_thread(broker.cancel_targeted_orders, t, "01", "03")
                         await asyncio.sleep(1.0)
                         
@@ -936,7 +938,7 @@ async def scheduled_regular_trade(context):
                         ma_5day = float(await asyncio.to_thread(broker.get_5day_ma, t) or 0.0)
                         v14_vwap_plugin = strategy.v14_vwap_plugin
                         
-                        v14_plan = v14_vwap_plugin.get_plan(
+                        v14_plan = v14_vwap_plugin.get_dynamic_plan(
                             ticker=t, current_price=curr_p, avg_price=safe_avg, qty=safe_qty, 
                             prev_close=prev_c, ma_5day=ma_5day, market_type="REG", 
                             available_cash=allocated_cash.get(t, 0.0), is_simulation=False,
