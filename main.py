@@ -147,7 +147,7 @@ def main():
     print("=" * 60)
     print(f"🚀 앱솔루트 스노우볼 퀀트 엔진 {latest_version} (초경량 2대 코어 아키텍처 탑재)")
     print(f"📅 날짜 정보: {season_msg}")
-    print(f"⏰ 자동 동기화: 08:30(여름) / 09:30(겨울) 자동 변경")
+    print(f"⏰ 자동 동기화: 10:00(KST) 확정 스캔 및 비파괴 보정 가동")
     print(f"🛡️ 1-Tier 자율주행 지표 스캔 대기 중... (매일 10:20 EST 격발)")
     print("=" * 60)
     
@@ -211,10 +211,9 @@ def main():
     for tt in [datetime.time(7,0,tzinfo=kst), datetime.time(11,0,tzinfo=kst), datetime.time(16,30,tzinfo=kst), datetime.time(22,0,tzinfo=kst)]:
         jq.run_daily(scheduled_token_check, time=tt, days=tuple(range(7)), chat_id=ADMIN_CHAT_ID, data=app_data)
     
-    # MODIFIED: [이중 잔고 동기화 방어] 사계절(TARGET_HOUR) 기준에 맞춰 여름/겨울 동기화 스케줄을 단 하나만 등록
-    SYNC_HOUR = 8 if TARGET_HOUR == 17 else 9
+    # MODIFIED: [얼리 웨이크업 타임 패러독스 및 콜드 스타트 기억상실 원천 차단] 08:30/09:30 지연 스케줄링을 전면 소각하고 10:00:05 KST 다이렉트 락온
     SYNC_FUNC = scheduled_auto_sync_summer if TARGET_HOUR == 17 else scheduled_auto_sync_winter
-    jq.run_daily(SYNC_FUNC, time=datetime.time(SYNC_HOUR, 30, tzinfo=kst), days=tuple(range(7)), chat_id=ADMIN_CHAT_ID, data=app_data)
+    jq.run_daily(SYNC_FUNC, time=datetime.time(10, 0, 5, tzinfo=kst), days=tuple(range(7)), chat_id=ADMIN_CHAT_ID, data=app_data)
     
     # MODIFIED: [이중 타격 방어] 17시/18시가 무조건 모두 등록되는 버그를 제거하고 TARGET_HOUR 단일 슬롯에만 락 초기화 등록
     jq.run_daily(scheduled_force_reset, time=datetime.time(TARGET_HOUR, 0, tzinfo=kst), days=(0,1,2,3,4), chat_id=ADMIN_CHAT_ID, data=app_data)
