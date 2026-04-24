@@ -2,25 +2,17 @@
 # [telegram_sync_engine.py] - 🌟 100% 통합 완성본 🌟 (Part 1)
 # MODIFIED: [V28.10 장부 환각 엣지 케이스 수술] 실잔고와 큐 장부 수량이 일치할 경우
 # 비파괴 보정(CALIB) 호출을 원천 차단하는 멱등성 락온(Idempotency Lock-on) 방어막 이식.
-# 이로써 21주가 42주로 단순 중복 덧셈되던 치명적 환각 버그 영구 소각 완료.
-# MODIFIED: [V28.21 동기화 엇박자 그랜드 수술] 졸업 판별(0주 스캔) 전, 
-# 당일 KIS 매도 체결 영수증을 장부에 우선 기록하도록 파이프라인 순서(Order)를 
-# 전면 뒤집어 락온함. 이로써 매도액 누락 및 수익률 -100% 환각 버그 원천 차단.
-# MODIFIED: [V28.23 타임존 락온 그랜드 수술] KST 기준 날짜 연산을 전면 폐기하고,
-# EST(미국 동부) 기준으로 100% 형변환하여 타임 패러독스로 인한 체결 내역 증발 및 
-# 스냅샷 매핑 실패 버그를 영구 소각 완료. (EC-1, EC-3 방어)
-# MODIFIED: [V28.28 tx_lock 영구 교착(Deadlock) 원천 차단] 
-# 야후 파이낸스 응답 지연 시 asyncio.to_thread가 tx_lock을 영구 점유하는 
-# 맹점을 10초 타임아웃으로 강제 차단하여 /sync 무한 대기 버그 완벽 수술.
-# MODIFIED: [V28.29] 수동 부분 매도(Partial Sell) 감지 시 VWAP 잔차 동기화 및 에스크로 누수 차단용 비파괴 교정 쉴드 이식 완료.
-# MODIFIED: [V30.08 애프터마켓 0주 졸업 기억상실 방어] 체결 원장 지연(Lag) 대기 및 8초 다중 교차 검증 엔진 이식. 
-# 실잔고 0주 감지 시, 매도 원장이 도달할 때까지 최대 10초간 스냅샷 생성을 락온하여 -100% 수익률 환각을 영구 적출함.
-# MODIFIED: [V30.09 3대 엣지 케이스 핀셋 수술] 0주 큐 강제 초기화(좀비 방어), 3일치 과거 체결 원장 딥스캔(환각 단가 방어), V14-VREV 직렬 간섭 완벽 디커플링 이식 완료.
-# MODIFIED: [V30.10 애프터마켓 졸업 MIA 방어] KIS 체결원장 None 결측치 Safe Casting 적용, 현재가 타임아웃 데드락 방어, 스냅샷 타입 충돌(AttributeError) 영구 락온 이식 완료.
-# MODIFIED: [V30.11 수동매수 누락 방어] 졸업 판별 시 장부 동기화(Sync) 누락 상태에서 발생한 미동기화 수동 매수 물량을 
-# 스냅샷 큐에 가상 지층으로 강제 편입하여 PnL 및 명예의 전당 수익률 누락(증발) 오차를 교정하는 멱등성 보정 엔진 이식 완료.
+# MODIFIED: [V28.21 동기화 엇박자 그랜드 수술] 졸업 판별 전 매도 원장 우선 기록으로 수익률 -100% 버그 차단.
+# MODIFIED: [V28.23 타임존 락온 그랜드 수술] EST(미국 동부) 기준으로 100% 형변환하여 타임 패러독스 소각.
+# MODIFIED: [V28.28 tx_lock 영구 교착 차단] 야후 파이낸스 10초 타임아웃 래핑.
+# MODIFIED: [V30.08 애프터마켓 기억상실 방어] 체결 원장 지연(Lag) 대기 및 8초 다중 교차 검증 엔진 이식. 
+# MODIFIED: [V30.10 애프터마켓 졸업 MIA 방어] 결측치(None) Safe Casting 적용 및 스냅샷 타입 충돌 락온.
+# MODIFIED: [V30.11 수동매수 누락 방어] 미동기화 0주 졸업 시 가상 지층 편입 멱등성 보정.
+# MODIFIED: [V30.12 유니버설 장부 동기화 & LIFO 큐 딥 캘리브레이션] 정규장 수동 매수 시 메인 장부와 큐의 
+# 오차를 발생시키는 락온(if != "V_REV") 구조 전면 수술. 메인 장부(config.json) 업데이트를 모든 모드에 
+# 개방(Universal Sync)하고, 큐 편입 시 전체 평균 단가 오염을 막기 위해 한계 단가(Marginal Price) 정밀 
+# 역산 및 다이렉트 파일 I/O 방식의 독립 지층(Layer) 강제 편입 락온 적용 완료.
 # ==========================================================
-# NEW: [리팩토링 1단계] 핵심 비즈니스 코어(장부 동기화, 졸업 판별, 큐 관리) 독립 클래스로 캡슐화
 import logging
 import datetime
 import pytz
@@ -28,6 +20,7 @@ import time
 import os
 import asyncio
 import json
+import tempfile
 import yfinance as yf
 import pandas_market_calendars as mcal
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -122,9 +115,10 @@ class TelegramSyncEngine:
                 recs_for_check = [r for r in self.cfg.get_ledger() if r['ticker'] == ticker]
                 ledger_qty_for_check, _, _, _ = self.cfg.calculate_holdings(ticker, recs_for_check)
                 
-                # MODIFIED: [V30.11 방어] 수동 매수로 인해 메인 장부와 큐 장부의 기준 수량이 다를 수 있으므로, 듀얼 락온 체계로 Lag Check 기준값을 상향 평준화
                 vrev_ledger_qty_for_check = 0
-                if self.cfg.get_version(ticker) == "V_REV":
+                is_rev = (self.cfg.get_version(ticker) == "V_REV")
+                
+                if is_rev:
                     if not getattr(self, 'queue_ledger', None):
                         from queue_ledger import QueueLedger
                         self.queue_ledger = QueueLedger()
@@ -158,72 +152,77 @@ class TelegramSyncEngine:
                 diff = actual_qty - ledger_qty
                 price_diff = abs(actual_avg - avg_price)
 
-                if self.cfg.get_version(ticker) != "V_REV":
-                    if diff == 0 and price_diff < 0.01:
-                        pass 
-                    elif diff == 0 and price_diff >= 0.01:
-                        self.cfg.calibrate_avg_price(ticker, actual_avg)
-                        await context.bot.send_message(chat_id, f"🔧 <b>[{ticker}] 장부 평단가 미세 오차({price_diff:.4f}) 교정 완료!</b>", parse_mode='HTML')
-                    elif diff != 0:
-                        temp_recs = [r for r in recs if r['date'] != target_ledger_str or 'INIT' in str(r.get('exec_id', ''))]
-                        temp_qty, temp_avg, _, _ = self.cfg.calculate_holdings(ticker, temp_recs)
-                        
-                        temp_sim_qty = temp_qty
-                        temp_sim_avg = temp_avg
-                        new_target_records = []
-                        
-                        if target_execs:
-                            target_execs.sort(key=lambda x: x.get('ord_tmd', '000000')) 
-                            for ex in target_execs:
-                                side_cd = ex.get('sll_buy_dvsn_cd')
-                                # MODIFIED: [V30.10 방어] KIS API 결측치(None) 대비 Safe Casting
-                                exec_qty = int(float(ex.get('ft_ccld_qty') or '0'))
-                                exec_price = float(ex.get('ft_ccld_unpr3') or '0')
-                                
-                                if side_cd == "02": 
-                                    new_avg = ((temp_sim_qty * temp_sim_avg) + (exec_qty * exec_price)) / (temp_sim_qty + exec_qty) if (temp_sim_qty + exec_qty) > 0 else exec_price
-                                    temp_sim_qty += exec_qty
-                                    temp_sim_avg = new_avg
-                                else:
-                                    temp_sim_qty -= exec_qty
-                                    
-                                new_target_records.append({
-                                    'date': target_ledger_str, 'side': "BUY" if side_cd == "02" else "SELL",
-                                    'qty': exec_qty, 'price': exec_price, 'avg_price': temp_sim_avg
-                                })
-                                
-                        gap_qty = actual_qty - temp_sim_qty
-                        if gap_qty != 0:
-                            calib_side = "BUY" if gap_qty > 0 else "SELL"
-                            new_target_records.append({
-                                'date': target_ledger_str, 
-                                'side': calib_side,
-                                'qty': abs(gap_qty), 
-                                'price': actual_avg, 
-                                'avg_price': actual_avg,
-                                'exec_id': f"CALIB_{int(time.time())}",
-                                'desc': "비파괴 보정"
-                            })
+                # ==========================================================
+                # [통합 메인 장부 동기화 엔진] - V14 및 V-REV 100% 공통 적용
+                # MODIFIED: [V30.12 방어] 구형 락온(if != "V_REV") 전면 해제로 
+                # V-REV 수동 매수 시에도 KIS 체결 원장 기반 메인 장부가 누락 없이 기록되도록 통폐합.
+                # ==========================================================
+                if diff == 0 and price_diff < 0.01:
+                    pass 
+                elif diff == 0 and price_diff >= 0.01:
+                    self.cfg.calibrate_avg_price(ticker, actual_avg)
+                    await context.bot.send_message(chat_id, f"🔧 <b>[{ticker}] 장부 평단가 미세 오차({price_diff:.4f}) 교정 완료!</b>", parse_mode='HTML')
+                elif diff != 0:
+                    temp_recs = [r for r in recs if r['date'] != target_ledger_str or 'INIT' in str(r.get('exec_id', ''))]
+                    temp_qty, temp_avg, _, _ = self.cfg.calculate_holdings(ticker, temp_recs)
+                    
+                    temp_sim_qty = temp_qty
+                    temp_sim_avg = temp_avg
+                    new_target_records = []
+                    
+                    if target_execs:
+                        target_execs.sort(key=lambda x: x.get('ord_tmd', '000000')) 
+                        for ex in target_execs:
+                            side_cd = ex.get('sll_buy_dvsn_cd')
+                            exec_qty = int(float(ex.get('ft_ccld_qty') or '0'))
+                            exec_price = float(ex.get('ft_ccld_unpr3') or '0')
                             
-                        if new_target_records:
-                            for r in new_target_records:
-                                r['avg_price'] = actual_avg
-                        elif temp_recs: 
-                            temp_recs[-1]['avg_price'] = actual_avg
+                            if side_cd == "02": 
+                                new_avg = ((temp_sim_qty * temp_sim_avg) + (exec_qty * exec_price)) / (temp_sim_qty + exec_qty) if (temp_sim_qty + exec_qty) > 0 else exec_price
+                                temp_sim_qty += exec_qty
+                                temp_sim_avg = new_avg
+                            else:
+                                temp_sim_qty -= exec_qty
+                                
+                            rec_item = {
+                                'date': target_ledger_str, 'side': "BUY" if side_cd == "02" else "SELL",
+                                'qty': exec_qty, 'price': exec_price, 'avg_price': temp_sim_avg
+                            }
+                            if is_rev:
+                                rec_item['is_reverse'] = True
+                            new_target_records.append(rec_item)
                             
-                        self.cfg.overwrite_incremental_ledger(ticker, temp_recs, new_target_records)
+                    gap_qty = actual_qty - temp_sim_qty
+                    if gap_qty != 0:
+                        calib_side = "BUY" if gap_qty > 0 else "SELL"
+                        calib_item = {
+                            'date': target_ledger_str, 
+                            'side': calib_side,
+                            'qty': abs(gap_qty), 
+                            'price': actual_avg, 
+                            'avg_price': actual_avg,
+                            'exec_id': f"CALIB_{int(time.time())}",
+                            'desc': "비파괴 보정"
+                        }
+                        if is_rev:
+                            calib_item['is_reverse'] = True
+                        new_target_records.append(calib_item)
                         
-                        if gap_qty != 0:
-                            await context.bot.send_message(chat_id, f"🔧 <b>[{ticker}] 비파괴 장부 보정 완료!</b>\n▫️ 오차 수량({gap_qty}주)을 기존 역사 보존 상태로 안전하게 교정했습니다.", parse_mode='HTML')
+                    if new_target_records:
+                        for r in new_target_records:
+                            r['avg_price'] = actual_avg
+                    elif temp_recs: 
+                        temp_recs[-1]['avg_price'] = actual_avg
+                        
+                    self.cfg.overwrite_incremental_ledger(ticker, temp_recs, new_target_records)
+                    
+                    if gap_qty != 0:
+                        await context.bot.send_message(chat_id, f"🔧 <b>[{ticker}] 통합 메인 장부(MAIN LEDGER) 비파괴 보정 완료!</b>\n▫️ KIS 실잔고 오차 수량({gap_qty}주)을 역사 보존 상태로 안전하게 교정했습니다.", parse_mode='HTML')
 
                 # ==========================================================
                 # V-REV 큐 관리 및 0주 졸업 판별 로직 시작
                 # ==========================================================
-                if self.cfg.get_version(ticker) == "V_REV":
-                    if not getattr(self, 'queue_ledger', None):
-                        from queue_ledger import QueueLedger
-                        self.queue_ledger = QueueLedger()
-                    
+                if is_rev:
                     q_data_before = self.queue_ledger.get_queue(ticker)
                     vrev_ledger_qty = sum(int(float(item.get("qty") or 0)) for item in q_data_before)
                     
@@ -260,7 +259,6 @@ class TelegramSyncEngine:
                                             actual_clear_price = round(tot_amt / tot_q, 4)
                                             logging.info(f"🔍 [{ticker}] 과거 3일치 원장 스캔으로 애프터마켓 실제 매도 단가(${actual_clear_price})를 복원했습니다.")
 
-                            # MODIFIED: [V30.11 방어] 장중 수동 매수 후 미동기화 상태에서 0주 졸업 시, 수익금 누락을 방어하기 위한 가상 지층 편입
                             if tot_q > vrev_ledger_qty:
                                 missing_qty = tot_q - vrev_ledger_qty
                                 buy_execs = [ex for ex in (target_execs or []) if ex.get('sll_buy_dvsn_cd') == "02"]
@@ -369,19 +367,6 @@ class TelegramSyncEngine:
                         if actual_qty > 0 and actual_qty < vrev_ledger_qty:
                             gap_qty = vrev_ledger_qty - actual_qty
                             
-                            vrev_recs = [r for r in self.cfg.get_ledger() if r['ticker'] == ticker]
-                            calib_record = [{
-                                'date': target_ledger_str,
-                                'side': "SELL",
-                                'qty': gap_qty,
-                                'price': actual_avg,
-                                'avg_price': actual_avg,
-                                'exec_id': f"CALIB_VREV_{int(time.time())}",
-                                'desc': "V-REV 수동매도 보정",
-                                'is_reverse': True
-                            }]
-                            self.cfg.overwrite_incremental_ledger(ticker, vrev_recs, calib_record)
-                            
                             vwap_state_file = f"data/vwap_state_REV_{ticker}.json"
                             if os.path.exists(vwap_state_file):
                                 try:
@@ -396,26 +381,73 @@ class TelegramSyncEngine:
                                 except Exception as e:
                                     logging.error(f"🚨 VWAP 상태 교정 에러: {e}")
 
-                        # MODIFIED: [V30.11 방어] 정규장 중 수동 매수 감지 시 장부(config.json)에 비파괴 매수(BUY) 기록 추가
+                            calibrated = self.queue_ledger.sync_with_broker(ticker, actual_qty, actual_avg)
+                            if calibrated:
+                                await context.bot.send_message(chat_id, f"🔧 <b>[{ticker}] V-REV 큐(Queue) 비파괴 보정 완료!</b>\n▫️ 수동 매도 물량(<b>{gap_qty}주</b>)을 LIFO 큐에서 안전하게 차감했습니다.", parse_mode='HTML')
+                                
+                        # MODIFIED: [V30.12 방어] 수동 매수 시 LIFO 큐 전체 평단가 오염 방지를 위해 한계 단가(Marginal Price) 정밀 역산 및 다이렉트 I/O 강제 편입
                         elif actual_qty > 0 and actual_qty > vrev_ledger_qty:
                             gap_qty = actual_qty - vrev_ledger_qty
-                            vrev_recs = [r for r in self.cfg.get_ledger() if r['ticker'] == ticker]
-                            calib_record = [{
-                                'date': target_ledger_str,
-                                'side': "BUY",
-                                'qty': gap_qty,
-                                'price': actual_avg,
-                                'avg_price': actual_avg,
-                                'exec_id': f"CALIB_VREV_BUY_{int(time.time())}",
-                                'desc': "V-REV 수동매수 보정",
-                                'is_reverse': True
-                            }]
-                            self.cfg.overwrite_incremental_ledger(ticker, vrev_recs, calib_record)
-                            logging.info(f"🔧 [{ticker}] 정규장 수동 매수 감지! {gap_qty}주 비파괴 장부(MAIN LEDGER) 보정 완료.")
+                            
+                            real_buy_price = actual_avg
+                            try:
+                                buy_execs = [ex for ex in (target_execs or []) if ex.get('sll_buy_dvsn_cd') == "02"]
+                                if buy_execs:
+                                    b_tot_amt = sum(int(float(ex.get('ft_ccld_qty') or '0')) * float(ex.get('ft_ccld_unpr3') or '0') for ex in buy_execs)
+                                    b_tot_q = sum(int(float(ex.get('ft_ccld_qty') or '0')) for ex in buy_execs)
+                                    if b_tot_q > 0:
+                                        real_buy_price = round(b_tot_amt / b_tot_q, 4)
+                                
+                                if real_buy_price == actual_avg:
+                                    search_start_dt = (now_est - datetime.timedelta(days=3)).strftime('%Y%m%d')
+                                    past_execs = await asyncio.to_thread(self.broker.get_execution_history, ticker, search_start_dt, target_kis_str)
+                                    if past_execs:
+                                        p_buy_execs = [ex for ex in past_execs if ex.get('sll_buy_dvsn_cd') == "02"]
+                                        if p_buy_execs:
+                                            b_tot_amt = sum(int(float(ex.get('ft_ccld_qty') or '0')) * float(ex.get('ft_ccld_unpr3') or '0') for ex in p_buy_execs)
+                                            b_tot_q = sum(int(float(ex.get('ft_ccld_qty') or '0')) for ex in p_buy_execs)
+                                            if b_tot_q > 0:
+                                                real_buy_price = round(b_tot_amt / b_tot_q, 4)
+                            except Exception as e:
+                                logging.error(f"🚨 수동매수 실제 체결단가 역산 중 예외 발생 (기존 평단가 fallback): {e}")
 
-                        calibrated = self.queue_ledger.sync_with_broker(ticker, actual_qty, actual_avg)
-                        if calibrated:
-                            await context.bot.send_message(chat_id, f"🔧 <b>[{ticker}] V-REV 큐(Queue) 비파괴 보정(CALIB) 완료!</b>\n▫️ KIS 실제 잔고(<b>{actual_qty}주</b>)에 맞춰 LIFO 지층을 정밀 차감/추가했습니다.", parse_mode='HTML')
+                            if real_buy_price == actual_avg:
+                                old_invested = sum(float(item.get("qty", 0)) * float(item.get("price", 0)) for item in q_data_before)
+                                new_invested = actual_qty * actual_avg
+                                if new_invested > old_invested:
+                                    derived_price = (new_invested - old_invested) / gap_qty
+                                    real_buy_price = round(derived_price, 4) if derived_price > 0 else actual_avg
+                            
+                            q_data = self.queue_ledger.get_queue(ticker)
+                            q_data.append({
+                                "date": now_est.strftime('%Y-%m-%d %H:%M:%S'),
+                                "qty": gap_qty,
+                                "price": real_buy_price,
+                                "exec_id": f"MANUAL_BUY_{int(time.time())}"
+                            })
+                            
+                            q_file = "data/queue_ledger.json"
+                            try:
+                                os.makedirs(os.path.dirname(q_file) if os.path.dirname(q_file) else '.', exist_ok=True)
+                                if os.path.exists(q_file):
+                                    with open(q_file, 'r', encoding='utf-8') as f:
+                                        all_q = json.load(f)
+                                else:
+                                    all_q = {}
+                                all_q[ticker] = q_data
+                                
+                                fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(q_file) if os.path.dirname(q_file) else '.')
+                                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                                    json.dump(all_q, f, indent=4, ensure_ascii=False)
+                                os.replace(tmp_path, q_file)
+                                
+                                if hasattr(self.queue_ledger, 'data'):
+                                    self.queue_ledger.data = all_q
+                                    
+                                logging.info(f"🔧 [{ticker}] 수동 매수 감지! KIS 실잔고에 맞춰 LIFO 큐에 신규 지층({gap_qty}주, 진성단가 ${real_buy_price}) 다이렉트 편입 및 파일 영속화 완료.")
+                                await context.bot.send_message(chat_id, f"🔧 <b>[{ticker}] V-REV 큐(Queue) 수동 매수 편입 완료!</b>\n▫️ KIS 실잔고에 맞춰 신규 지층(<b>{gap_qty}주</b>, 추정단가 ${real_buy_price})을 정밀 추가했습니다.", parse_mode='HTML')
+                            except Exception as e:
+                                logging.error(f"🚨 LIFO 큐 다이렉트 파일 I/O 쓰기 에러: {e}")
                     
                     self._sync_escrow_cash(ticker)
                     return "SUCCESS"
@@ -423,7 +455,7 @@ class TelegramSyncEngine:
                 # ==========================================================
                 # V14 0주 졸업 판별 로직 
                 # ==========================================================
-                elif self.cfg.get_version(ticker) != "V_REV":
+                if not is_rev:
                     if actual_qty == 0:
                         if ledger_qty > 0:
                             if now_kst.hour < 10:
