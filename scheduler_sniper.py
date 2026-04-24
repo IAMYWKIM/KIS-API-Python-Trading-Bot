@@ -3,6 +3,9 @@
 # ⚠️ 단일 책임 원칙(SRP) 적용: 1분 단위 스나이퍼 감시망 전담 코어
 # 💡 [역할] 하이브리드 AVWAP 암살자 및 V14 상방 스나이퍼 1분봉 정밀 타격
 # 🚨 기존 scheduler_trade.py에서 100% 비파괴적으로 분리 독립 완료
+# 🚨 [V30.07 NEW] 0주 새출발 정규장 매도 영구 동결 락온:
+# 당일 스냅샷이 0주 새출발(is_zero_start_fact)로 박제된 종목은
+# 상방 스나이퍼(Upper Sniper)의 매도(익절) 레이더를 장중 내내 100% 강제 셧다운(Bypass)함.
 # ==========================================================
 import logging
 import datetime
@@ -431,8 +434,29 @@ async def scheduled_sniper_monitor(context):
                                 msg = f"🚨 <b>[{t}] 스나이퍼 딥-매수(Intercept) 명중!</b>\n▫️ 타겟가: ${limit_p}\n▫️ 팩트 단가: ${display_price}\n▫️ 체결수량: {ccld_qty}주 (요청: {qty}주)\n▫️ 사유: {reason}\n▫️ 하방 방어망이 잠깁니다 (상방 독립 유지)."
                                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
                 
+                # 🚨 [V30.07 팩트 수술] 당일 0주 새출발 락온 확인 (스냅샷 스캔)
+                is_zero_start_session = False
+                try:
+                    snap = None
+                    if is_rev and hasattr(strategy, 'v_rev_plugin'):
+                        snap = strategy.v_rev_plugin.load_daily_snapshot(t)
+                    elif version == "V14":
+                        is_manual_vwap = getattr(cfg, 'get_manual_vwap_mode', lambda x: False)(t)
+                        if is_manual_vwap and hasattr(strategy, 'v14_vwap_plugin'):
+                            snap = strategy.v14_vwap_plugin.load_daily_snapshot(t)
+                        elif hasattr(strategy, 'v14_plugin') and hasattr(strategy.v14_plugin, 'load_daily_snapshot'):
+                            snap = strategy.v14_plugin.load_daily_snapshot(t)
+                    if snap:
+                        is_zero_start_session = snap.get("is_zero_start", snap.get("total_q", snap.get("initial_qty", -1)) == 0)
+                except Exception:
+                    pass
+
                 upward_mode = getattr(cfg, 'get_upward_sniper_mode', lambda x: False)(t)
                 is_upward_active = upward_mode and not is_rev and not sniper_sell_locked and master_switch != "DOWN_ONLY"
+                
+                # 🚨 [V30.07 팩트 수술] 0주 새출발 세션 시 정규장 상방 스나이퍼 매도 영구 동결
+                if is_zero_start_session:
+                    is_upward_active = False
 
                 if is_upward_active and action in ["SELL_QUARTER", "SELL_JACKPOT"]:
                     qty = res.get("qty", 0)
