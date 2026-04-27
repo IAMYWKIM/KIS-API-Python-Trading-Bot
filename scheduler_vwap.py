@@ -1,7 +1,8 @@
 # ==========================================================
-# [scheduler_vwap.py] - 🌟 100% 분할 캡슐화 완성본 (V32.01) 🌟
+# [scheduler_vwap.py] - 🌟 100% 분할 캡슐화 완성본 (V32.02) 🌟
 # 🚨 NEW: [V31.00] V-REV 장막판 갭 스위칭(Gap Hijacking) 오버라이드 엔진 탑재 완료
 # 🚨 MODIFIED: [V32.01 핫픽스] V14 VWAP 파라미터 시그니처(prev_close) 교정 및 LOC 사용자 강제 납치 방어막 이식
+# 🚨 MODIFIED: [V32.02 핫픽스] 0주 새출발 VWAP 매수 실종 방어를 위한 가격 상한제 바이패스(Bypass) 락온 이식
 # ==========================================================
 import logging
 import datetime
@@ -62,7 +63,6 @@ async def scheduled_vwap_init_and_cancel(context):
                             await asyncio.to_thread(broker.cancel_all_orders_safe, t, "BUY")
                             await asyncio.to_thread(broker.cancel_all_orders_safe, t, "SELL")
                             vwap_cache[f"REV_{t}_nuked"] = True
-                            
                             msg = f"🌅 <b>[{t}] 장 마감 33분 전 엔진 기상 (Fail-Safe 전환)</b>\n"
                             msg += f"▫️ 프리장에 선제 전송해둔 '예방적 양방향 LOC 덫'을 전량 취소(Nuke)했습니다.\n"
                             msg += f"▫️ 1분 단위 정밀 타격(VWAP 슬라이싱) 모드로 교전 수칙을 변경합니다. ⚔️"
@@ -136,7 +136,8 @@ async def scheduled_vwap_trade(context):
             for t in cfg.get_active_tickers():
                 version = cfg.get_version(t)
                 is_manual_vwap = getattr(cfg, 'get_manual_vwap_mode', lambda x: False)(t)
-                
+                is_zero_start_session = False # NEW: 0주 새출발 팩트 캐싱
+
                 if version == "V_REV" and is_manual_vwap:
                     continue
 
@@ -193,6 +194,7 @@ async def scheduled_vwap_trade(context):
                         
                         cached_plan = strategy_rev.load_daily_snapshot(t)
                         is_zero_start = (cached_plan and cached_plan.get("total_q", -1) == 0)
+                        is_zero_start_session = is_zero_start # NEW: 전역 스냅샷 상태 락온
                         virtual_q_data = [] if is_zero_start else q_data
                         
                         strategy_rev._load_state_if_needed(t)
@@ -420,7 +422,6 @@ async def scheduled_vwap_trade(context):
                             target_orders = rev_plan.get('orders', [])
 
                     elif version == "V14":
-                        # MODIFIED: [V32.01 핫픽스] V14 순수 LOC 모드 사용자 1분봉 타임 슬라이싱 강제 납치 차단
                         if not is_manual_vwap:
                             continue
                             
@@ -430,7 +431,11 @@ async def scheduled_vwap_trade(context):
                         
                         v14_vwap_plugin = strategy.v14_vwap_plugin
                         
-                        # MODIFIED: [V32.01 핫픽스] 파라미터 시그니처 오타(prev_c -> prev_close) 교정으로 TypeError 런타임 즉사 방어
+                        # NEW: 0주 새출발 상태 팩트 캐싱
+                        cached_snap_v14 = v14_vwap_plugin.load_daily_snapshot(t)
+                        if cached_snap_v14:
+                            is_zero_start_session = cached_snap_v14.get("is_zero_start", cached_snap_v14.get("total_q", -1) == 0)
+                        
                         plan = v14_vwap_plugin.get_dynamic_plan(
                             ticker=t, current_price=curr_p, prev_close=prev_c, 
                             current_weight=current_weight, min_idx=min_idx, 
@@ -450,8 +455,13 @@ async def scheduled_vwap_trade(context):
                         exec_price = ask_price if side == "BUY" else bid_price
                         if exec_price <= 0: exec_price = curr_p
                         
-                        if side == "BUY" and exec_price > target_price: continue
-                        if side == "SELL" and exec_price < target_price: continue
+                        # MODIFIED: [V32.02 핫픽스] 0주 새출발 가격 상한제 바이패스 락온
+                        if side == "BUY":
+                            if not is_zero_start_session and exec_price > target_price:
+                                continue
+                        elif side == "SELL":
+                            if exec_price < target_price:
+                                continue
                         
                         res = await asyncio.to_thread(broker.send_order, t, side, slice_qty, exec_price, "LIMIT")
                         odno = res.get('odno', '') if isinstance(res, dict) else ''
