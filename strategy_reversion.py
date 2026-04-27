@@ -32,7 +32,7 @@
 # 정규장(REG) 내의 모든 SELL 지시를 100% 강제 소각하고 오직 애프터마켓(AFTER)에서만 덫을 놓도록
 # get_dynamic_plan 렌더링 파이프라인에 강력한 필터링 방어막 이식.
 # MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo('America/New_York') 이식으로 LMT 버그 차단
-# NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어] 논리적 거래일 시프트 엔진 이식
+# NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어] 런타임 붕괴(AttributeError) 차단 정수 기반 락온
 # ==========================================================
 import math
 import os
@@ -40,7 +40,6 @@ import json
 import tempfile
 from datetime import datetime, timedelta
 # MODIFIED: [LMT 오차 방어를 위해 pytz를 적출하고 ZoneInfo 도입]
-# import pytz
 from zoneinfo import ZoneInfo
 
 class ReversionStrategy:
@@ -62,9 +61,10 @@ class ReversionStrategy:
     # NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어]
     # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
     # 04:05 EST 통합 스케줄러 기상 전까지는 논리적 거래일을 전날(T-1)로 강제 락온
+    # AttributeError 방지를 위해 정수(hour/minute) 단위 비교
     def _get_logical_date_str(self):
         now_est = datetime.now(ZoneInfo('America/New_York'))
-        if now_est.time() < datetime.time(4, 5):
+        if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 5):
             target_date = now_est - timedelta(days=1)
         else:
             target_date = now_est
@@ -428,4 +428,3 @@ class ReversionStrategy:
 
         self._save_state(ticker)
         return {"orders": orders, "trigger_loc": False, "total_q": total_q}
-

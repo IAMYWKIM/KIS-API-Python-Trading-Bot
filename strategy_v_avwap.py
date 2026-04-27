@@ -7,7 +7,7 @@
 # 🚨 MODIFIED: [V31.50 그랜드 수술] 20MA 방어막 영구 소각 및 '전일 정규장 VWAP' 산출 엔진 탑재 완료.
 # 🚨 MODIFIED: [V32.00 백테스트 팩트 락온] 동적 파라미터 전면 소각. Gap < 0 시 무조건 스윕 및 +2.0% 고정 익절 하드코딩.
 # 🚨 MODIFIED: [V32.00 방어막] 2차 손절망(재진입) 환각을 영구 차단하는 13계명 백신 주석 이식 완료.
-# NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어] 논리적 거래일 시프트 엔진 이식
+# NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어] 런타임 붕괴(AttributeError) 차단 정수 기반 락온
 # ==========================================================
 import logging
 import datetime
@@ -28,8 +28,9 @@ class VAvwapHybridPlugin:
         
     # NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어]
     # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
+    # AttributeError 방지를 위해 정수(hour/minute) 단위 비교
     def _get_logical_date_str(self, now_est):
-        if now_est.time() < datetime.time(4, 5):
+        if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 5):
             target_date = now_est - datetime.timedelta(days=1)
         else:
             target_date = now_est
@@ -79,7 +80,7 @@ class VAvwapHybridPlugin:
             now_est = datetime.datetime.now(est)
             
             # MODIFIED: [타임 패러독스 방어] 04:05 EST 이전은 전날로 간주
-            if now_est.time() < datetime.time(4, 5):
+            if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 5):
                 today_est = (now_est - datetime.timedelta(days=1)).date()
             else:
                 today_est = now_est.date()

@@ -23,7 +23,7 @@
 # 정규장(market_type="REG") 내 모든 SELL 주문을 100% 강제 소각하고 홀딩을 강제함.
 # MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo('America/New_York') 이식으로 LMT 버그 차단
 # MODIFIED: [V30.09 핫픽스] get_dynamic_plan 파라미터 시그니처(current_price, prev_close) 표준화로 TypeError 런타임 붕괴 완벽 차단
-# NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어] 논리적 거래일 시프트 엔진 이식
+# NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어] 런타임 붕괴(AttributeError) 차단 정수 기반 락온
 # ==========================================================
 import math
 import logging
@@ -32,7 +32,6 @@ import json
 import tempfile
 from datetime import datetime, timedelta
 # MODIFIED: [LMT 오차 방어를 위해 pytz를 적출하고 ZoneInfo 도입]
-# import pytz
 from zoneinfo import ZoneInfo
 
 class V14VwapStrategy:
@@ -49,9 +48,10 @@ class V14VwapStrategy:
         ]
 
     # NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어]
+    # AttributeError 방지를 위해 정수(hour/minute) 단위 비교
     def _get_logical_date_str(self):
         now_est = datetime.now(ZoneInfo('America/New_York'))
-        if now_est.time() < datetime.time(4, 5):
+        if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 5):
             target_date = now_est - timedelta(days=1)
         else:
             target_date = now_est
