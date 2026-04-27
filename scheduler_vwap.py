@@ -1,6 +1,7 @@
 # ==========================================================
-# [scheduler_vwap.py] - 🌟 100% 분할 캡슐화 완성본 (V31.00) 🌟
+# [scheduler_vwap.py] - 🌟 100% 분할 캡슐화 완성본 (V32.01) 🌟
 # 🚨 NEW: [V31.00] V-REV 장막판 갭 스위칭(Gap Hijacking) 오버라이드 엔진 탑재 완료
+# 🚨 MODIFIED: [V32.01 핫픽스] V14 VWAP 파라미터 시그니처(prev_close) 교정 및 LOC 사용자 강제 납치 방어막 이식
 # ==========================================================
 import logging
 import datetime
@@ -419,14 +420,19 @@ async def scheduled_vwap_trade(context):
                             target_orders = rev_plan.get('orders', [])
 
                     elif version == "V14":
+                        # MODIFIED: [V32.01 핫픽스] V14 순수 LOC 모드 사용자 1분봉 타임 슬라이싱 강제 납치 차단
+                        if not is_manual_vwap:
+                            continue
+                            
                         h = safe_holdings.get(t, {'qty':0, 'avg':0.0})
                         actual_qty = int(h.get('qty', 0))
                         actual_avg = float(h.get('avg', 0.0))
                         
                         v14_vwap_plugin = strategy.v14_vwap_plugin
                         
+                        # MODIFIED: [V32.01 핫픽스] 파라미터 시그니처 오타(prev_c -> prev_close) 교정으로 TypeError 런타임 즉사 방어
                         plan = v14_vwap_plugin.get_dynamic_plan(
-                            ticker=t, current_price=curr_p, prev_c=prev_c, 
+                            ticker=t, current_price=curr_p, prev_close=prev_c, 
                             current_weight=current_weight, min_idx=min_idx, 
                             alloc_cash=0.0, qty=actual_qty, avg_price=actual_avg
                         )
