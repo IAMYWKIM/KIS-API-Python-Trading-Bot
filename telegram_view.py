@@ -6,6 +6,7 @@
 # 🚨 MODIFIED: [V32.00] 12차 백테스트 팩트 락온. 동적 파라미터 렌더링 소각 및 하드코딩 룰(2%/-6% 셧다운) 고정 표출.
 # NEW: [V40.XX 옴니 매트릭스] SOXS 듀얼 모멘텀 전용 버튼 및 옴니 매트릭스 셧다운 알림 렌더링 엔진 이식
 # NEW: [V40.XX 옴니 매트릭스 절대 헌법] TQQQ(V14 전용) / SOXS(V-REV 전용) 렌더링 버튼 락다운(은폐) 적용
+# 🚨 MODIFIED: [V40.04 핫픽스] AVWAP 인버스(SOXS) 거울 로직 UI 렌더링 팩트 교정 (Gap 타격 부등호 반전)
 # ==========================================================
 import os
 import math
@@ -494,7 +495,12 @@ class TelegramView:
                     
                     if prev_vwap > 0:
                         body_msg += f"▫️ 전일 VWAP: ${prev_vwap:,.2f}\n"
-                        trend_str = "🟢 상승장 (진입허용)" if base_vwap >= prev_vwap else "🔴 하락장 (진입차단)"
+                        # 🚨 [V40.04] 인버스(SOXS) 거울 로직 UI 렌더링 팩트 교정
+                        if t.upper() == "SOXS":
+                            trend_str = "🔴 하락장 (진입차단)" if base_vwap >= prev_vwap else "🟢 상승장 (진입허용)"
+                        else:
+                            trend_str = "🟢 상승장 (진입허용)" if base_vwap >= prev_vwap else "🔴 하락장 (진입차단)"
+                            
                         body_msg += f"▫️ 당일 VWAP: ${base_vwap:,.2f}\n"
                         body_msg += f" ↳ {trend_str}\n"
                     else:
@@ -503,9 +509,16 @@ class TelegramView:
                     if rolling_tp > 0:
                         body_msg += f"▫️ 롤링 5분 TP(현재가): ${rolling_tp:,.2f}\n"
                     
-                    gap_color = "🔴" if gap_pct < 0 else "🟢"
-                    body_msg += f"▫️ 5분 이탈(Gap): {gap_color} {gap_pct:+.2f}%\n"
-                    body_msg += f" ↳ (타격: -0.01% 이하)\n"
+                    # 🚨 [V40.04] 인버스(SOXS) 거울 로직 UI 렌더링 팩트 교정 (Gap 타격 부등호 반전)
+                    if t.upper() == "SOXS":
+                        gap_color = "🟢" if gap_pct > 0 else "🔴"
+                        body_msg += f"▫️ 5분 이탈(Gap): {gap_color} {gap_pct:+.2f}%\n"
+                        body_msg += f" ↳ (타격: +0.01% 이상)\n"
+                    else:
+                        gap_color = "🔴" if gap_pct < 0 else "🟢"
+                        body_msg += f"▫️ 5분 이탈(Gap): {gap_color} {gap_pct:+.2f}%\n"
+                        body_msg += f" ↳ (타격: -0.01% 이하)\n"
+                        
                     body_msg += f"▫️ 독립 물량/평단: {avwap_qty}주 / ${avwap_avg:.2f}\n"
                     body_msg += f"▫️ 작전 상태: <b>{avwap_status}</b>\n"
                     
@@ -626,7 +639,6 @@ class TelegramView:
                 v14_mode_txt = "🕒 VWAP 1분 타임 슬라이싱 (자체엔진)" if is_manual_vwap else "📉 LOC 단일 타격 (초안정성)"
                 msg += f"▫️ 집행: <b>{v14_mode_txt}</b>\n\n"
                 
-            # 🚨 NEW: [V40.XX 절대 헌법] 티커별 렌더링 버튼 락다운
             if t == "SOXL":
                 row1 = [
                     InlineKeyboardButton("💎 V14 (무매4)", callback_data=f"SET_VER:V14:{t}"),
