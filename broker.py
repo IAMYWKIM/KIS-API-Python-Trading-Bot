@@ -23,7 +23,8 @@
 #    20종목 초과 시 발생하는 잔고 스캔 데이터 기아(Data Starvation) 맹점 완벽 교정.
 # 3) 논리적 앵커 통일을 위해 America/New_York을 US/Eastern으로 100% 락온(Lock-on) 형변환.
 # MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo 도입으로 LMT 버그 차단 및 타임존 무결성 100% 확보
-# NEW: [V40.XX 옴니 매트릭스] 거래소 동적 탐색 실패 시 SOXS 티커 AMEX Fallback 이식 및 타겟 인덱스 방어막 락온
+# MODIFIED: [V40.XX 옴니 매트릭스] 거래소 동적 탐색 실패 시 SOXS 티커 AMEX Fallback 이식 및 타겟 인덱스 방어막 락온
+# NEW: [V40.XX 옴니 매트릭스] 전일 팩트 VWAP 및 당일 실시간 VWAP 듀얼 파싱 엔진(get_daily_vwap_info) 탑재
 # ==========================================================
 
 import requests
@@ -203,7 +204,6 @@ class KoreaInvestmentBroker:
             print(f"⚠️ [Broker] 거래소 동적 획득 실패: {ticker} - {e}")
 
         if not dynamic_success:
-            # MODIFIED: [V40.XX 옴니 매트릭스] SOXS 거래소(AMEX) Fallback 하드코딩 이식
             if ticker in ["SOXL", "SOXS"]: price_cd, order_cd = "AMS", "AMEX"
             elif ticker == "TQQQ": price_cd, order_cd = "NAS", "NASD"
 
@@ -293,6 +293,61 @@ class KoreaInvestmentBroker:
         
         if api_success: return cash, holdings
         else: return cash, None
+
+    # NEW: [V40.XX 옴니 매트릭스] 전일 최종 VWAP 및 당일 실시간 VWAP 듀얼 파싱 엔진
+    def get_daily_vwap_info(self, ticker):
+        """
+        최근 5일간의 1분봉 데이터를 로드하여 정규장(09:30~15:59) 거래 내역만 추출,
+        일자별 순수 VWAP을 계산하여 반환합니다.
+        return: (prev_vwap, curr_vwap)
+        """
+        try:
+            stock = yf.Ticker(ticker)
+            df = stock.history(period="5d", interval="1m", prepost=False, timeout=10)
+            if df.empty: return 0.0, 0.0
+
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.droplevel(1)
+
+            est = ZoneInfo('America/New_York')
+            if df.index.tz is None:
+                df.index = df.index.tz_localize('UTC').tz_convert(est)
+            else:
+                df.index = df.index.tz_convert(est)
+
+            # 정규장 데이터만 100% 필터링하여 프리/애프터마켓 노이즈 원천 차단
+            regular_market = df.between_time('09:30', '15:59').copy()
+            if regular_market.empty: return 0.0, 0.0
+
+            regular_market['Typical_Price'] = (regular_market['High'] + regular_market['Low'] + regular_market['Close']) / 3.0
+            regular_market['Vol_x_Price'] = regular_market['Typical_Price'] * regular_market['Volume']
+
+            regular_market['Date'] = regular_market.index.date
+            daily_stats = regular_market.groupby('Date').agg(
+                Total_Vol_Price=('Vol_x_Price', 'sum'),
+                Total_Vol=('Volume', 'sum')
+            )
+
+            daily_stats['VWAP'] = np.where(daily_stats['Total_Vol'] > 0,
+                                           daily_stats['Total_Vol_Price'] / daily_stats['Total_Vol'],
+                                           np.nan)
+
+            daily_stats = daily_stats.dropna(subset=['VWAP'])
+
+            if len(daily_stats) >= 2:
+                prev_vwap = float(daily_stats['VWAP'].iloc[-2])
+                curr_vwap = float(daily_stats['VWAP'].iloc[-1])
+            elif len(daily_stats) == 1:
+                prev_vwap = 0.0
+                curr_vwap = float(daily_stats['VWAP'].iloc[-1])
+            else:
+                prev_vwap = 0.0
+                curr_vwap = 0.0
+
+            return round(prev_vwap, 4), round(curr_vwap, 4)
+        except Exception as e:
+            logging.error(f"⚠️ [Broker] 일별 VWAP 파싱 실패 ({ticker}): {e}")
+            return 0.0, 0.0
 
     def get_current_5min_candle(self, ticker):
         try:
@@ -804,8 +859,6 @@ class KoreaInvestmentBroker:
         return 0.0, ""
 
     def get_dynamic_sniper_target(self, index_ticker):
-        # NEW: [V40.XX 옴니 매트릭스] 기초자산이 직접 들어오지 않고 티커명(SOXL/SOXS)이 들어오더라도 
-        # 안전하게 반도체 지수(SOXX) 모멘텀 로직을 타도록 타겟 인덱스 방어막 이식
         if index_ticker in ["SOXX", "SOXL", "SOXS"]:
             target_index = "SOXX"
         else:

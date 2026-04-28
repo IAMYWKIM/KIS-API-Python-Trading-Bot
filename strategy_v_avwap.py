@@ -9,6 +9,9 @@
 # 🚨 MODIFIED: [V32.00 방어막] 2차 손절망(재진입) 환각을 영구 차단하는 13계명 백신 주석 이식 완료.
 # NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어] 런타임 붕괴(AttributeError) 차단 정수 기반 락온
 # NEW: [V40.XX 옴니 매트릭스] SOXS(인버스) 티커 듀얼 모멘텀 완벽 대응을 위한 양방향(Inverted) 논리 거울 엔진 탑재
+# 🚨 MODIFIED: [V40.05 튜닝] 다중 출장 '0% 베이스라인 리셋' 엔진 탑재
+# 익절/손절 후 주가가 VWAP 0% 선으로 복귀하기 전까지는 재진입을 100% 차단하여
+# 휩소 구간의 무분별한 연타 진입을 방어하는 노련한 필터링 이식 완료.
 # ==========================================================
 import logging
 import datetime
@@ -46,7 +49,8 @@ class VAvwapHybridPlugin:
                     return json.load(f)
             except Exception:
                 pass
-        return {}
+        # 🚨 [V40.05] 0% 리셋 초기값은 True로 시작하여 첫 진입 무조건 허용
+        return {"executed_buy": False, "shutdown": False, "strikes": 0, "has_reset_to_zero": True}
 
     def save_state(self, ticker, now_est, state_data):
         file_path = self._get_state_file(ticker, now_est)
@@ -157,7 +161,6 @@ class VAvwapHybridPlugin:
 
         avwap_state = avwap_state or {}
         strikes = avwap_state.get('strikes', 0)
-        cooldown_active = avwap_state.get('cooldown_active', False)
             
         curr_time = now_est.time()
         
@@ -169,7 +172,7 @@ class VAvwapHybridPlugin:
         vwap_success = False 
         rolling_tp = base_curr_p
         
-        # NEW: [V40.XX 옴니 매트릭스] 인버스(Inverse) 종목 여부 판독
+        # 🚨 [V40.XX 옴니 매트릭스] 인버스(Inverse) 종목 여부 판독
         is_inverse = exec_ticker.upper() in ["SOXS", "SQQQ", "SPXU"]
         
         if df_1min_base is not None and not df_1min_base.empty:
@@ -228,6 +231,13 @@ class VAvwapHybridPlugin:
             return _build_res('WAIT', 'VWAP_데이터_결측_동결')
 
         safe_qty = int(math.floor(float(avwap_qty)))
+        
+        # 🚨 [V40.05 튜닝] 0% 베이스라인 리셋 엔진 탑재
+        has_reset_to_zero = avwap_state.get('has_reset_to_zero', True)
+
+        # ---------------------------------------------------------
+        # 1. 매도 (보유 중일 때) 로직
+        # ---------------------------------------------------------
         if safe_qty > 0:
             safe_avg = avwap_avg_price if avwap_avg_price > 0 else exec_curr_p
             
@@ -240,9 +250,14 @@ class VAvwapHybridPlugin:
             base_equivalent_return = exec_return / self.leverage
             
             if base_equivalent_return <= -self.base_stop_loss_pct:
+                avwap_state["shutdown"] = True
+                self.save_state(exec_ticker, now_est, avwap_state)
                 return _build_res('SHUTDOWN', 'HARD_STOP_손절(-6.0%)_당일영구동결', qty=safe_qty, target_price=0.0)
             
             if exec_return >= self.base_target_pct:
+                # 🚨 [V40.05] 익절 즉시 리셋 플래그를 False로 꺾어서 다음 타점을 0% 선 복귀 후에만 잡도록 강제
+                avwap_state["has_reset_to_zero"] = False
+                self.save_state(exec_ticker, now_est, avwap_state)
                 reason = f'MULTI_STRIKE_TAKE(+2.0%)'
                 return _build_res('SELL', reason, qty=safe_qty, target_price=0.0)
 
@@ -251,24 +266,40 @@ class VAvwapHybridPlugin:
                 
             return _build_res('HOLD', '보유중_관망')
 
+        # ---------------------------------------------------------
+        # 2. 매수 (포지션 0주 일 때) 로직
+        # ---------------------------------------------------------
         if not context_data:
             return _build_res('WAIT', '매크로_데이터_수집대기')
 
         if base_day_open <= 0:
             return _build_res('WAIT', '시가_데이터_결측_대기')
 
+        # 🚨 [V40.05] 0% 리셋이 안 되었다면 아무리 좋은 타점이라도 진입 불가 (인버스 양방향 거울 적용)
+        if not has_reset_to_zero:
+            if not is_inverse and gap_pct >= 0.0:
+                avwap_state["has_reset_to_zero"] = True
+                self.save_state(exec_ticker, now_est, avwap_state)
+                return _build_res('COOLDOWN_RELEASE', '0%_베이스라인_복귀_재장전_완료')
+            elif is_inverse and gap_pct <= 0.0:
+                avwap_state["has_reset_to_zero"] = True
+                self.save_state(exec_ticker, now_est, avwap_state)
+                return _build_res('COOLDOWN_RELEASE', '0%_베이스라인_복귀_재장전_완료')
+            else:
+                return _build_res('WAIT', f'다중타격_0%_베이스라인_복귀_대기중 (현재갭 {gap_pct:.2f}%)')
+
         prev_vwap = context_data.get('prev_vwap', 0.0)
         prev_c = context_data.get('prev_close', 0.0)
         avg_vol_20 = context_data.get('avg_vol_20', 0.0)
 
-        # 🚨 NEW: [V40.XX] 인버스/롱 양방향 거울 엔진 적용 (추세 필터)
+        # 🚨 [V40.XX] 인버스/롱 양방향 거울 엔진 적용 (추세 필터)
         if prev_vwap > 0:
             if not is_inverse and base_vwap < prev_vwap:
                 return _build_res('WAIT', f'상승장_조건미달(당일:${base_vwap:.2f} < 전일:${prev_vwap:.2f})')
             elif is_inverse and base_vwap > prev_vwap:
                 return _build_res('WAIT', f'하락장_조건미달(당일:${base_vwap:.2f} > 전일:${prev_vwap:.2f})')
 
-        # 🚨 NEW: [V40.XX] 인버스/롱 양방향 거울 엔진 적용 (시가 갭 차단)
+        # 🚨 [V40.XX] 인버스/롱 양방향 거울 엔진 적용 (시가 갭 차단)
         if not is_inverse and base_day_open <= prev_c * (1 - 0.0067):
             return _build_res('SHUTDOWN', '기초자산_시가_하락갭_영구동결')
         elif is_inverse and base_day_open >= prev_c * (1 + 0.0067):
@@ -276,23 +307,14 @@ class VAvwapHybridPlugin:
             
         if curr_time >= time_1000:
             if avg_vol_20 > 0 and base_current_30m_vol >= (avg_vol_20 * 2.0):
-                # 🚨 NEW: [V40.XX] 인버스/롱 양방향 거울 엔진 적용 (RVOL 스파이크 방향 차단)
+                # 🚨 [V40.XX] 인버스/롱 양방향 거울 엔진 적용 (RVOL 스파이크 방향 차단)
                 if not is_inverse and base_curr_p < base_vwap:
                     return _build_res('SHUTDOWN', '기초자산_RVOL_하방스파이크_영구동결')
                 elif is_inverse and base_curr_p > base_vwap:
                     return _build_res('SHUTDOWN', '기초자산_RVOL_상방스파이크_영구동결')
-
-        if cooldown_active:
-            # 🚨 NEW: [V40.XX] 인버스/롱 양방향 거울 엔진 적용 (쿨다운 해제 조건)
-            if not is_inverse and gap_pct >= -0.2:
-                return _build_res('COOLDOWN_RELEASE', 'VWAP_회복_재장전_완료')
-            elif is_inverse and gap_pct <= 0.2:
-                return _build_res('COOLDOWN_RELEASE', 'VWAP_회복_재장전_완료')
-            else:
-                return _build_res('WAIT', f'다중타격_자연쿨다운_대기중 (현재갭 {gap_pct:.2f}%)')
                 
         if time_1000 <= curr_time <= time_1500:
-            # 🚨 NEW: [V40.XX] 인버스/롱 양방향 거울 엔진 적용 (타격 트리거 조건 반전)
+            # 🚨 [V40.XX] 인버스/롱 양방향 거울 엔진 적용 (타격 트리거 조건 반전)
             trigger_condition = (gap_pct < 0) if not is_inverse else (gap_pct > 0)
             
             if trigger_condition:

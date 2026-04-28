@@ -6,7 +6,7 @@
 # 2) APScheduler(JobQueue) 잡 등록 시 zi_est, zi_kst를 사용하여 스케줄 증발 원천 차단.
 # 3) 삭제된 get_target_hour 임포트 라인 영구 제거 (ImportError 완벽 방어).
 # 4) 커넥션 풀 최적화 및 타임존 전역 공유 파이프라인 무결성 확보.
-# NEW: [V40.XX 옴니 매트릭스] 10:20 EST 60MA/120MA 시장 국면 판별 스케줄러 탑재 완료
+# MODIFIED: [V40.XX 옴니 매트릭스] 10:20 EST VWAP 동행지표 기반 듀얼 모멘텀 스캔 엔진 및 Broker 주입 배선 완료
 # ==========================================================
 
 import os
@@ -81,17 +81,18 @@ logging.basicConfig(
     ]
 )
 
-# MODIFIED: [V40.XX 옴니 매트릭스] 10:20 EST 시장 국면 판별 및 가중치 스캔 하이브리드 엔진
+# MODIFIED: [V40.XX 옴니 매트릭스] 10:20 EST VWAP 동행지표 기반 듀얼 모멘텀 스캔 엔진 (60MA/120MA 적출)
 async def scheduled_volatility_scan(context):
     app_data = context.job.data
     cfg = app_data['cfg']
+    broker = app_data['broker']
     base_map = app_data.get('base_map', TICKER_BASE_MAP)
     
     print("\n" + "=" * 60)
     print("📈 [자율주행 변동성 & 시장 국면 스캔 완료] (10:20 EST 스냅샷)")
     
-    # 1. 60MA/120MA 듀얼 모멘텀 시장 국면 판별 (비동기 안전 래퍼 호출)
-    regime_data = await determine_market_regime()
+    # 1. 전일 VWAP vs 당일 실시간 VWAP 듀얼 모멘텀 판별 (비동기 안전 래퍼 호출, broker 주입)
+    regime_data = await determine_market_regime(broker)
     
     # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각 방어막]
     # 판별된 국면 데이터를 전역 app_data에 락온시켜 텔레그램 명령어 및 스나이퍼에서 실시간 참조 가능토록 함
@@ -100,10 +101,11 @@ async def scheduled_volatility_scan(context):
     if regime_data.get("status") == "success":
         regime = regime_data.get("regime")
         target_ticker = regime_data.get("target_ticker")
-        close_p = regime_data.get("close")
-        ma60 = regime_data.get("ma60")
-        ma120 = regime_data.get("ma120")
-        print(f"🏛️ 옴니 매트릭스: [{regime}] 타겟: {target_ticker} (종가: {close_p:.2f}, 60MA: {ma60:.2f}, 120MA: {ma120:.2f})")
+        close_p = regime_data.get("close", 0.0)
+        prev_vwap = regime_data.get("prev_vwap", 0.0)
+        curr_vwap = regime_data.get("curr_vwap", 0.0)
+        desc = regime_data.get("desc", "")
+        print(f"🏛️ 옴니 매트릭스: [{regime}] 타겟: {target_ticker} ({desc}) | 종가: {close_p:.2f}, 당일VWAP: {curr_vwap:.2f}, 전일VWAP: {prev_vwap:.2f}")
     else:
         print(f"⚠️ 옴니 매트릭스 판별 실패: {regime_data.get('msg')}")
 
@@ -171,7 +173,7 @@ def main():
         'queue_ledger': queue_ledger, 'strategy_rev': strategy_rev,  
         'bot': bot, 'tx_lock': None, 'base_map': TICKER_BASE_MAP,
         'tz_kst': kst_zone, 'tz_est': est_zone,
-        'regime_data': None # NEW: 국면 데이터 글로벌 캐시 추가
+        'regime_data': None 
     }
 
     app = (
@@ -208,7 +210,7 @@ def main():
     
     jq.run_daily(scheduled_force_reset, time=datetime.time(4, 0, tzinfo=est_zone), days=(0,1,2,3,4), chat_id=ADMIN_CHAT_ID, data=app_data)
     
-    # MODIFIED: [V40.XX] 옴니 매트릭스 10:20 EST 듀얼 스캔 배선 연결
+    # MODIFIED: [V40.XX] 옴니 매트릭스 10:20 EST VWAP 듀얼 스캔 배선 연결
     jq.run_daily(scheduled_volatility_scan, time=datetime.time(10, 20, tzinfo=est_zone), days=(0,1,2,3,4), chat_id=ADMIN_CHAT_ID, data=app_data)
     
     jq.run_daily(scheduled_regular_trade, time=datetime.time(4, 5, tzinfo=est_zone), days=(0,1,2,3,4), chat_id=ADMIN_CHAT_ID, data=app_data)

@@ -2,8 +2,9 @@
 # [strategy.py] - 🌟 2대 코어 + 하이브리드 라우터 완성본 🌟
 # ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
 # 🚨 MODIFIED: [V32.00 그랜드 수술] 불필요한 AVWAP 동적 파라미터 수신 배선 완전 소각
-# NEW: [V40.XX 옴니 매트릭스] 60MA/120MA 기반 SOXL/SOXS 듀얼 모멘텀 중앙 라우팅 락온 엔진 탑재
 # NEW: [V40.XX 옴니 매트릭스 절대 헌법] TQQQ(V14) / SOXS(V-REV) 런타임 강제 라우팅(Bypass) 쉴드 이식
+# 🚨 MODIFIED: [V40.XX 옴니 매트릭스 전면 수술] 후행성 60MA/120MA 엔진 전면 소각 및
+# 전일 VWAP vs 당일 실시간 VWAP 동행 지표(Coincident Indicator) 듀얼 모멘텀 엔진 수신 및 라우팅 락온
 # ==========================================================
 import logging
 import pandas as pd
@@ -78,30 +79,31 @@ class InfiniteStrategy:
 
     def apply_omni_matrix_filter(self, ticker, qty, regime_data):
         """
-        60MA/120MA 기반의 국면 데이터(regime_data)를 해석하여,
+        VWAP 동행 지표 기반의 국면 데이터(regime_data)를 해석하여,
         현재 요청된 티커(SOXL 또는 SOXS)가 당일 신규 매수 가능한지 판별합니다.
         보유 수량(qty)이 1주라도 있다면 1층 청산(SELL)은 무조건 허용합니다.
         """
         if not regime_data or regime_data.get("status") != "success":
-            return {"allow_buy": False, "allow_sell": qty > 0, "msg": "국면 판별 불가 (안전 대기)"}
+            return {"allow_buy": False, "allow_sell": qty > 0, "msg": "VWAP 모멘텀 판별 불가 (안전 대기)"}
 
         target_ticker = regime_data.get("target_ticker", "NONE")
         regime = regime_data.get("regime", "SIDEWAYS")
+        desc = regime_data.get("desc", regime)
 
-        # 횡보장 휩소 구간: 신규 매수 전면 차단 (암살자 퇴직 모드)
+        # 횡보장 휩소 구간 (방향성 충돌): 신규 매수 전면 차단 (암살자 퇴직 모드)
         if target_ticker == "NONE" or regime == "SIDEWAYS":
-            return {"allow_buy": False, "allow_sell": qty > 0, "msg": f"횡보장({regime}) - 암살자 퇴직 (신규 진입 차단)"}
+            return {"allow_buy": False, "allow_sell": qty > 0, "msg": f"{desc} - 암살자 퇴직 (신규 진입 차단)"}
 
         # 듀얼 모멘텀 공수 일치 여부 확인
         if ticker.upper() == target_ticker.upper():
-            return {"allow_buy": True, "allow_sell": True, "msg": f"{regime}장 - {ticker.upper()} 진입 락온"}
+            return {"allow_buy": True, "allow_sell": True, "msg": f"{desc} - {ticker.upper()} 진입 락온"}
         else:
-            return {"allow_buy": False, "allow_sell": qty > 0, "msg": f"{regime}장 - {ticker.upper()} 진입 차단 (타겟: {target_ticker})"}
+            return {"allow_buy": False, "allow_sell": qty > 0, "msg": f"{desc} - {ticker.upper()} 진입 차단 (타겟: {target_ticker})"}
 
     def get_plan(self, ticker, current_price, avg_price, qty, prev_close, ma_5day=0.0, market_type="REG", available_cash=0, is_simulation=False, vwap_status=None, is_snapshot_mode=False, regime_data=None):
         version = self.cfg.get_version(ticker)
         
-        # 🚨 NEW: [V40.XX 절대 헌법] SOXS = V-REV 전용, TQQQ = V14 전용 강제 락온(Bypass)
+        # 🚨 [V40.XX 절대 헌법] SOXS = V-REV 전용, TQQQ = V14 전용 강제 락온(Bypass)
         if ticker.upper() == "SOXS" and version != "V_REV":
             logging.warning(f"🚨 [{ticker}] 절대 헌법 위반 감지. V_REV 모드로 강제 라우팅합니다.")
             self.cfg.set_version(ticker, "V_REV")
