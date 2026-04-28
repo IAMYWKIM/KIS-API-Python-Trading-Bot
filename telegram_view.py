@@ -212,7 +212,7 @@ class TelegramView:
     def get_avwap_warning_menu(self, ticker):
         msg = f"🛑 <b>[{ticker}] V41 차세대 AVWAP 무장 해제 및 경고</b>\n\n"
         msg += "현재 <b>AVWAP 암살자 모드</b> 가동을 지시하셨습니다.\n"
-        msg += "이 전술은 잉여 현금의 100%를 장중 딥매수 모멘텀 타격에 쏟아붓는 초공격형 옵션 옵션입니다.\n\n"
+        msg += "이 전술은 잉여 현금의 100%를 장중 딥매수 모멘텀 타격에 쏟아붓는 초공격형 옵션입니다.\n\n"
         msg += "⚠️ <b>[ 파괴적 제약 사항 (V41 락온) ]</b>\n"
         msg += "1. 기존 V14의 상방 스나이퍼 기능은 즉시 영구 셧다운됩니다.\n"
         msg += "2. V-REV 큐(Queue)와는 물량과 평단가가 100% 분리되어 독립 연산됩니다.\n"
@@ -313,7 +313,6 @@ class TelegramView:
         body_msg = ""
         keyboard = []
 
-        # [V42.04] 듀얼 모멘텀 데이터 선추출
         avwap_tickers_data = {}
         for t_info in ticker_data:
             if t_info.get('avwap_active', False):
@@ -324,7 +323,7 @@ class TelegramView:
             v_mode = t_info['version']
             
             if t == "SOXS":
-                continue # SOXS는 메인 장부 렌더링을 완전히 Bypass! (AVWAP 정보는 하단에서 통합 렌더링)
+                continue 
             
             is_manual_vwap = t_info.get('is_manual_vwap', False)
             is_zero_start = t_info.get('is_zero_start', False)
@@ -512,7 +511,6 @@ class TelegramView:
                 
             body_msg += "\n"
 
-        # 🚨 [V42.06] final_msg 변수 선언 및 듀얼 모멘텀 레이더 통합 렌더링
         final_msg = header_msg + body_msg
         
         if avwap_tickers_data:
@@ -559,7 +557,6 @@ class TelegramView:
                             final_msg += f"▫️ 모멘텀 돌파: {momentum_color} {trend_str}\n"
                             final_msg += f" ↳ (당일 &gt; 전일 &amp; 당일 &gt; 5분평균)\n"
                     
-                    # 🚨 [V42.06] SOXS 전용 고가/저가 렌더링 엔진 이식
                     if t == "SOXS":
                         d_high = t_info.get('day_high', 0.0)
                         d_low = t_info.get('day_low', 0.0)
@@ -574,8 +571,6 @@ class TelegramView:
                     final_msg += f"▫️ 독립 물량/평단: {avwap_qty}주 / ${avwap_avg:.2f}\n"
                     final_msg += f"▫️ 작전 상태: <b>{avwap_status}</b>\n"
             final_msg += "\n"
-
-        # 🚨 [V42.06] 자율지표(vol_summaries) 렌더링 로직 영구 소각
 
         if not is_trade_active:
             final_msg += "💡 <i>※ 현재 표출된 계획은 전일 17:05 기준 박제된 스냅샷이며, 금일 17:05에 최신 팩트 잔고를 바탕으로 리셋됩니다.</i>\n\n"
