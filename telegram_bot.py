@@ -6,6 +6,7 @@
 # NEW: [V40.XX 옴니 매트릭스] SOXS 티커 진입 시 기초자산을 QQQ로 오인하는 치명적 맹점 전면 수술 및 /avwap 듀얼 라우팅 개방
 # 🚨 MODIFIED: [V41.XX 파격적 수술] 지시서 실시간 레이더 시각화를 위한 avg_vwap_5m 추출 파이프라인 개통 및 낡은 롤링 TP, 갭 이탈률 소각
 # 🚨 MODIFIED: [V42.00 아키텍처 개편] SOXS 메인 장부 폐기에 따른 지시서 듀얼 렌더링 강제 병합 파이프라인(디커플링) 대수술
+# 🚨 MODIFIED: [V42.15 핫픽스] AVWAP 매수 후 지시서 0주 표출(환각) 맹점 원천 차단. /sync 조회 시 디스크 상태 파일(JSON)을 강제 로드하여 메모리 디커플링 100% 영구 소각 완료.
 # ==========================================================
 import logging
 import datetime
@@ -238,7 +239,7 @@ class TelegramController:
             args = context.args
             if len(args) < 4:
                 return await update.message.reply_text("❌ 정확한 양식: <code>/add_q SOXL 2026-04-06 20 52.16</code>", parse_mode='HTML')
-                
+            
             ticker = args[0].upper()
             date_str = args[1]
             try:
@@ -283,7 +284,7 @@ class TelegramController:
             chat_id = update.effective_chat.id
             await self.sync_engine._verify_and_update_queue(ticker, ticker_q, context, chat_id)
             await update.message.reply_text(f"✅ <b>[{ticker}] 수동 지층 삽입 완료!</b>\n▫️ {date_str} | {qty}주 | ${price:.2f}", parse_mode='HTML')
-                
+            
         except Exception as e:
             await update.message.reply_text(f"❌ 알 수 없는 에러 발생: {e}")
 
@@ -342,13 +343,16 @@ class TelegramController:
         ticker_data_list = []
         total_buy_needed = 0.0
 
-        tracking_cache = {}
-        try:
-            jobs = context.job_queue.jobs() if context.job_queue else []
-            job_data = jobs[0].data if jobs and jobs[0].data is not None else {}
-            tracking_cache = job_data.get('sniper_tracking', {})
-        except (IndexError, AttributeError):
-            tracking_cache = {}
+        # 🚨 [V42.15 핫픽스] 0주 디커플링 환각을 차단하기 위한 tracking_cache 무결성 로드 엔진
+        app_data = context.bot_data.get('app_data', {})
+        if not app_data:
+            try:
+                jobs = context.job_queue.jobs() if context.job_queue else []
+                app_data = jobs[0].data if jobs and jobs[0].data is not None else {}
+            except Exception:
+                app_data = {}
+
+        tracking_cache = app_data.setdefault('sniper_tracking', {})
 
         est = ZoneInfo('America/New_York')
         now_est = datetime.datetime.now(est)
@@ -588,7 +592,6 @@ class TelegramController:
             avwap_prev_vwap = 0.0
             avwap_avg_vwap_5m = 0.0 
 
-            # MODIFIED: [V42.00] SOXL의 AVWAP이 켜져있다면 SOXS도 듀얼 타격 레이더 강제 ON 취급 (디커플링 병합)
             is_hybrid_on = False
             if hasattr(self.cfg, 'get_avwap_hybrid_mode'):
                 is_hybrid_on = self.cfg.get_avwap_hybrid_mode(t)
@@ -597,6 +600,22 @@ class TelegramController:
 
             if is_hybrid_on:
                 is_avwap_active = True
+                
+                # 🚨 [V42.15 핫픽스] 0주 디커플링 환각 방어를 위한 디스크 상태 파일 강제 로드
+                if not tracking_cache.get(f"AVWAP_INIT_{t}"):
+                    try:
+                        if hasattr(self.strategy, 'v_avwap_plugin'):
+                            saved_state = self.strategy.v_avwap_plugin.load_state(t, now_est)
+                            if saved_state:
+                                tracking_cache[f"AVWAP_BOUGHT_{t}"] = saved_state.get('bought', False)
+                                tracking_cache[f"AVWAP_SHUTDOWN_{t}"] = saved_state.get('shutdown', False)
+                                tracking_cache[f"AVWAP_QTY_{t}"] = saved_state.get('qty', 0)
+                                tracking_cache[f"AVWAP_AVG_{t}"] = saved_state.get('avg_price', 0.0)
+                                tracking_cache[f"AVWAP_STRIKES_{t}"] = saved_state.get('strikes', 0)
+                            tracking_cache[f"AVWAP_INIT_{t}"] = True
+                    except Exception as e:
+                        logging.error(f"UI 렌더링 중 AVWAP 상태 강제 로드 실패: {e}")
+
                 avwap_qty = tracking_cache.get(f"AVWAP_QTY_{t}", 0)
                 avwap_avg = tracking_cache.get(f"AVWAP_AVG_{t}", 0.0)
                 avwap_budget = cash
@@ -604,7 +623,7 @@ class TelegramController:
                 
                 if tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"):
                     avwap_status_txt = "🛑 당일 영구동결 (SHUTDOWN)"
-                elif tracking_cache.get(f"AVWAP_BOUGHT_{t}"):
+                elif tracking_cache.get(f"AVWAP_BOUGHT_{t}") or avwap_qty > 0:
                     avwap_status_txt = "🎯 딥매수 완료 (익절/손절 감시중)"
                 else:
                     avwap_status_txt = "👀 상승장 필터 스캔 및 모멘텀 타점 대기"
@@ -644,7 +663,7 @@ class TelegramController:
                     except Exception as e:
                         logging.error(f"🚨 [{t}] AVWAP 실시간 레이더 스캔 타임아웃/에러: {e}")
 
-                if not tracking_cache.get(f"AVWAP_BOUGHT_{t}") and not tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"):
+                if not tracking_cache.get(f"AVWAP_BOUGHT_{t}") and not tracking_cache.get(f"AVWAP_SHUTDOWN_{t}") and avwap_qty == 0:
                     curr_time = now_est.time()
                     time_1020 = datetime.time(10, 20)
                     time_1500 = datetime.time(15, 0)
