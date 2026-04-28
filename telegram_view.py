@@ -5,11 +5,11 @@
 # 🚨 MODIFIED: [V31.50] 1분봉 고정 현재가 탈피, 롤링 5분 TP 팩트 스캔 엔진 지시서에 시각화 표출 
 # 🚨 MODIFIED: [V32.00] 12차 백테스트 팩트 락온. 동적 파라미터 렌더링 소각 및 하드코딩 룰(2%/-6% 셧다운) 고정 표출.
 # NEW: [V40.XX 옴니 매트릭스] SOXS 듀얼 모멘텀 전용 버튼 및 옴니 매트릭스 셧다운 알림 렌더링 엔진 이식
-# NEW: [V40.XX 옴니 매트릭스 절대 헌법] TQQQ(V14 전용) / SOXS(V-REV 전용) 렌더링 버튼 락다운(은폐) 적용
 # 🚨 MODIFIED: [V41.XX 파격적 수술] AVWAP 콘솔 및 지시서 렌더링 텍스트 전면 개조 (쿨다운 철거 및 5분 평균 VWAP 레이더 탑재)
 # 🚨 MODIFIED: [V42.00 아키텍처 개편] SOXS 메인 종목 렌더링 영구 소각 및 계층형 트리 구조(자동/수동 ➔ AVWAP) UI 정비
-# 🚨 MODIFIED: [V42.01 갭 스위칭 자율주행] 수동 제어(Toggle) 스위치 영구 소각 및 자율주행 텍스트 렌더링 교정
-# 🚨 MODIFIED: [V42.02 핫픽스] 운용 종목 선택 메뉴(/ticker)에서 SOXS 듀얼 콤보 버튼 100% 영구 소각 완료
+# 🚨 MODIFIED: [V43.00 갭 스위칭 자율주행] 수동 제어(Toggle) 스위치 영구 소각 및 자율주행 텍스트 렌더링 교정
+# 🚨 MODIFIED: [V43.01 핫픽스] SOXS 지시서 렌더링 시 V-REV 껍데기(보일러플레이트) 100% 영구 적출. 오직 암살자 팩트만 진공 압축 표출.
+# 🚨 MODIFIED: [V43.02 핫픽스] 텔레그램 HTML 파싱 에러(Can't parse entities) 완벽 수술. 부등호(<, >) 및 앰퍼샌드(&) 이스케이프 처리 완료.
 # ==========================================================
 import os
 import math
@@ -256,7 +256,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V42.02 옴니 매트릭스 듀얼 코어</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V42.01 옴니 매트릭스 듀얼 코어</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -345,14 +345,14 @@ class TelegramView:
                         momentum_color = "🟢" if base_vwap < prev_vwap and base_vwap < avg_vwap_5m else "🔴"
                         trend_str = "하락 돌파 (진입허용)" if base_vwap < prev_vwap and base_vwap < avg_vwap_5m else "조건 미달 (대기)"
                         body_msg += f"▫️ 모멘텀 돌파: {momentum_color} {trend_str}\n"
-                        body_msg += f" ↳ (당일 < 전일 & 당일 < 5분평균)\n"
+                        body_msg += f" ↳ (당일 &lt; 전일 &amp; 당일 &lt; 5분평균)\n"
                     else:
                         body_msg += f"▫️ 당일 실시간 VWAP: ${base_vwap:,.2f}\n"
                         
                     body_msg += f"▫️ 현재가: ${t_info.get('curr', 0.0):.2f}\n"    
                     body_msg += f"▫️ 독립 물량/평단: {avwap_qty}주 / ${avwap_avg:.2f}\n"
                     body_msg += f"▫️ 작전 상태: <b>{avwap_status}</b>\n\n"
-                continue
+                continue # SOXS는 메인 장부 렌더링을 완전히 Bypass!
             
             is_manual_vwap = t_info.get('is_manual_vwap', False)
             is_zero_start = t_info.get('is_zero_start', False)
@@ -513,16 +513,10 @@ class TelegramView:
 
                         body_msg += f"▫️ 당일 실시간 VWAP: ${base_vwap:,.2f}\n"
                         
-                        if t.upper() == "SOXS":
-                            momentum_color = "🟢" if base_vwap < prev_vwap and base_vwap < avg_vwap_5m else "🔴"
-                            trend_str = "하락 돌파 (진입허용)" if base_vwap < prev_vwap and base_vwap < avg_vwap_5m else "조건 미달 (대기)"
-                            body_msg += f"▫️ 모멘텀 돌파: {momentum_color} {trend_str}\n"
-                            body_msg += f" ↳ (당일 < 전일 & 당일 < 5분평균)\n"
-                        else:
-                            momentum_color = "🟢" if base_vwap > prev_vwap and base_vwap > avg_vwap_5m else "🔴"
-                            trend_str = "상승 돌파 (진입허용)" if base_vwap > prev_vwap and base_vwap > avg_vwap_5m else "조건 미달 (대기)"
-                            body_msg += f"▫️ 모멘텀 돌파: {momentum_color} {trend_str}\n"
-                            body_msg += f" ↳ (당일 > 전일 & 당일 > 5분평균)\n"
+                        momentum_color = "🟢" if base_vwap > prev_vwap and base_vwap > avg_vwap_5m else "🔴"
+                        trend_str = "상승 돌파 (진입허용)" if base_vwap > prev_vwap and base_vwap > avg_vwap_5m else "조건 미달 (대기)"
+                        body_msg += f"▫️ 모멘텀 돌파: {momentum_color} {trend_str}\n"
+                        body_msg += f" ↳ (당일 &gt; 전일 &amp; 당일 &gt; 5분평균)\n"
                     else:
                         body_msg += f"▫️ 당일 실시간 VWAP: ${base_vwap:,.2f}\n"
                         
@@ -872,7 +866,6 @@ class TelegramView:
         img.save(fname, format="PNG", quality=100)
         return fname
 
-    # MODIFIED: [V42.02] SOXS 단독 메뉴 소각 및 듀얼 모멘텀 집중
     def get_ticker_menu(self, current_tickers):
         keyboard = [
             [InlineKeyboardButton("🚀 오리지널 TQQQ 단독 운용", callback_data="TICKER:TQQQ")],
