@@ -16,6 +16,7 @@
 # 🚨 MODIFIED: [V32.00 그랜드 수술] 12차 백테스트 팩트 락온. 불필요해진 AVWAP 조기퇴근/동적갭 파라미터 저장소 완전 소각.
 # NEW: [V40.XX 옴니 매트릭스] SOXL/SOXS 양방향 듀얼 모멘텀 플러그인 연동 및 390분 U-Curve 엔진 탑재
 # 🚨 MODIFIED: [V42.00 아키텍처 개편] SOXS 메인 장부 전면 폐기. 오리지널(SOXL, TQQQ) 및 V-REV(SOXL 전용) 2대 트리 구조 확립.
+# 🚨 MODIFIED: [V42.02 핫픽스] 로컬 캐시 오염 방어. active_tickers 반환 시 SOXS 강제 필터링 적출 적용.
 # ==========================================================
 import json
 import os
@@ -81,7 +82,6 @@ class ConfigManager:
             "VREV_GAP_THRESH_CFG": "data/vrev_gap_thresh.json"        
         }
         
-        # MODIFIED: [V42.00] SOXS 메인 설정 전면 폐기
         self.DEFAULT_SEED = {"SOXL": 6720.0, "TQQQ": 6720.0}
         self.DEFAULT_SPLIT = {"SOXL": 40.0, "TQQQ": 40.0}
         self.DEFAULT_TARGET = {"SOXL": 12.0, "TQQQ": 10.0}
@@ -666,9 +666,6 @@ class ConfigManager:
                 return latest_entry.split(' ')[0] 
         return "V14.x"
 
-    def get_history(self):
-        return self._load_json(self.FILES["HISTORY"], [])
-
     def get_seed(self, t): return float(self._load_json(self.FILES["SEED_CFG"], self.DEFAULT_SEED).get(t, 6720.0))
     def set_seed(self, t, v): 
         d = self._load_json(self.FILES["SEED_CFG"], self.DEFAULT_SEED)
@@ -681,13 +678,11 @@ class ConfigManager:
         d[t] = v
         self._save_json(self.FILES["COMPOUND_CFG"], d)
 
-    # MODIFIED: [V42.00 절대 헌법] TQQQ = V14, SOXL = 자유선택 (SOXS는 메인에서 배제되었으므로 안전을 위한 폴백만 남김)
     def get_version(self, t): 
         val = self._load_json(self.FILES["VERSION_CFG"], self.DEFAULT_VERSION).get(t, self.DEFAULT_VERSION.get(t, "V14"))
         if t == "TQQQ": return "V14"
         return val
         
-    # MODIFIED: [V42.00 절대 헌법] 저장 락온 교정
     def set_version(self, t, v):
         if t == "TQQQ": v = "V14"
         d = self._load_json(self.FILES["VERSION_CFG"], self.DEFAULT_VERSION)
@@ -781,9 +776,14 @@ class ConfigManager:
 
     def get_secret_mode(self): return self._load_file(self.FILES["SECRET_MODE"]) == 'True'
     def set_secret_mode(self, v): self._save_file(self.FILES["SECRET_MODE"], str(v))
-    # MODIFIED: [V42.00] 기본 활성 티커 SOXL, TQQQ로 정비
-    def get_active_tickers(self): return self._load_json(self.FILES["TICKER"], ["SOXL", "TQQQ"])
+    
+    # MODIFIED: [V42.02] active_tickers에서 SOXS 강제 적출 (좀비 파일 필터링)
+    def get_active_tickers(self): 
+        tickers = self._load_json(self.FILES["TICKER"], ["SOXL", "TQQQ"])
+        return [t for t in tickers if t != "SOXS"]
+        
     def set_active_tickers(self, v): self._save_json(self.FILES["TICKER"], v)
+    
     def get_chat_id(self): 
         v = self._load_file(self.FILES["CHAT_ID"])
         return int(v) if v else None

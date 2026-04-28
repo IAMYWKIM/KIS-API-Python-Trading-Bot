@@ -21,7 +21,7 @@
 # 🚨 MODIFIED: [V32.00] 12차 백테스트 팩트 반영. 불필요해진 AVWAP 동적 파라미터(TARGET_SET, GAP_SET) 콜백 라우팅 전면 소각 완료.
 # NEW: [V40.XX 옴니 매트릭스] SOXL/SOXS 듀얼 모멘텀 티커 스위칭 완벽 분기 및 V-REV/AVWAP 권한 개방 완료
 # 🚨 MODIFIED: [V42.00 아키텍처 개편] SOXS 메인 종목 모드 전환 영구 락다운 및 듀얼 모멘텀 티커 라우팅 팩트 정립
-# 🚨 MODIFIED: [V43.00 갭 스위칭 자율주행] 수동 제어(ON/OFF/THRESH_SET) 콜백 라우터 영구 소각
+# 🚨 MODIFIED: [V42.01 갭 스위칭 자율주행] 수동 제어(ON/OFF/THRESH_SET) 콜백 라우터 영구 소각
 # ==========================================================
 import logging
 import datetime
@@ -721,6 +721,8 @@ class TelegramCallbacks:
                     
                 msg, markup = self.view.get_avwap_console_menu(ticker)
                 await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
+                
+        # MODIFIED: [V42.01 갭 스위칭 자율주행] VREV_GAP 및 VREV (GAP_ON/OFF/THRESH_SET) 수동 제어 콜백 라우터 영구 소각
 
         elif action == "MODE":
             mode_val = sub
