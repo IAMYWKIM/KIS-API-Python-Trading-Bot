@@ -5,12 +5,11 @@
 # 🚨 MODIFIED: [V31.50] 1분봉 고정 현재가 탈피, 롤링 5분 TP 팩트 스캔 엔진 지시서에 시각화 표출 
 # 🚨 MODIFIED: [V32.00] 12차 백테스트 팩트 락온. 동적 파라미터 렌더링 소각 및 하드코딩 룰(2%/-6% 셧다운) 고정 표출.
 # NEW: [V40.XX 옴니 매트릭스] SOXS 듀얼 모멘텀 전용 버튼 및 옴니 매트릭스 셧다운 알림 렌더링 엔진 이식
-# 🚨 MODIFIED: [V41.XX 파격적 수술] AVWAP 콘솔 및 지시서 렌더링 텍스트 전면 개조 (쿨다운 철거 및 5분 평균 VWAP 레이더 탑재)
 # 🚨 MODIFIED: [V42.00 아키텍처 개편] SOXS 메인 종목 렌더링 영구 소각 및 계층형 트리 구조(자동/수동 ➔ AVWAP) UI 정비
 # 🚨 MODIFIED: [V42.01 갭 스위칭 자율주행] 수동 제어(Toggle) 스위치 영구 소각 및 자율주행 텍스트 렌더링 교정
 # 🚨 MODIFIED: [V42.02 핫픽스] 텔레그램 HTML 파싱 에러(Can't parse entities) 완벽 수술. 부등호(<, >) 및 앰퍼샌드(&) 이스케이프 처리 완료.
-# 🚨 MODIFIED: [V42.04 핫픽스] 듀얼 모멘텀 레이더 중복 렌더링 찌꺼기 100% 영구 소각. 기초자산(SOXX) 데이터 단일 병합 완료.
 # 🚨 MODIFIED: [V42.05 핫픽스] final_msg 변수 할당 누락으로 인한 UnboundLocalError 런타임 붕괴 100% 팩트 교정 완료.
+# 🚨 MODIFIED: [V42.06 핫픽스] SOXS 레이더 내 고가/저가 이식 및 자율지표(Autonomous Indicators) 로직 전면 폐기 완료.
 # ==========================================================
 import os
 import math
@@ -257,7 +256,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V42.04 옴니 매트릭스 듀얼 코어</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V42.06 옴니 매트릭스 듀얼 코어</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -513,7 +512,9 @@ class TelegramView:
                 
             body_msg += "\n"
 
-        # 🚨 [V42.04] 듀얼 모멘텀 암살자 통합 렌더링 (진공 압축)
+        # 🚨 [V42.06] final_msg 변수 선언 및 듀얼 모멘텀 레이더 통합 렌더링
+        final_msg = header_msg + body_msg
+        
         if avwap_tickers_data:
             ref_info = avwap_tickers_data.get('SOXL') or list(avwap_tickers_data.values())[0]
             base_tkr = ref_info.get('avwap_base_ticker', 'N/A')
@@ -521,16 +522,16 @@ class TelegramView:
             prev_vwap = ref_info.get('avwap_prev_vwap', 0.0)
             avg_vwap_5m = ref_info.get('avwap_avg_vwap_5m', 0.0) 
             
-            body_msg += f"⚔️ <b>[ V41 VWAP 듀얼 모멘텀 암살자 ]</b>\n"
-            body_msg += f"▫️ 기초자산(Base): <b>{base_tkr}</b>\n"
+            final_msg += f"⚔️ <b>[ V41 VWAP 듀얼 모멘텀 암살자 ]</b>\n"
+            final_msg += f"▫️ 기초자산(Base): <b>{base_tkr}</b>\n"
             
             if prev_vwap > 0:
-                body_msg += f"▫️ 전일 VWAP: ${prev_vwap:,.2f}\n"
+                final_msg += f"▫️ 전일 VWAP: ${prev_vwap:,.2f}\n"
                 if avg_vwap_5m > 0:
-                    body_msg += f"▫️ 당일 5분 평균 VWAP: ${avg_vwap_5m:,.2f}\n"
-                body_msg += f"▫️ 당일 실시간 VWAP: ${base_vwap:,.2f}\n"
+                    final_msg += f"▫️ 당일 5분 평균 VWAP: ${avg_vwap_5m:,.2f}\n"
+                final_msg += f"▫️ 당일 실시간 VWAP: ${base_vwap:,.2f}\n"
             else:
-                body_msg += f"▫️ 당일 실시간 VWAP: ${base_vwap:,.2f}\n"
+                final_msg += f"▫️ 당일 실시간 VWAP: ${base_vwap:,.2f}\n"
                 
             for t in ['SOXL', 'SOXS', 'TQQQ']:
                 if t in avwap_tickers_data:
@@ -541,43 +542,40 @@ class TelegramView:
                     avwap_strikes = t_info.get('avwap_strikes', 0)
                     
                     label = "롱" if t in ["SOXL", "TQQQ"] else "숏"
-                    body_msg += f"\n🎯 <b>[ {t} ({label}) ]</b>\n"
+                    final_msg += f"\n🎯 <b>[ {t} ({label}) ]</b>\n"
                     
                     if avwap_strikes > 0:
-                        body_msg += f"💼 <b>다중 출장 모드: {avwap_strikes}회차 교전 완료</b>\n"
+                        final_msg += f"💼 <b>다중 출장 모드: {avwap_strikes}회차 교전 완료</b>\n"
                         
                     if prev_vwap > 0:
                         if t == "SOXS":
                             momentum_color = "🟢" if base_vwap < prev_vwap and base_vwap < avg_vwap_5m else "🔴"
                             trend_str = "하락 돌파 (진입허용)" if base_vwap < prev_vwap and base_vwap < avg_vwap_5m else "조건 미달 (대기)"
-                            body_msg += f"▫️ 모멘텀 돌파: {momentum_color} {trend_str}\n"
-                            body_msg += f" ↳ (당일 &lt; 전일 &amp; 당일 &lt; 5분평균)\n"
+                            final_msg += f"▫️ 모멘텀 돌파: {momentum_color} {trend_str}\n"
+                            final_msg += f" ↳ (당일 &lt; 전일 &amp; 당일 &lt; 5분평균)\n"
                         else:
                             momentum_color = "🟢" if base_vwap > prev_vwap and base_vwap > avg_vwap_5m else "🔴"
                             trend_str = "상승 돌파 (진입허용)" if base_vwap > prev_vwap and base_vwap > avg_vwap_5m else "조건 미달 (대기)"
-                            body_msg += f"▫️ 모멘텀 돌파: {momentum_color} {trend_str}\n"
-                            body_msg += f" ↳ (당일 &gt; 전일 &amp; 당일 &gt; 5분평균)\n"
+                            final_msg += f"▫️ 모멘텀 돌파: {momentum_color} {trend_str}\n"
+                            final_msg += f" ↳ (당일 &gt; 전일 &amp; 당일 &gt; 5분평균)\n"
                     
+                    # 🚨 [V42.06] SOXS 전용 고가/저가 렌더링 엔진 이식
                     if t == "SOXS":
-                        body_msg += f"▫️ 현재가: ${t_info.get('curr', 0.0):.2f}\n"
+                        d_high = t_info.get('day_high', 0.0)
+                        d_low = t_info.get('day_low', 0.0)
+                        p_close = t_info.get('prev_close', 0.0)
+                        final_msg += f"▫️ 현재가: ${t_info.get('curr', 0.0):.2f}\n"
+                        if p_close > 0:
+                            h_pct = (d_high - p_close) / p_close * 100
+                            l_pct = (d_low - p_close) / p_close * 100
+                            final_msg += f"▫️ 금일 고가: ${d_high:.2f} ({h_pct:+.2f}%)\n"
+                            final_msg += f"▫️ 금일 저가: ${d_low:.2f} ({l_pct:+.2f}%)\n"
                         
-                    body_msg += f"▫️ 독립 물량/평단: {avwap_qty}주 / ${avwap_avg:.2f}\n"
-                    body_msg += f"▫️ 작전 상태: <b>{avwap_status}</b>\n"
-                    
-            body_msg += "\n"
+                    final_msg += f"▫️ 독립 물량/평단: {avwap_qty}주 / ${avwap_avg:.2f}\n"
+                    final_msg += f"▫️ 작전 상태: <b>{avwap_status}</b>\n"
+            final_msg += "\n"
 
-        final_msg = header_msg + body_msg
-
-        vol_summaries = []
-        for t_info in ticker_data:
-            if t_info['ticker'] == 'SOXS': 
-                continue
-                
-            if 'vol_weight' in t_info and 'vol_status' in t_info:
-                vol_summaries.append(f"{t_info['ticker']}: {t_info['vol_weight']} ({t_info['vol_status']})")
-        
-        if vol_summaries:
-            final_msg += "📊 <b>[자율지표]</b> " + " | ".join(vol_summaries) + "\n<i>(상세: /mode)</i>\n\n"
+        # 🚨 [V42.06] 자율지표(vol_summaries) 렌더링 로직 영구 소각
 
         if not is_trade_active:
             final_msg += "💡 <i>※ 현재 표출된 계획은 전일 17:05 기준 박제된 스냅샷이며, 금일 17:05에 최신 팩트 잔고를 바탕으로 리셋됩니다.</i>\n\n"
