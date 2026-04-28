@@ -1,12 +1,7 @@
 # ==========================================================
-# [main.py] - 🌟 100% 통합 무결점 완성본 (V30.09) 🌟
+# [main.py] - 🌟 100% 통합 무결점 완성본 (V42.16) 🌟
 # ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
-# MODIFIED: [V30.09 핫픽스] pytz 전면 적출 및 ZoneInfo('America/New_York') 100% 락온
-# 1) 로그 파일명 생성 시 LMT 오차를 유발하던 pytz 로직을 ZoneInfo로 교체.
-# 2) APScheduler(JobQueue) 잡 등록 시 zi_est, zi_kst를 사용하여 스케줄 증발 원천 차단.
-# 3) 삭제된 get_target_hour 임포트 라인 영구 제거 (ImportError 완벽 방어).
-# 4) 커넥션 풀 최적화 및 타임존 전역 공유 파이프라인 무결성 확보.
-# MODIFIED: [V40.XX 옴니 매트릭스] 10:20 EST VWAP 동행지표 기반 듀얼 모멘텀 스캔 엔진 및 Broker 주입 배선 완료
+# MODIFIED: [V42.16 핫픽스] post_init 함수 내부 asyncio.lock() typo AI 환각 영구 소각 및 교정
 # ==========================================================
 
 import os
@@ -81,7 +76,6 @@ logging.basicConfig(
     ]
 )
 
-# MODIFIED: [V40.XX 옴니 매트릭스] 10:20 EST VWAP 동행지표 기반 듀얼 모멘텀 스캔 엔진 (60MA/120MA 적출)
 async def scheduled_volatility_scan(context):
     app_data = context.job.data
     cfg = app_data['cfg']
@@ -91,11 +85,7 @@ async def scheduled_volatility_scan(context):
     print("\n" + "=" * 60)
     print("📈 [자율주행 변동성 & 시장 국면 스캔 완료] (10:20 EST 스냅샷)")
     
-    # 1. 전일 VWAP vs 당일 실시간 VWAP 듀얼 모멘텀 판별 (비동기 안전 래퍼 호출, broker 주입)
     regime_data = await determine_market_regime(broker)
-    
-    # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각 방어막]
-    # 판별된 국면 데이터를 전역 app_data에 락온시켜 텔레그램 명령어 및 스나이퍼에서 실시간 참조 가능토록 함
     app_data['regime_data'] = regime_data
     
     if regime_data.get("status") == "success":
@@ -109,7 +99,6 @@ async def scheduled_volatility_scan(context):
     else:
         print(f"⚠️ 옴니 매트릭스 판별 실패: {regime_data.get('msg')}")
 
-    # 2. 기존 공포지수 가중치 판별 로직 유지
     active_tickers = cfg.get_active_tickers()
     if not active_tickers:
         print("📊 현재 운용 중인 종목이 없습니다.")
@@ -134,8 +123,9 @@ async def scheduled_volatility_scan(context):
         print(f"📊 [자율주행 지표] {' | '.join(briefing_lines)} (상세 게이지: /mode)")
     print("=" * 60 + "\n")
 
+# MODIFIED: [V42.16] asyncio.lock() 오타 AI 환각 제거 및 명확한 인스턴스 생성 교정
 async def post_init(application: Application):
-    tx_lock = asyncio.lock() if hasattr(asyncio, 'lock') else asyncio.Lock()
+    tx_lock = asyncio.Lock()
     application.bot_data['app_data']['tx_lock'] = tx_lock
     application.bot_data['bot_controller'].tx_lock = tx_lock
 
@@ -210,7 +200,6 @@ def main():
     
     jq.run_daily(scheduled_force_reset, time=datetime.time(4, 0, tzinfo=est_zone), days=(0,1,2,3,4), chat_id=ADMIN_CHAT_ID, data=app_data)
     
-    # MODIFIED: [V40.XX] 옴니 매트릭스 10:20 EST VWAP 듀얼 스캔 배선 연결
     jq.run_daily(scheduled_volatility_scan, time=datetime.time(10, 20, tzinfo=est_zone), days=(0,1,2,3,4), chat_id=ADMIN_CHAT_ID, data=app_data)
     
     jq.run_daily(scheduled_regular_trade, time=datetime.time(4, 5, tzinfo=est_zone), days=(0,1,2,3,4), chat_id=ADMIN_CHAT_ID, data=app_data)
