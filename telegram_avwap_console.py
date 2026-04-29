@@ -1,5 +1,5 @@
 # ==========================================================
-# [telegram_avwap_console.py] - 🌟 V43.19 신규 AVWAP 독립 관제탑 플러그인 🌟
+# [telegram_avwap_console.py] - 🌟 V43.20 신규 AVWAP 독립 관제탑 플러그인 🌟
 # 🚨 NEW: 통합지시서(/sync)의 과부하를 막기 위해 AVWAP 듀얼 모멘텀 레이더를 분리 독립시킴.
 # 🚨 MODIFIED: [V43.07] 당일 저가(Day Low) 0점 앵커 기반 ATR5/ATR14 체력 소진율 시각화 바(Bar) 이식.
 # 🚨 NEW: [V43.07] 체력 소진율(90%, 80%, 70%)에 따른 목표 수익률 자율주행(Auto) 엔진 및 스위치 장착.
@@ -11,7 +11,8 @@
 # 🚨 MODIFIED: [V43.14 직관적 버튼 렌더링] 버튼 텍스트가 현재 모드를 직관적으로 표출.
 # 🚨 MODIFIED: [V43.17 개발망 풀-오픈] 조건 미달 시 발동되던 UI 은폐 락온 전면 무력화 (항시 렌더링).
 # 🚨 MODIFIED: [V43.18 달러 팩트 갭(Gap) 시각화] 백분율의 맹점을 타파하고 달러 기반 UI 산출.
-# 🚨 MODIFIED: [V43.19 퍼센트(%) 팩트 통일] 목표 수익률(%)과 직관적이고 즉각적인 1:1 팩트 비교를 위해, 실제 갭과 잔여 체력을 전일 종가 기준의 백분율(%)로 전면 스위칭 수술 완료.
+# 🚨 MODIFIED: [V43.19 퍼센트(%) 팩트 통일] 목표 수익률(%)과 직관적이고 즉각적인 1:1 팩트 비교를 위해, 실제 갭과 잔여 체력을 전일 종가 기준의 백분율(%)로 전면 스위칭.
+# 🚨 MODIFIED: [V43.20 ATR 다이어트] 후행성 노이즈를 유발하는 중기 체력(ATR14)을 UI에서 완전히 소각하고, 신뢰도가 높은 단기 체력(ATR5) 단일 지표로 직관성 극대화 완료.
 # ==========================================================
 import logging
 import datetime
@@ -116,8 +117,9 @@ class AvwapConsolePlugin:
             except Exception: day_high, day_low = 0.0, 0.0
             
             try:
-                atr5, atr14 = await asyncio.wait_for(asyncio.to_thread(self.broker.get_atr_data, t), timeout=3.0)
-            except Exception: atr5, atr14 = 0.0, 0.0
+                # broker 함수에서 atr5, atr14 두 개를 반환하므로 받되, atr14는 사용하지 않고 소각
+                atr5, _ = await asyncio.wait_for(asyncio.to_thread(self.broker.get_atr_data, t), timeout=3.0)
+            except Exception: atr5 = 0.0
             
             curr_p = float(curr_p) if curr_p else 0.0
             prev_c = float(prev_c) if prev_c else 0.0
@@ -137,7 +139,7 @@ class AvwapConsolePlugin:
             msg += f"\n🎯 <b>[ {t} ({label}) 작전반 ]</b>\n"
 
             momentum_met = False
-            trend_str = "🔴 <b>조건 미달 (진입 차단)</b>"
+            trend_str = "🔴 <b>조건 미달 (대기)</b>"
             
             if t == "SOXS":
                 criteria = "당일VWAP &lt; 전일VWAP &amp; 5분평균 &lt; 당일VWAP"
@@ -145,12 +147,20 @@ class AvwapConsolePlugin:
                     if base_curr_vwap < base_prev_vwap and avg_vwap_5m < base_curr_vwap:
                         momentum_met = True
                         trend_str = "🟢 <b>조건 충족 (숏 타격 허용)</b>"
+                    else:
+                        trend_str = "🔴 <b>조건 미달 (진입 차단)</b>"
+                else:
+                    trend_str = "⚠️ 데이터 수집 대기 중"
             else:
                 criteria = "당일VWAP &gt; 전일VWAP &amp; 5분평균 &gt; 당일VWAP"
                 if base_prev_vwap > 0 and base_curr_vwap > 0 and avg_vwap_5m > 0:
                     if base_curr_vwap > base_prev_vwap and avg_vwap_5m > base_curr_vwap:
                         momentum_met = True
                         trend_str = "🟢 <b>조건 충족 (롱 타격 허용)</b>"
+                    else:
+                        trend_str = "🔴 <b>조건 미달 (진입 차단)</b>"
+                else:
+                    trend_str = "⚠️ 데이터 수집 대기 중"
 
             msg += f"▫️ 판별 기준: <code>{criteria}</code>\n"
             msg += f"▫️ 모멘텀 상태: {trend_str}\n"
@@ -164,9 +174,8 @@ class AvwapConsolePlugin:
             msg += f"▫️ 독립 물량/평단: {avwap_qty}주 / ${avwap_avg:.2f}\n"
 
             exh_5 = 0.0
-            exh_14 = 0.0
 
-            if atr5 > 0 and atr14 > 0 and prev_c > 0 and day_low > 0:
+            if atr5 > 0 and prev_c > 0 and day_low > 0:
                 ref_price = avwap_avg if (avwap_qty > 0 and avwap_avg > 0) else curr_p
                 ref_label = "매수평단" if (avwap_qty > 0 and avwap_avg > 0) else "현재가"
                 
@@ -174,16 +183,13 @@ class AvwapConsolePlugin:
                 actual_gap_dollar = ref_price - day_low
                 actual_gap_pct = (actual_gap_dollar / prev_c) * 100
                 
-                # atr5, atr14 변수 자체가 이미 퍼센트 값입니다 (예: 13.59%)
+                # atr5 변수 자체가 이미 퍼센트 값입니다
                 exh_5 = (actual_gap_pct / atr5 * 100) if atr5 > 0 else 0
-                exh_14 = (actual_gap_pct / atr14 * 100) if atr14 > 0 else 0
                 
                 # 잔여 체력 계산 (%)
                 rem_5_pct = atr5 - actual_gap_pct
-                rem_14_pct = atr14 - actual_gap_pct
                 
                 rem_5_str = f"+{rem_5_pct:.2f}% 상승 여력" if rem_5_pct >= 0 else "체력 완전 고갈 (오버슈팅)"
-                rem_14_str = f"+{rem_14_pct:.2f}% 상승 여력" if rem_14_pct >= 0 else "체력 완전 고갈 (오버슈팅)"
 
                 def make_bar(exh):
                     pos = min(5, max(0, int(exh / 20)))
@@ -196,11 +202,7 @@ class AvwapConsolePlugin:
                 
                 msg += f"🔋 <b>단기 체력 (ATR5 예상진폭: {atr5:.2f}%)</b>\n"
                 msg += f"▫️ 잔여 체력: <b>{rem_5_str}</b>\n"
-                msg += f"   [0%] {make_bar(exh_5)} [+{atr5:.2f}%] <b>({exh_5:.0f}% 소진)</b>\n\n"
-                
-                msg += f"🔋 <b>중기 체력 (ATR14 예상진폭: {atr14:.2f}%)</b>\n"
-                msg += f"▫️ 잔여 체력: <b>{rem_14_str}</b>\n"
-                msg += f"   [0%] {make_bar(exh_14)} [+{atr14:.2f}%] <b>({exh_14:.0f}% 소진)</b>\n"
+                msg += f"   [0%] {make_bar(exh_5)} [+{atr5:.2f}%] <b>({exh_5:.0f}% 소진)</b>\n"
                 
                 if exh_5 >= 90:
                     msg += " ⚠️ <i>[경고] 단기 체력 90% 소진. 익절라인 하향 권장!</i>\n"
