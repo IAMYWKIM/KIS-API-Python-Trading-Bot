@@ -1,15 +1,15 @@
 # ==========================================================
-# [telegram_avwap_console.py] - 🌟 V43.15 신규 AVWAP 독립 관제탑 플러그인 🌟
+# [telegram_avwap_console.py] - 🌟 V43.17 신규 AVWAP 독립 관제탑 플러그인 🌟
 # 🚨 NEW: 통합지시서(/sync)의 과부하를 막기 위해 AVWAP 듀얼 모멘텀 레이더를 분리 독립시킴.
 # 🚨 MODIFIED: [V43.07] 당일 저가(Day Low) 0점 앵커 기반 ATR5/ATR14 체력 소진율 시각화 바(Bar) 이식.
 # 🚨 NEW: [V43.07] 체력 소진율(90%, 80%, 70%)에 따른 목표 수익률 자율주행(Auto) 엔진 및 스위치 장착.
 # 🚨 MODIFIED: [V43.08] 전일 VWAP 연산 중 발생하던 존재하지 않는 메서드 런타임 에러 팩트 수술 완료.
 # 🚨 MODIFIED: [V43.09 핫픽스] 모든 외부 API 통신에 asyncio.wait_for 족쇄(Timeout)를 강제 적용하여 봇 무반응(Deadlock) 현상 영구 소각 완료.
-# 🚨 MODIFIED: [V43.09 UI/UX 패치] 모바일 화면 줄바꿈 방지를 위한 게이지 바 다이어트, 모멘텀 판별식 명시 및 조건 미달 시 정보 은폐(Clean UI) 동적 렌더링 이식 완료.
+# 🚨 MODIFIED: [V43.09 UI/UX 패치] 모바일 화면 줄바꿈 방지를 위한 게이지 바 다이어트, 모멘텀 판별식 명시.
 # 🚨 MODIFIED: [V43.11 극한 다이어트] 수동 모드 전환과 목표가 입력을 1개 버튼으로 통폐합하고, 1개 종목의 모든 제어 버튼을 가로 1줄에 진공 압축 완료.
 # 🚨 MODIFIED: [V43.12 텔레그램 멱등성 붕괴 방어] 메시지 하단에 초(Second) 단위 타임스탬프를 팩트 주입하여 'Message is not modified' 400 에러를 원천 차단.
 # 🚨 MODIFIED: [V43.14 직관적 버튼 렌더링] 버튼 텍스트가 '현재 적용 중인 모드와 퍼센트(%)'를 직관적으로 표출하도록 완전 개편 및 원터치 토글 로직 적용 완료.
-# 🚨 MODIFIED: [V43.15 런타임 즉사 방어] 조건 미달로 세부 정보가 은폐(show_details=False)될 때 버튼 변수(btn_mode_text)까지 할당 누락되던 UnboundLocalError 팩트 소각 완료.
+# 🚨 MODIFIED: [V43.17 개발망 풀-오픈] 개발 및 팩트 검증을 위해, 조건 미달 시 발동되던 UI 은폐(Clean UI) 락온을 전면 무력화하고 항시 100% 정보 렌더링.
 # ==========================================================
 import logging
 import datetime
@@ -83,6 +83,9 @@ class AvwapConsolePlugin:
         except Exception as e:
             logging.error(f"🚨 AVWAP 관제탑 기초자산 스캔 에러: {e}")
 
+        # ----------------------------------------------------
+        # 🟢 UI 렌더링 파트 1: 기초자산 모멘텀 스캔 결과
+        # ----------------------------------------------------
         msg = f"🔫 <b>[ 차세대 AVWAP 듀얼 모멘텀 관제탑 ]</b>\n\n"
         msg += f"🏛️ <b>[ 기초자산 ({base_tkr}) 모멘텀 스캔 ]</b>\n"
         
@@ -100,6 +103,9 @@ class AvwapConsolePlugin:
 
         keyboard = []
 
+        # ----------------------------------------------------
+        # 🟢 UI 렌더링 파트 2: 종목별 팩트 스캔
+        # ----------------------------------------------------
         for t in active_avwap:
             try:
                 curr_p = await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, t), timeout=2.0)
@@ -160,7 +166,15 @@ class AvwapConsolePlugin:
             msg += f"▫️ 판별 기준: <code>{criteria}</code>\n"
             msg += f"▫️ 모멘텀 상태: {trend_str}\n"
 
-            # 💡 [V43.15] 버튼 렌더링에 필요한 변수들을 은폐 조건 밖으로 꺼내 항시 연산
+            # 💡 [V43.17] 조건 미달 시 정보 은폐 기능 무력화 (항시 렌더링)
+            strike_icon_txt = "💼 무제한 출장" if is_multi else "🏠 조기퇴근(1회)"
+            if strikes > 0:
+                msg += f"▫️ 모드: <b>{strike_icon_txt} ({strikes}회차 교전 완료)</b>\n"
+            else:
+                msg += f"▫️ 모드: <b>{strike_icon_txt} 가동 중</b>\n"
+
+            msg += f"▫️ 독립 물량/평단: {avwap_qty}주 / ${avwap_avg:.2f}\n"
+
             exh_5 = 0.0
             exh_14 = 0.0
             atr5_limit = 0.0
@@ -180,6 +194,22 @@ class AvwapConsolePlugin:
                 
                 exh_5 = ((ref_price - day_low) / atr5_price * 100) if atr5_price > 0 else 0
                 exh_14 = ((ref_price - day_low) / atr14_price * 100) if atr14_price > 0 else 0
+                
+                def make_bar(exh):
+                    pos = min(5, max(0, int(exh / 20)))
+                    return "━" * pos + "🎯" + "━" * (5 - pos)
+                
+                msg += f"▫️ 0점 앵커(당일 저가): <b>${day_low:.2f}</b>\n"
+                msg += f"▫️ {ref_label} 위치: <b>${ref_price:.2f}</b>\n\n"
+                
+                msg += f"🔋 <b>단기 체력 (ATR5: ${atr5_limit:.2f})</b>\n"
+                msg += f"   [0%] {make_bar(exh_5)} [100%] <b>({exh_5:.0f}%)</b>\n"
+                
+                msg += f"🔋 <b>중기 체력 (ATR14: ${atr14_limit:.2f})</b>\n"
+                msg += f"   [0%] {make_bar(exh_14)} [100%] <b>({exh_14:.0f}%)</b>\n"
+                
+                if exh_5 >= 90:
+                    msg += " ⚠️ <i>[경고] 단기 체력 90% 소진. 익절라인 하향 권장!</i>\n"
 
             if target_mode == "AUTO":
                 if exh_5 >= 90: dynamic_target = 2.0
@@ -195,45 +225,14 @@ class AvwapConsolePlugin:
                 btn_mode_text = f"🖐️수동 (+{user_target_pct:.1f}%)"
                 toggle_target_action = "TARGET_AUTO"
 
-            # 상세 정보 은폐 여부
-            show_details = momentum_met or (avwap_qty > 0) or is_shutdown
+            msg += f"▫️ 목표 익절: <b>{target_display}</b> | 하드스탑: <b>-8.0%</b>\n"
 
-            if not show_details:
-                msg += "💤 <i>(조건 미달로 세부 관측망을 숨기고 대기합니다)</i>\n"
-            else:
-                strike_icon_txt = "💼 무제한 출장" if is_multi else "🏠 조기퇴근(1회)"
-                if strikes > 0:
-                    msg += f"▫️ 모드: <b>{strike_icon_txt} ({strikes}회차 교전 완료)</b>\n"
-                else:
-                    msg += f"▫️ 모드: <b>{strike_icon_txt} 가동 중</b>\n"
+            status_txt = "👀 타점 대기"
+            if is_shutdown: status_txt = "🛑 당일 영구동결 (SHUTDOWN)"
+            elif avwap_qty > 0: status_txt = "🎯 딥매수 완료 (익절 감시중)"
+            msg += f"▫️ 상태: <b>{status_txt}</b>\n"
 
-                msg += f"▫️ 독립 물량/평단: {avwap_qty}주 / ${avwap_avg:.2f}\n"
-
-                if atr5 > 0 and atr14 > 0 and prev_c > 0 and day_low > 0:
-                    def make_bar(exh):
-                        pos = min(5, max(0, int(exh / 20)))
-                        return "━" * pos + "🎯" + "━" * (5 - pos)
-                    
-                    msg += f"▫️ 0점 앵커(당일 저가): <b>${day_low:.2f}</b>\n"
-                    msg += f"▫️ {ref_label} 위치: <b>${ref_price:.2f}</b>\n\n"
-                    
-                    msg += f"🔋 <b>단기 체력 (ATR5: ${atr5_limit:.2f})</b>\n"
-                    msg += f"   [0%] {make_bar(exh_5)} [100%] <b>({exh_5:.0f}%)</b>\n"
-                    
-                    msg += f"🔋 <b>중기 체력 (ATR14: ${atr14_limit:.2f})</b>\n"
-                    msg += f"   [0%] {make_bar(exh_14)} [100%] <b>({exh_14:.0f}%)</b>\n"
-                    
-                    if exh_5 >= 90:
-                        msg += " ⚠️ <i>[경고] 단기 체력 90% 소진. 익절라인 하향 권장!</i>\n"
-
-                msg += f"▫️ 목표 익절: <b>{target_display}</b> | 하드스탑: <b>-8.0%</b>\n"
-
-                status_txt = "👀 타점 대기"
-                if is_shutdown: status_txt = "🛑 당일 영구동결 (SHUTDOWN)"
-                elif avwap_qty > 0: status_txt = "🎯 딥매수 완료 (익절 감시중)"
-                msg += f"▫️ 상태: <b>{status_txt}</b>\n"
-
-            # 💡 렌더링 파트
+            # 💡 [버튼 렌더링 로직]
             btn_toggle_mode = InlineKeyboardButton(btn_mode_text, callback_data=f"AVWAP_SET:{toggle_target_action}:{t}")
             btn_input_target = InlineKeyboardButton("✏️타점수정", callback_data=f"AVWAP_SET:TARGET:{t}")
             
