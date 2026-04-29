@@ -1,5 +1,5 @@
 # ==========================================================
-# [telegram_avwap_console.py] - 🌟 V43.27 신규 AVWAP 독립 관제탑 플러그인 🌟
+# [telegram_avwap_console.py] - 🌟 V43.28 신규 AVWAP 독립 관제탑 플러그인 🌟
 # 🚨 NEW: 통합지시서(/sync)의 과부하를 막기 위해 AVWAP 듀얼 모멘텀 레이더를 분리 독립시킴.
 # 🚨 MODIFIED: [V43.18] 달러 팩트 갭(Gap) 시각화 및 잔여 체력 달러 연산.
 # 🚨 MODIFIED: [V43.19] 퍼센트(%) 팩트 통일 (실제 갭과 잔여 체력 백분율 환산).
@@ -11,6 +11,7 @@
 # 🚨 MODIFIED: [V43.25 2-Button 미니멀리즘] 각 종목의 버튼을 2개로 압축하고, 버튼명에 티커(SOXL/SOXS)를 명시하여 오조작을 원천 차단하는 궁극의 UX 설계 적용 완료.
 # 🚨 MODIFIED: [V43.26] 당일 고가/저가/현재가 갭 렌더링 텍스트 다이어트 및 체력 소진율 렌더링 줄바꿈(Formatting) 수술.
 # 🚨 MODIFIED: [V43.27] 전일 종가(Previous Close) 0% 베이스라인 환원 수술. 렌더링되는 모든 등락률(%)을 증권사 앱(MTS/HTS)과 100% 팩트 동기화 완료.
+# 🚨 MODIFIED: [V43.28] 사용자 인지 혼선 방어. 전일 종가(0% 베이스라인) 팩트 렌더링 명시화 및 UI 포맷팅 다이어트 수술.
 # ==========================================================
 import logging
 import datetime
@@ -177,32 +178,32 @@ class AvwapConsolePlugin:
                 ref_price = avwap_avg if (avwap_qty > 0 and avwap_avg > 0) else curr_p
                 ref_label = "매수평단" if (avwap_qty > 0 and avwap_avg > 0) else "현재가"
                 
-                # MODIFIED: [V43.27] 전일 종가(prev_c) 기준 0% 베이스라인 환원 수술 완료
+                # MODIFIED: [V43.28] 사용자 인지 혼선 방어. 전일 종가 기반 등락률 통일 및 포맷팅 다이어트
                 high_pct = ((day_high - prev_c) / prev_c) * 100 if prev_c > 0 else 0.0
                 low_pct = ((day_low - prev_c) / prev_c) * 100 if prev_c > 0 else 0.0
                 curr_pct = ((ref_price - prev_c) / prev_c) * 100 if prev_c > 0 else 0.0
                 
-                # 단기 체력(ATR) 소진율 역시 전일 종가 대비 절대 진폭으로 교정
                 abs_gap_pct = abs(curr_pct)
                 
                 exh_5 = (abs_gap_pct / atr5 * 100) if atr5 > 0 else 0
                 rem_5_pct = atr5 - abs_gap_pct
                 
-                # 롱/숏 방향성 중립을 위해 텍스트 교정
-                rem_5_str = f"{rem_5_pct:.2f}% 추가 변동 여력" if rem_5_pct >= 0 else "체력 완전 고갈 (오버슈팅)"
+                rem_5_str = f"{rem_5_pct:+.2f}% 추가 변동 여력" if rem_5_pct >= 0 else "체력 완전 고갈 (오버슈팅)"
 
                 def make_bar(exh):
                     pos = min(5, max(0, int(exh / 20)))
                     return "━" * pos + "🎯" + "━" * (5 - pos)
                 
+                # MODIFIED: [V43.28] 전일 종가(베이스라인) 명시적 렌더링 추가
                 msg += f"\n📊 <b>[ {t} 당일 체력 정밀 분석 ]</b>\n"
-                msg += f"▫️ 당일 고가: <b>${day_high:.2f}</b> ({'+' if high_pct>0 else ''}{high_pct:.2f}%)\n"
-                msg += f"▫️ 당일 저가: <b>${day_low:.2f}</b> ({'+' if low_pct>0 else ''}{low_pct:.2f}%)\n"
-                msg += f"▫️ {ref_label}: <b>${ref_price:.2f}</b> ({'+' if curr_pct>0 else ''}{curr_pct:.2f}%)\n\n"
+                msg += f"▫️ 전일 종가: <b>${prev_c:.2f}</b> (베이스라인)\n"
+                msg += f"▫️ 당일 고가: <b>${day_high:.2f}</b> ({high_pct:+.2f}%)\n"
+                msg += f"▫️ 당일 저가: <b>${day_low:.2f}</b> ({low_pct:+.2f}%)\n"
+                msg += f"▫️ {ref_label}: <b>${ref_price:.2f}</b> ({curr_pct:+.2f}%)\n\n"
                 
                 msg += f"🔋 <b>단기 체력 (ATR5 예상진폭: {atr5:.2f}%)</b>\n"
                 msg += f"▫️ 잔여 체력: <b>{rem_5_str}</b>\n"
-                msg += f"   [0%] {make_bar(exh_5)} [{atr5:.2f}%]\n"
+                msg += f"   [0%] {make_bar(exh_5)} [+{atr5:.2f}%]\n"
                 msg += f"               <b>({exh_5:.0f}% 소진)</b>\n"
 
             if target_mode == "AUTO":
