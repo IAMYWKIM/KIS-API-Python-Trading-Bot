@@ -1,11 +1,9 @@
 # ==========================================================
-# [telegram_avwap_console.py] - 🌟 V43.21 신규 AVWAP 독립 관제탑 플러그인 🌟
+# [telegram_avwap_console.py] - 🌟 V43.22 신규 AVWAP 독립 관제탑 플러그인 🌟
 # 🚨 NEW: 통합지시서(/sync)의 과부하를 막기 위해 AVWAP 듀얼 모멘텀 레이더를 분리 독립시킴.
-# 🚨 MODIFIED: [V43.07] 당일 저가(Day Low) 0점 앵커 기반 ATR5/ATR14 체력 소진율 시각화 바(Bar) 이식.
-# 🚨 NEW: [V43.07] 체력 소진율(90%, 80%, 70%)에 따른 목표 수익률 자율주행(Auto) 엔진 및 스위치 장착.
+# 🚨 MODIFIED: [V43.07] 당일 저가(Day Low) 0점 앵커 기반 ATR5 체력 소진율 시각화 바(Bar) 이식.
 # 🚨 MODIFIED: [V43.08] 전일 VWAP 연산 중 발생하던 존재하지 않는 메서드 런타임 에러 팩트 수술 완료.
 # 🚨 MODIFIED: [V43.09 핫픽스] 모든 외부 API 통신에 asyncio.wait_for 족쇄(Timeout)를 강제 적용.
-# 🚨 MODIFIED: [V43.09 UI/UX 패치] 모바일 화면 줄바꿈 방지를 위한 게이지 바 다이어트 및 판별식 명시.
 # 🚨 MODIFIED: [V43.11 극한 다이어트] 수동 모드 전환과 목표가 입력을 1개 버튼으로 통폐합.
 # 🚨 MODIFIED: [V43.12 텔레그램 멱등성 붕괴 방어] 메시지 하단에 초 단위 타임스탬프 팩트 주입.
 # 🚨 MODIFIED: [V43.14 직관적 버튼 렌더링] 버튼 텍스트가 현재 모드를 직관적으로 표출.
@@ -13,7 +11,8 @@
 # 🚨 MODIFIED: [V43.18 달러 팩트 갭(Gap) 시각화] 백분율의 맹점을 타파하고 달러 기반 UI 산출.
 # 🚨 MODIFIED: [V43.19 퍼센트(%) 팩트 통일] 목표 수익률(%)과 직관적이고 즉각적인 1:1 팩트 비교를 위해 스위칭.
 # 🚨 MODIFIED: [V43.20 ATR 다이어트] 후행성 노이즈를 유발하는 중기 체력(ATR14) 소각.
-# 🚨 MODIFIED: [V43.21 완전 자율주행 독립] AUTO 모드에서 사용자의 수동 입력값을 100% 배제하고, 소진율에 따라 [5% -> 4% -> 3% -> 2%]로 변속하는 독립 기어 엔진 장착 완료.
+# 🚨 MODIFIED: [V43.21 완전 자율주행 독립] AUTO 모드에서 사용자의 수동 입력값을 100% 배제.
+# 🚨 MODIFIED: [V43.22 잔여 체력 클램핑] 자율주행(AUTO) 익절 목표가가 물리적 한계치인 '잔여 체력(%)'을 초과할 수 없도록 강제 하드 클램핑(Hard Clamping)하는 물리 엔진 이식 완료.
 # ==========================================================
 import logging
 import datetime
@@ -174,6 +173,7 @@ class AvwapConsolePlugin:
             msg += f"▫️ 독립 물량/평단: {avwap_qty}주 / ${avwap_avg:.2f}\n"
 
             exh_5 = 0.0
+            rem_5_pct = 0.0
 
             if atr5 > 0 and prev_c > 0 and day_low > 0:
                 ref_price = avwap_avg if (avwap_qty > 0 and avwap_avg > 0) else curr_p
@@ -199,16 +199,26 @@ class AvwapConsolePlugin:
                 msg += f"🔋 <b>단기 체력 (ATR5 예상진폭: {atr5:.2f}%)</b>\n"
                 msg += f"▫️ 잔여 체력: <b>{rem_5_str}</b>\n"
                 msg += f"   [0%] {make_bar(exh_5)} [+{atr5:.2f}%] <b>({exh_5:.0f}% 소진)</b>\n"
-                
-                if exh_5 >= 90:
-                    msg += " ⚠️ <i>[경고] 단기 체력 90% 소진. 익절라인 하향 권장!</i>\n"
 
-            # 💡 [V43.21 완전 자율주행 독립 엔진] 사용자의 수동값(user_target_pct) 배제
+            # 💡 [V43.22 잔여 체력 하드 클램핑 로직]
             if target_mode == "AUTO":
-                if exh_5 >= 90: dynamic_target = 2.0
-                elif exh_5 >= 80: dynamic_target = 3.0
-                elif exh_5 >= 70: dynamic_target = 4.0
-                else: dynamic_target = 5.0 # 사용자 값 무시, 최고 안전 기어 5.0% 고정
+                # 1. 1차 기본 기어 판별
+                if exh_5 >= 90: base_target = 2.0
+                elif exh_5 >= 80: base_target = 3.0
+                elif exh_5 >= 70: base_target = 4.0
+                else: base_target = 5.0
+                
+                # 2. 잔여 체력(rem_5_pct)을 절대 초과하지 않도록 락온
+                if rem_5_pct > 0:
+                    # 안전을 위해 소수점 첫째 자리에서 내림 (예: 3.86 -> 3.8)
+                    rem_cap = math.floor(rem_5_pct * 10) / 10.0
+                    dynamic_target = min(base_target, rem_cap)
+                    
+                    # 마지노선 1.0% 보장
+                    dynamic_target = max(1.0, dynamic_target)
+                else:
+                    # 체력이 고갈되었거나 오버슈팅 중일 때는 긴급 도주 모드 1.0% 고정
+                    dynamic_target = 1.0
                 
                 target_display = f"🤖자율주행 (+{dynamic_target:.1f}%)"
                 btn_mode_text = f"🤖자율 (+{dynamic_target:.1f}%)"
