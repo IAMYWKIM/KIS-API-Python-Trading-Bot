@@ -1,5 +1,5 @@
 # ==========================================================
-# [telegram_view.py] - 🌟 100% 통합 무결점 완성본 (V31.00) 🌟
+# [telegram_view.py] - 🌟 100% 통합 무결점 완성본 (V43.27) 🌟
 # 🚨 MODIFIED: [V42.09 핫픽스] 듀얼 모멘텀 타임쉴드 대기 메시지 시간(10:20 EST)을 서머타임 연동 한국시간(KST 23:20/00:20)으로 팩트 교정 완료.
 # 🚨 MODIFIED: [V42.10 핫픽스] 5분 평균 VWAP 갭(Gap) 산출 공식 정방향((실시간-5분평균)/5분평균) 팩트 교정 완료.
 # 🚨 MODIFIED: [V42.11 그랜드 핫픽스] 듀얼 모멘텀(Long/Short) 부등호 오염 원천 차단. 5분 평균 > 당일 실시간 = 상승(롱) 로직 팩트 교정 완료.
@@ -15,6 +15,7 @@
 # 🚨 MODIFIED: [V43.05] 일일 체력 지시계를 14일(ATR14)에서 5일(ATR5) 평균 진폭으로 교체하여 단기 추세 반영력 극대화.
 # 🚨 MODIFIED: [V43.06 다이어트 수술] 통합지시서(/sync)의 과부하를 막기 위해 AVWAP 관련 렌더링 블록을 완전히 소각하고 독립 관제탑(/avwap)으로 역할을 100% 위임.
 # 🚨 MODIFIED: [V43.08 UX 동선 최적화] 통합지시서(/sync) 최하단에 /avwap 관제탑 호출 하이퍼링크 명령어 렌더링 추가.
+# 🚨 MODIFIED: [V43.27 데드코드 소각 및 달러 타점 팩트 동기화] AVWAP 콘솔 독립 분리에 따라 불필요해진 get_avwap_console_menu 데드코드를 완전히 소각하고, 통합지시서(/sync)의 V14 모드에서도 물량 보유 시 '달러($) 익절 목표가'를 팩트로 렌더링하도록 뷰포트 파격 업그레이드 완료.
 # ==========================================================
 import os
 import math
@@ -233,34 +234,7 @@ class TelegramView:
         ]
         return msg, InlineKeyboardMarkup(keyboard)
 
-    def get_avwap_console_menu(self, t):
-        is_multi_strike = False
-        target_pct = 4.0
-        
-        if self.cfg:
-            is_multi_strike = getattr(self.cfg, 'get_avwap_multi_strike_mode', lambda x: False)(t)
-            target_pct = getattr(self.cfg, 'get_avwap_target_profit', lambda x: 4.0)(t)
-            
-        mode_text = "무제한 다중 타격 (Multi-Strike) 락온" if is_multi_strike else "조기 퇴근 (One & Done) 락온"
-        mode_desc = "목표 수익 도달 시에도 <b>쿨다운 없이 즉각 다음 타점을 무제한 스캔</b>합니다." if is_multi_strike else "목표 수익 도달 시 <b>즉시 봇 전원을 차단하고 당일 매매를 영구 동결(퇴근)</b>합니다."
-        
-        msg = f"🔫 <b>[ {t} 차세대 AVWAP 듀얼 모멘텀 콘솔 ]</b>\n\n"
-        msg += f"💼 <b>현재 가동 모드: [ {mode_text} ]</b>\n"
-        msg += f"▫️ 당일 실시간 VWAP이 전일 VWAP과 5분 평균 VWAP을 동시에 돌파하는 <b>강력한 모멘텀</b>에서만 타격합니다.\n"
-        msg += f"▫️ {mode_desc}\n"
-        msg += f"▫️ <b>[오버나이트 방어]</b> 15:55 EST 타임스탑 강제 청산 시에 당일 매매가 동결됩니다.\n\n"
-        msg += f"🎯 <b>목표 익절가: 진입가 대비 +{target_pct:.1f}% (커스텀)</b>\n"
-        msg += f"🚨 <b>하드스탑 컷: 진입가 대비 -8.0% (고정/피격시 당일 동결)</b>\n"
-
-        toggle_label = "💼 조기퇴근 모드로 전환" if is_multi_strike else "🔁 다중출장 모드로 전환"
-        toggle_action = "EARLY" if is_multi_strike else "MULTI"
-        
-        keyboard = [
-            [InlineKeyboardButton(f"🎯 목표 수익률(%) 변경", callback_data=f"AVWAP_SET:TARGET:{t}")],
-            [InlineKeyboardButton(toggle_label, callback_data=f"AVWAP_SET:{toggle_action}:{t}")],
-            [InlineKeyboardButton("🔙 닫기 (설정 락온 완료)", callback_data=f"RESET:CANCEL")]
-        ]
-        return msg, InlineKeyboardMarkup(keyboard)
+    # 🚨 [V43.27 데드코드 소각] 독립 플러그인 이전으로 불필요해진 get_avwap_console_menu 삭제 완료
 
     def get_version_message(self, history_data, page_index=None):
         ITEMS_PER_PAGE = 5
@@ -279,7 +253,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V43.01 UX 팩트 교정</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V43.27 뷰포트 무결성 동기화</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -439,7 +413,13 @@ class TelegramView:
                 if is_rev:
                     body_msg += f"⚙️ 🌟 5일선 별지점: ${t_info['star_price']:.2f} | 🎯감시: {sniper_status_txt}\n"
                 else:
-                    body_msg += f"⚙️ 🎯 {t_info['target']}% | ⭐ {t_info['star_pct']}% | 🎯감시: {sniper_status_txt}\n"
+                    # 💡 [V43.27] V14 모드에서도 보유 물량이 있을 경우 달러($) 익절가를 명확히 산출하여 직관성 통일
+                    if fact_qty > 0 and t_info['avg'] > 0:
+                        target_price = t_info['avg'] * (1 + t_info['target'] / 100.0)
+                        body_msg += f"⚙️ 🎯 익절 목표가: <b>${target_price:.2f}</b> (+{t_info['target']}%)\n"
+                        body_msg += f"⚙️ ⭐ 별지점: {t_info['star_pct']}% | 🎯감시: {sniper_status_txt}\n"
+                    else:
+                        body_msg += f"⚙️ 🎯 목표: {t_info['target']}% | ⭐ 별지점: {t_info['star_pct']}% | 🎯감시: {sniper_status_txt}\n"
                     
                 if sniper_status_txt == "ON":
                     if not is_trade_active:
@@ -544,7 +524,6 @@ class TelegramView:
             final_msg += f"💡 <i>※ 현재 표출된 계획은 전일 {fact_hour}:05 기준 박제된 스냅샷이며, 금일 {fact_hour}:05에 최신 팩트 잔고를 바탕으로 리셋됩니다.</i>\n\n"
             final_msg += "⛔ 장마감/애프터마켓: 주문 불가"
             
-        # 🚨 [V43.08 UX 팩트 교정] 통합지시서 하단에 /avwap 관제탑 호출 명령어 안내 추가
         final_msg += "\n\n▶️ /avwap : 🔫 AVWAP 독립 관제탑 호출"
 
         return final_msg, InlineKeyboardMarkup(keyboard) if keyboard else None
@@ -581,11 +560,11 @@ class TelegramView:
                 msg += "▫️ 막판 갭 스위칭: <b>🤖 자율주행 (상승장 자동 가동)</b>\n"
                 
                 if hasattr(config, 'get_avwap_hybrid_mode') and config.get_avwap_hybrid_mode(t):
-                    av_target = getattr(config, 'get_avwap_target_profit', lambda x: 4.0)(t)
                     is_multi = getattr(config, 'get_avwap_multi_strike_mode', lambda x: False)(t)
                     mode_str = "다중 출장" if is_multi else "조기 퇴근"
                     
-                    status_label = f"💼 {mode_str} 락온 (+{av_target:.1f}%)"
+                    # 💡 [V43.27] 자율주행 엔진 도입으로 의미가 퇴색된 개별 수동 목표가를 표출에서 제외하여 혼선 차단
+                    status_label = f"💼 {mode_str} 락온"
                     msg += f"▫️ AVWAP 암살자: <b>{status_label}</b>\n"
                 elif hasattr(config, 'get_avwap_hybrid_mode'):
                     msg += f"▫️ AVWAP 암살자: <b>비활성 (OFF)</b>\n"
