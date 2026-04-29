@@ -1,16 +1,7 @@
 # ==========================================================
 # [telegram_bot.py] - 🌟 100% 통합 무결점 완성본 (Full Version) 🌟
-# 🚨 MODIFIED: [V30.09 핫픽스] pytz 소각 및 ZoneInfo 이식을 통한 타임존 오차 차단.
-# 🚨 MODIFIED: [V30.18 그랜드 핫픽스] 스냅샷 렌더링 디커플링 무결성 확보 및 실시간 잔고 오염 원천 차단
-# 🚨 MODIFIED: [V32.00] 12차 팩트 반영. cmd_avwap 내부의 파라미터 조회 찌꺼기 완벽 소각.
-# NEW: [V40.XX 옴니 매트릭스] SOXS 티커 진입 시 기초자산을 QQQ로 오인하는 치명적 맹점 전면 수술 및 /avwap 듀얼 라우팅 개방
-# 🚨 MODIFIED: [V41.XX 파격적 수술] 지시서 실시간 레이더 시각화를 위한 avg_vwap_5m 추출 파이프라인 개통 및 낡은 롤링 TP, 갭 이탈률 소각
-# 🚨 MODIFIED: [V42.00 아키텍처 개편] SOXS 메인 장부 폐기에 따른 지시서 듀얼 렌더링 강제 병합 파이프라인(디커플링) 대수술
-# 🚨 MODIFIED: [V42.15 핫픽스] AVWAP 매수 후 지시서 0주 표출(환각) 맹점 원천 차단. /sync 조회 시 디스크 상태 파일(JSON)을 강제 로드하여 메모리 디커플링 100% 영구 소각 완료.
-# NEW: [V43.04] 일일 체력(ATR) 소진율 팩트 스캔 및 뷰포트 인젝션 파이프라인 개통 완료.
-# 🚨 MODIFIED: [V43.05] 일일 체력 지시계 기준을 14일(ATR14)에서 5일(ATR5)로 교체하여 단기 민감도 극대화.
-# 🚨 MODIFIED: [V43.06 다이어트 수술] 통합지시서(/sync) 내부의 비대한 AVWAP 스캔 엔진을 전면 적출하고 독립 플러그인으로 라우팅 이관 완료.
-# 🚨 MODIFIED: [V43.08 라우터 복원] 유실된 /avwap 명령어 핸들러를 완벽히 재등록하고 에러 캡처 방어막 이식.
+# 🚨 MODIFIED: [V43.08] 누락되었던 AVWAP 명령어 핸들러 공식 등록
+# 🚨 MODIFIED: [V43.09 핫픽스] /avwap 명령어 무반응(Deadlock) 원천 차단. 즉각 응답 UX(로딩 메시지) 추가 및 10초 강제 타임아웃 족쇄 이식 완료.
 # ==========================================================
 import logging
 import datetime
@@ -131,7 +122,7 @@ class TelegramController:
         application.add_handler(CommandHandler("reset", self.cmd_reset))
         application.add_handler(CommandHandler("update", self.cmd_update))
         
-        # 🚨 [V43.08] 누락되었던 AVWAP 명령어 핸들러 공식 등록
+        # 🚨 [V43.08] 명령어 핸들러 등록 완료
         application.add_handler(CommandHandler("avwap", self.cmd_avwap))
         
         application.add_handler(CallbackQueryHandler(self.handle_callback))
@@ -163,10 +154,13 @@ class TelegramController:
             
         await self.states_handler.handle_message(update, context, self)
 
-    # 🚨 NEW: [V43.08] 신설된 독립 관제탑 플러그인 라우터 연동 완료
+    # 🚨 NEW: [V43.09 핫픽스] 즉각 응답 UX 및 10초 타임아웃 무결성 방어막 적용
     async def cmd_avwap(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update):
             return
+            
+        # 명령어 수신 즉시 응답 (무반응 현상 원천 차단)
+        status_msg = await update.message.reply_text("⏳ <b>[AVWAP 듀얼 모멘텀 관제탑]</b>\n레이더망을 가동하여 시장 데이터를 스캔 중입니다...", parse_mode='HTML')
             
         try:
             from telegram_avwap_console import AvwapConsolePlugin
@@ -181,11 +175,16 @@ class TelegramController:
                 except Exception:
                     app_data = {}
                     
-            msg, markup = await plugin.get_console_message(app_data)
-            await update.message.reply_text(msg, reply_markup=markup, parse_mode='HTML')
+            # 10초 타임아웃 족쇄를 채워 무한 대기 교착(Deadlock)을 방어
+            msg, markup = await asyncio.wait_for(plugin.get_console_message(app_data), timeout=10.0)
+            await status_msg.edit_text(msg, reply_markup=markup, parse_mode='HTML')
+            
+        except asyncio.TimeoutError:
+            logging.error("🚨 AVWAP 관제탑 호출 타임아웃 (네트워크 지연)")
+            await status_msg.edit_text("❌ <b>[네트워크 지연 발생]</b>\n야후 파이낸스 또는 증권사 서버 응답이 지연되어 스캔을 강제 종료했습니다. 잠시 후 다시 시도해 주세요.", parse_mode='HTML')
         except Exception as e:
-            logging.error(f"AVWAP 관제탑 호출 에러: {e}")
-            await update.message.reply_text(f"❌ <b>[시스템 오류]</b>\n독립 관제탑 호출 중 내부 오류가 발생했습니다:\n<code>{e}</code>", parse_mode='HTML')
+            logging.error(f"🚨 AVWAP 관제탑 호출 내부 에러: {e}")
+            await status_msg.edit_text(f"❌ <b>[시스템 에러]</b>\n독립 관제탑 호출 중 내부 오류가 발생했습니다:\n<code>{e}</code>", parse_mode='HTML')
 
     async def cmd_update(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update):
