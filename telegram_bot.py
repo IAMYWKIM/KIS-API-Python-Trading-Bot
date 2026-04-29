@@ -7,6 +7,7 @@
 # 🚨 MODIFIED: [V41.XX 파격적 수술] 지시서 실시간 레이더 시각화를 위한 avg_vwap_5m 추출 파이프라인 개통 및 낡은 롤링 TP, 갭 이탈률 소각
 # 🚨 MODIFIED: [V42.00 아키텍처 개편] SOXS 메인 장부 폐기에 따른 지시서 듀얼 렌더링 강제 병합 파이프라인(디커플링) 대수술
 # 🚨 MODIFIED: [V42.15 핫픽스] AVWAP 매수 후 지시서 0주 표출(환각) 맹점 원천 차단. /sync 조회 시 디스크 상태 파일(JSON)을 강제 로드하여 메모리 디커플링 100% 영구 소각 완료.
+# NEW: [V43.04] 일일 체력(ATR) 소진율 팩트 스캔 및 뷰포트 인젝션 파이프라인 개통 완료.
 # ==========================================================
 import logging
 import datetime
@@ -377,6 +378,13 @@ class TelegramController:
             ma_5day = await asyncio.to_thread(self.broker.get_5day_ma, t)
             day_high, day_low = await asyncio.to_thread(self.broker.get_day_high_low, t)
             
+            # 🚨 NEW: [V43.04] ATR 기반 일일 체력 지시계용 데이터 스캔
+            try:
+                atr5, atr14 = await asyncio.wait_for(asyncio.to_thread(self.broker.get_atr_data, t), timeout=3.0)
+            except Exception as e:
+                logging.debug(f"⚠️ [{t}] ATR 데이터 스캔 타임아웃/에러: {e}")
+                atr5, atr14 = 0.0, 0.0
+            
             actual_avg = float(h['avg']) if h['avg'] else 0.0
             actual_qty = int(h['qty'])
             
@@ -425,7 +433,7 @@ class TelegramController:
                 real_val = 0.0
             vol_status = "ON" if real_val >= 20.0 else "OFF"
 
-            # MODIFIED: [V42.00] SOXS는 V-REV 메인 장부 스캔(LOC 장전)을 강제 바이패스하고 듀얼 모멘텀 스캔 팩트만 남김
+            # SOXS 듀얼 모멘텀 스캔 팩트 유지
             if t == "SOXS":
                 plan = {'process_status': '듀얼 모멘텀 스캔 중', 'orders': [], 'one_portion': 0.0, 't_val': 0.0, 'is_reverse': False}
                 is_zero_start_fact = (actual_qty == 0)
@@ -689,6 +697,7 @@ class TelegramController:
                 'day_high': day_high,
                 'day_low': day_low,
                 'prev_close': safe_prev_close,
+                'atr14': atr14,  # 🚨 NEW: [V43.04] 뷰 엔진으로 ATR 데이터 패스
                 'tracking_info': tracking_status,
                 'dynamic_obj': dynamic_pct_obj,
                 'is_sniper_active_time': is_sniper_active_time,
@@ -720,7 +729,24 @@ class TelegramController:
         surplus = cash - total_buy_needed
         rp_amount = surplus * 0.95 if surplus > 0 else 0
         
-        final_msg, markup = self.view.create_sync_report(status_text, dst_txt, cash, rp_amount, ticker_data_list, status_code in ["PRE", "REG"], p_trade_data={})
+        # 🚨 NEW: [V43.03 수익금 원화(KRW) 병기 패치] 실시간 환율 스캔 엔진 탑재
+        try:
+            def get_exchange_rate():
+                df = yf.Ticker("KRW=X").history(period="1d", timeout=3)
+                return float(df['Close'].iloc[-1]) if not df.empty else 0.0
+            
+            # 비동기 블로킹 방어 (3초 타임아웃 락온)
+            exchange_rate = await asyncio.wait_for(asyncio.to_thread(get_exchange_rate), timeout=3.0)
+        except Exception as e:
+            logging.debug(f"⚠️ 야후 파이낸스 환율 스캔 타임아웃 (달러만 표출): {e}")
+            exchange_rate = 0.0
+
+        # MODIFIED: [V43.03] exchange_rate 파라미터 주입 개통
+        final_msg, markup = self.view.create_sync_report(
+            status_text, dst_txt, cash, rp_amount, ticker_data_list, 
+            status_code in ["PRE", "REG"], p_trade_data={}, 
+            exchange_rate=exchange_rate
+        )
         
         await update.message.reply_text(final_msg, reply_markup=markup, parse_mode='HTML')
 

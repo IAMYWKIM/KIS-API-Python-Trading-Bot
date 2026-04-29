@@ -11,6 +11,7 @@
 # 🚨 MODIFIED: [V43.01 UX 팩트 교정] V-REV 큐 관리 및 지시서의 '로트(Lot)', '층' 용어를 '지층'으로 100% 통일. 코어 엔진(LIFO)과 동일하게 가장 최근 매수일을 '1지층'으로 렌더링하도록 인덱스 스왑 완료.
 # NEW: [V43.02 핫픽스] 서머타임(DST) 변동에 따른 17:05 / 18:05 동적 렌더링 팩트 교정 완료.
 # NEW: [V43.03 수익금 원화(KRW) 병기 패치] 지시서 렌더링 시 실시간 환율을 반영하여 달러($)와 원화(₩) 수익금을 동시 표출하도록 뷰 엔진 교정.
+# NEW: [V43.04] 일일 체력(ATR14) 지시계 및 조기퇴근 가이던스 동적 렌더링 이식 완료.
 # ==========================================================
 import os
 import math
@@ -395,7 +396,6 @@ class TelegramView:
             elif v_mode == "V_REV":
                 bdg_txt = f"1회(1배수) 예산: ${t_info['one_portion']:,.0f}"
                 body_msg += f"{main_icon} <b>[{t}] {v_mode_display}</b>\n"
-                # 🚨 [V43.01 팩트 교정] 로트(Lot) -> 지층 통일
                 body_msg += f"📈 큐(Queue): <b>{t_info.get('v_rev_q_lots', 0)}개 지층 대기 중 (총 {t_info.get('v_rev_q_qty', 0)}주)</b>\n"
             else:
                 bdg_txt = f"당일 예산: ${t_info['one_portion']:,.0f}"
@@ -428,7 +428,6 @@ class TelegramView:
             sign = "+" if t_info['profit_amt'] >= 0 else "-"
             icon = "🔺" if t_info['profit_amt'] >= 0 else "🔻"
             
-            # MODIFIED: [V43.03 수익금 원화(KRW) 병기 패치] 달러 수익금 옆에 원화 수익금 동시 렌더링
             if exchange_rate and exchange_rate > 0:
                 krw_profit = abs(t_info['profit_amt']) * exchange_rate
                 body_msg += f"{icon} 수익: {sign}{abs(t_info['profit_pct']):.2f}% ({sign}${abs(t_info['profit_amt']):,.2f} | {sign}₩{int(krw_profit):,})\n\n"
@@ -618,11 +617,40 @@ class TelegramView:
                             final_msg += f"▫️ 금일 저가: ${d_low:.2f} ({l_pct:+.2f}%)\n"
                         
                     final_msg += f"▫️ 독립 물량/평단: {avwap_qty}주 / ${avwap_avg:.2f}\n"
+
+                    # 🚨 NEW: [V43.04] 일일 체력(ATR14) 지시계 및 조기퇴근 가이던스 이식
+                    atr14 = t_info.get('atr14', 0.0)
+                    p_close = t_info.get('prev_close', 0.0)
+                    
+                    if atr14 > 0 and p_close > 0:
+                        if avwap_qty > 0 and avwap_avg > 0:
+                            ref_price = avwap_avg
+                            ref_label = f"매수평단(${avwap_avg:.2f})"
+                        else:
+                            ref_price = t_info.get('curr', 0.0)
+                            ref_label = f"현재가(${ref_price:.2f})"
+                            
+                        gap_pct = (ref_price - p_close) / p_close * 100
+                        exhaustion_pct = (abs(gap_pct) / atr14) * 100
+                        
+                        # 체력 게이지 바 시각화 (5칸 블록)
+                        blocks = int(min(5, math.floor(exhaustion_pct / 20)))
+                        gauge = "🟥" * blocks + "⬛" * (5 - blocks)
+                        
+                        warn_msg = ""
+                        if exhaustion_pct >= 85 and gap_pct > 0:
+                            warn_msg = "\n ⚠️ <i>[경고] 일일 상승 진폭 한계치 근접. 타겟 도달 확률이 낮아 목표 수익률 하향(1~2%)을 권장합니다.</i>"
+                        elif exhaustion_pct >= 85 and gap_pct < 0:
+                            warn_msg = "\n ⚠️ <i>[경고] 일일 하락 진폭 한계치 근접. 하방 지지력이 강해질 수 있습니다.</i>"
+                            
+                        final_msg += f"▫️ {ref_label} 위치: <b>{gap_pct:+.2f}%</b> (전일비)\n"
+                        final_msg += f"▫️ 14일 평균 진폭(ATR14): <b>{atr14:.2f}%</b>\n"
+                        final_msg += f"🔋 <b>당일 체력 소진율:</b> {gauge} <b>({exhaustion_pct:.0f}% 소진)</b>{warn_msg}\n"
+
                     final_msg += f"▫️ 작전 상태: <b>{avwap_status}</b>\n"
             final_msg += "\n"
 
         if not is_trade_active:
-            # MODIFIED: [V43.02 핫픽스] 서머타임(DST) 변동에 따른 17:05 / 18:05 동적 렌더링 팩트 교정 완료.
             fact_hour = 17 if is_dst else 18
             final_msg += f"💡 <i>※ 현재 표출된 계획은 전일 {fact_hour}:05 기준 박제된 스냅샷이며, 금일 {fact_hour}:05에 최신 팩트 잔고를 바탕으로 리셋됩니다.</i>\n\n"
             final_msg += "⛔ 장마감/애프터마켓: 주문 불가"
@@ -913,3 +941,4 @@ class TelegramView:
             [InlineKeyboardButton("💎 오리지널 TQQQ + SOXL 듀얼 콤보", callback_data="TICKER:ALL")]
         ]
         return f"🔄 <b>[ 운용 종목 선택 ]</b>\n현재 가동중: <b>{', '.join(current_tickers)}</b>", InlineKeyboardMarkup(keyboard)
+
