@@ -5,6 +5,7 @@
 # 🚨 MODIFIED: [V32.02 핫픽스] 0주 새출발 VWAP 매수 실종 방어를 위한 가격 상한제 바이패스(Bypass) 락온 이식
 # NEW: [V40.XX 옴니 매트릭스] U-Curve 30분 동적 재정규화 및 듀얼 모멘텀(regime_data) BUY 락다운 이식
 # 🚨 MODIFIED: [V43.00 갭 스위칭 자율주행] 수동 스위치 참조 소각 및 옴니 매트릭스 상승장 자동 가동 락온 이식
+# 🚨 MODIFIED: [V43.28 그랜드 핫픽스] VWAP 스케줄러 기상 시간(15:27)과 타임 윈도우(15:30) 엇박자로 인한 100% 초과 덤핑 버그 원천 차단. target_keys 범위를 range(27, 60)으로 확장하여 팩트 교정 완료.
 # ==========================================================
 import logging
 import datetime
@@ -144,13 +145,15 @@ async def scheduled_vwap_trade(context):
                     logging.error(f"🚨 [{t}] VWAP 프로파일 로드 실패: {e}")
                     profile = {}
                     
-                target_keys = [f"15:{str(m).zfill(2)}" for m in range(30, 60)]
+                # 🚨 MODIFIED: [V43.28 핫픽스] VWAP 스케줄러 기상 시간(15:27)과 타임 윈도우 동기화를 위해 range를 27부터로 팩트 교정
+                target_keys = [f"15:{str(m).zfill(2)}" for m in range(27, 60)]
                 total_target_vol = sum(profile.get(k, 0.0) for k in target_keys)
                 time_str = now_est.strftime('%H:%M')
                 
                 if time_str in target_keys:
                     raw_weight = profile.get(time_str, 0.0)
-                    current_weight = (raw_weight / total_target_vol) if total_target_vol > 0 else (1.0 / 30.0)
+                    # 동적 이월(Carry-over)을 위한 현재 분봉의 절대 가중치
+                    current_weight = (raw_weight / total_target_vol) if total_target_vol > 0 else (1.0 / len(target_keys))
                 else:
                     current_weight = 0.0
 
@@ -367,16 +370,13 @@ async def scheduled_vwap_trade(context):
                         
                         target_orders = []
                         
-                        # MODIFIED: [V43.00 자율주행 락온] 수동 스위치(cfg.get_vrev_gap_switching_mode) 영구 소각
-                        # 옴니 매트릭스가 '상승장(allow_buy: True)'으로 판독할 경우 자동 가동되도록 직결!
                         gap_thresh = getattr(cfg, 'get_vrev_gap_threshold', lambda x: -0.67)(t)
                         
-                        omni_filter = {"allow_buy": False} # 기본적으로 방어(OFF) 상태
+                        omni_filter = {"allow_buy": False}
                         if regime_data is not None:
                             current_qty_for_filter = int(float(safe_holdings.get(t, {}).get('qty', 0)))
                             omni_filter = strategy.apply_omni_matrix_filter(t, current_qty_for_filter, regime_data)
                             
-                        # 옴니 매트릭스가 허가(상승장)할 때만 갭 스위칭 룰 가동!
                         if omni_filter["allow_buy"] and current_regime == "BUY" and not vwap_cache.get(f"REV_{t}_gap_hijack_fired"):
                             base_tkr = base_map.get(t, 'SOXX')
                             base_curr_p = float(await asyncio.to_thread(broker.get_current_price, base_tkr) or 0.0)
