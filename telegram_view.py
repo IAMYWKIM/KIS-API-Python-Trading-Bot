@@ -1,21 +1,7 @@
 # ==========================================================
-# [telegram_view.py] - 🌟 100% 통합 무결점 완성본 (V43.27) 🌟
-# 🚨 MODIFIED: [V42.09 핫픽스] 듀얼 모멘텀 타임쉴드 대기 메시지 시간(10:20 EST)을 서머타임 연동 한국시간(KST 23:20/00:20)으로 팩트 교정 완료.
-# 🚨 MODIFIED: [V42.10 핫픽스] 5분 평균 VWAP 갭(Gap) 산출 공식 정방향((실시간-5분평균)/5분평균) 팩트 교정 완료.
-# 🚨 MODIFIED: [V42.11 그랜드 핫픽스] 듀얼 모멘텀(Long/Short) 부등호 오염 원천 차단. 5분 평균 > 당일 실시간 = 상승(롱) 로직 팩트 교정 완료.
-# 🚨 MODIFIED: [V42.12 그랜드 핫픽스] 부등호 논리 완벽 원상 복구! (당일 > 5분평균 = 상승 롱 / 당일 < 5분평균 = 하락 숏)
-# 🚨 MODIFIED: [V42.13 핫픽스] 5분 평균 VWAP 갭 렌더링 수식을 (5분평균-실시간)/실시간으로 교정하여 직관적인 UI(+) 제공.
-# 🚨 MODIFIED: [V42.14 핫픽스] 모멘텀 돌파 UI 텍스트 부등호(5분평균 > 당일 = 롱) 팩트 동기화 완료.
-# 🚨 MODIFIED: [V42.15 핫픽스] /settlement 및 락온 경고창에 남아있던 과거의 잔재(2%/-6%)를 4.0%/-8.0%로 팩트 교정 완료.
-# 🚨 MODIFIED: [V43.00 작전 통제실 복구] AVWAP 콘솔 하드코딩 완전 철거. 커스텀 목표수익률(Target) 및 근무모드(조기퇴근/출장) 동적 렌더링 및 UI 버튼 신설 탑재 완료.
-# 🚨 MODIFIED: [V43.01 UX 팩트 교정] V-REV 큐 관리 및 지시서의 '로트(Lot)', '층' 용어를 '지층'으로 100% 통일. 코어 엔진(LIFO)과 동일하게 가장 최근 매수일을 '1지층'으로 렌더링하도록 인덱스 스왑 완료.
-# NEW: [V43.02 핫픽스] 서머타임(DST) 변동에 따른 17:05 / 18:05 동적 렌더링 팩트 교정 완료.
-# NEW: [V43.03 수익금 원화(KRW) 병기 패치] 지시서 렌더링 시 실시간 환율을 반영하여 달러($)와 원화(₩) 수익금을 동시 표출하도록 뷰 엔진 교정.
-# NEW: [V43.04] 일일 체력(ATR14) 지시계 및 조기퇴근 가이던스 동적 렌더링 이식 완료.
-# 🚨 MODIFIED: [V43.05] 일일 체력 지시계를 14일(ATR14)에서 5일(ATR5) 평균 진폭으로 교체하여 단기 추세 반영력 극대화.
-# 🚨 MODIFIED: [V43.06 다이어트 수술] 통합지시서(/sync)의 과부하를 막기 위해 AVWAP 관련 렌더링 블록을 완전히 소각하고 독립 관제탑(/avwap)으로 역할을 100% 위임.
-# 🚨 MODIFIED: [V43.08 UX 동선 최적화] 통합지시서(/sync) 최하단에 /avwap 관제탑 호출 하이퍼링크 명령어 렌더링 추가.
+# [telegram_view.py] - 🌟 100% 통합 무결점 완성본 (V44.05) 🌟
 # 🚨 MODIFIED: [V43.27 데드코드 소각 및 달러 타점 팩트 동기화] AVWAP 콘솔 독립 분리에 따라 불필요해진 get_avwap_console_menu 데드코드를 완전히 소각하고, 통합지시서(/sync)의 V14 모드에서도 물량 보유 시 '달러($) 익절 목표가'를 팩트로 렌더링하도록 뷰포트 파격 업그레이드 완료.
+# NEW: [V44.05 가상 에스크로] V-REV 0주 새출발 및 예방적 방어선 구축 문구를 '가상격리' 및 '가상 매수'로 팩트 교정 완료.
 # ==========================================================
 import os
 import math
@@ -234,8 +220,6 @@ class TelegramView:
         ]
         return msg, InlineKeyboardMarkup(keyboard)
 
-    # 🚨 [V43.27 데드코드 소각] 독립 플러그인 이전으로 불필요해진 get_avwap_console_menu 삭제 완료
-
     def get_version_message(self, history_data, page_index=None):
         ITEMS_PER_PAGE = 5
         total_pages = max(1, (len(history_data) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
@@ -253,7 +237,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V43.27 뷰포트 무결성 동기화</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V44.05 가상 에스크로 락온</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -333,9 +317,9 @@ class TelegramView:
                         q1 = math.floor(half_budget / p1_trigger_fact)
                         q2 = math.floor(half_budget / p2_trigger_fact)
                         if q1 > 0:
-                            t_info['plan']['orders'].append({"side": "BUY", "qty": q1, "price": p1_trigger_fact, "type": "LOC", "desc": "예방적 매수(Buy1)"})
+                            t_info['plan']['orders'].append({"side": "BUY", "qty": q1, "price": p1_trigger_fact, "type": "LOC", "desc": "가상 매수(Buy1)"})
                         if q2 > 0:
-                            t_info['plan']['orders'].append({"side": "BUY", "qty": q2, "price": p2_trigger_fact, "type": "LOC", "desc": "예방적 매수(Buy2)"})
+                            t_info['plan']['orders'].append({"side": "BUY", "qty": q2, "price": p2_trigger_fact, "type": "LOC", "desc": "가상 매수(Buy2)"})
             
             if t_info.get('t_val', 0.0) > (t_info.get('split', 40.0) * 1.1):
                 body_msg += "⚠️ <b>[🚨 시스템 긴급 경고: 비정상 T값 폭주 감지!]</b>\n"
@@ -413,7 +397,6 @@ class TelegramView:
                 if is_rev:
                     body_msg += f"⚙️ 🌟 5일선 별지점: ${t_info['star_price']:.2f} | 🎯감시: {sniper_status_txt}\n"
                 else:
-                    # 💡 [V43.27] V14 모드에서도 보유 물량이 있을 경우 달러($) 익절가를 명확히 산출하여 직관성 통일
                     if fact_qty > 0 and t_info['avg'] > 0:
                         target_price = t_info['avg'] * (1 + t_info['target'] / 100.0)
                         body_msg += f"⚙️ 🎯 익절 목표가: <b>${target_price:.2f}</b> (+{t_info['target']}%)\n"
@@ -442,7 +425,7 @@ class TelegramView:
                 if is_manual_vwap:
                     body_msg += "⏱️ <b>VWAP 스케줄:</b> <b>(수동) 한투 앱에서 직접 알고리즘 장전 대기</b>\n"
                 else:
-                    body_msg += "⏱️ <b>VWAP 스케줄:</b> 15:30 EST 앵커 세팅 ➔ 1분 단위 교차 타격\n"
+                    body_msg += "⏱️ <b>VWAP 스케줄:</b> 15:30 EST 가상 앵커 세팅 ➔ 1분 단위 교차 타격\n"
             
             if v_mode == "V_REV":
                 body_msg += "📋 <b>[주문 가이던스 - ⚖️다중 LIFO 제어]</b>\n"
@@ -461,11 +444,10 @@ class TelegramView:
                     raw_guidance = '\n'.join(filtered_lines)
 
                 raw_guidance = raw_guidance.rstrip('\n')
+                # NEW: [V44.05 가상 에스크로] LOC 물리 전송 취소에 따른 직관적 텍스트 팩트 교정
+                raw_guidance = raw_guidance.replace("(LOC)", "(가상격리)").replace("(VWAP)", "(가상격리)")
                 body_msg += raw_guidance + "\n\n"
 
-                if is_trade_active:
-                    keyboard.append([InlineKeyboardButton(f"🚀 {t} V-REV 방어선 수동 장전", callback_data=f"EXEC:{t}")])
-                
             else:
                 if is_manual_vwap and not is_rev:
                     body_msg += "⏱️ <b>VWAP 스케줄:</b> 장 마감 30분 전 ➔ 1분 단위 유동성 분할 타격\n"
@@ -552,7 +534,7 @@ class TelegramView:
             
             if ver == "V_REV":
                 msg += "▫️ 1회 예산: 총 시드의 15% (고정 할당)\n"
-                msg += "▫️ 목표: [1층] 매수단가+0.6%\n"
+                msg += "▫️ 목표: [가상1층] 매수단가+0.6%\n"
                 msg += "              [상위층] 평단가+0.5% (디커플링)\n"
                 msg += f"▫️ 자동복리: {comp_rate}%\n"
                 msg += f"▫️ 증권사 수수료: <b>{fee_rate}%</b>\n"
@@ -562,15 +544,13 @@ class TelegramView:
                 if hasattr(config, 'get_avwap_hybrid_mode') and config.get_avwap_hybrid_mode(t):
                     is_multi = getattr(config, 'get_avwap_multi_strike_mode', lambda x: False)(t)
                     mode_str = "다중 출장" if is_multi else "조기 퇴근"
-                    
-                    # 💡 [V43.27] 자율주행 엔진 도입으로 의미가 퇴색된 개별 수동 목표가를 표출에서 제외하여 혼선 차단
                     status_label = f"💼 {mode_str} 락온"
                     msg += f"▫️ AVWAP 암살자: <b>{status_label}</b>\n"
                 elif hasattr(config, 'get_avwap_hybrid_mode'):
                     msg += f"▫️ AVWAP 암살자: <b>비활성 (OFF)</b>\n"
                     
                 msg += "⚖️ <b>역추세(Reversion) 하이브리드 엔진 스탠바이:</b>\n"
-                msg += "▫️ 전일 종가 앵커 기준 LIFO 큐 교차 매매 대기 중\n\n"
+                msg += "▫️ 전일 종가 앵커 기준 LIFO 큐 가상 락온 대기 중\n\n"
             else:
                 msg += f"▫️ 분할: {split_cnt}회\n▫️ 목표: {target_pct}%\n▫️ 자동복리: {comp_rate}%\n"
                 msg += f"▫️ 증권사 수수료: <b>{fee_rate}%</b>\n"

@@ -1,10 +1,11 @@
 # ==========================================================
-# [scheduler_sniper.py] - 🌟 100% 분할 캡슐화 완성본 (V44.03) 🌟
+# [scheduler_sniper.py] - 🌟 100% 분할 캡슐화 완성본 (V44.05) 🌟
 # 🚨 MODIFIED: [V32.00 그랜드 수술] 불필요한 AVWAP 동적 파라미터 배선 전면 소각 및 클린 라우팅 적용
 # NEW: [V40.XX 옴니 매트릭스] 전역 국면 데이터(regime_data) 수신 및 스나이퍼(AVWAP/V14) 듀얼 라우팅 락온 탑재
 # 🚨 MODIFIED: [V41.XX 파격적 수술] AVWAP 쿨다운 및 손절 셧다운 동결 전면 소각 & 무제한 다중 타격 룰 이식
 # 🚨 MODIFIED: [V42.00 아키텍처 개편] SOXS 메인 장부 폐기에 따른 SOXL/SOXS 듀얼 모멘텀 스캔 파이프라인 개조
-# NEW: [V44.03 AVWAP 매수 방어] 5일 ATR 진폭 체력 스캔을 위한 동적 파라미터(prev_c, day_low, atr5) 병렬 수집 파이프라인 개통 및 플러그인 인젝션 완료.
+# NEW: [V44.03 AVWAP 매수 방어] 5일 ATR 진폭 체력 스캔을 위한 동적 파라미터 병렬 수집 파이프라인 개통
+# NEW: [V44.05 가상 에스크로 락온] 암살자 타격 전 V-REV 예산을 수학적으로 스캔하여 암살자의 잉여 현금에서 100% 격리 차단 완료
 # ==========================================================
 import logging
 import datetime
@@ -13,6 +14,7 @@ import asyncio
 import traceback
 import math
 import os
+import json
 import glob
 import yfinance as yf
 import pandas_market_calendars as mcal
@@ -75,7 +77,36 @@ async def scheduled_sniper_monitor(context):
             if holdings is None: return
             
             safe_holdings = holdings if isinstance(holdings, dict) else {}
-            avwap_free_cash = cash
+            
+            # NEW: [V44.05 가상 에스크로 하드락] V-REV 종목의 당일 1회분(15%) 잔여 예산을 스캔하여 암살자 타격 가용금에서 영구 격리
+            virtual_locked_budget = 0.0
+            try:
+                est_tz = ZoneInfo('America/New_York')
+                _now_est = datetime.datetime.now(est_tz)
+                if _now_est.hour < 4 or (_now_est.hour == 4 and _now_est.minute < 5):
+                    _logical_date = _now_est - datetime.timedelta(days=1)
+                else:
+                    _logical_date = _now_est
+                _logical_date_str = _logical_date.strftime('%Y-%m-%d')
+                
+                for tk in cfg.get_active_tickers():
+                    if cfg.get_version(tk) == "V_REV":
+                        rev_daily_budget = float(cfg.get_seed(tk) or 0.0) * 0.15
+                        spent = 0.0
+                        state_file = f"data/vwap_state_REV_{_logical_date_str}_{tk}.json"
+                        if os.path.exists(state_file):
+                            try:
+                                with open(state_file, 'r', encoding='utf-8') as _f:
+                                    _st = json.load(_f)
+                                    spent = float(_st.get("executed", {}).get("BUY_BUDGET", 0.0))
+                            except Exception: pass
+                        # 15:27 EST 이전까지는 V-REV 예산을 가상으로 묶어둔다
+                        if _now_est.time() < datetime.time(15, 27):
+                            virtual_locked_budget += max(0.0, rev_daily_budget - spent)
+            except Exception as e:
+                logging.error(f"🚨 가상 에스크로 예산 산출 중 에러: {e}")
+                
+            avwap_free_cash = max(0.0, float(cash) - virtual_locked_budget)
             
             for t in cfg.get_active_tickers():
                 version = cfg.get_version(t)
@@ -161,7 +192,6 @@ async def scheduled_sniper_monitor(context):
                         try: df_1min_base = await asyncio.to_thread(broker.get_1min_candles_df, target_base)
                         except: pass
                         
-                        # NEW: [V44.03 AVWAP 매수 방어] 5일 ATR 진폭 체력 스캔을 위한 동적 파라미터 병렬 수집
                         prev_c, day_low, atr5 = 0.0, 0.0, 0.0
                         try:
                             prev_c_task = asyncio.to_thread(broker.get_previous_close, current_target)

@@ -1,37 +1,9 @@
 # ==========================================================
 # [telegram_callbacks.py] - 🌟 100% 통합 완성본 🌟 (Full Version)
-# MODIFIED: [V28.14 통이관 및 큐 삭제 런타임 에러 완전 소각]
-# MODIFIED: [V28.15 그랜드 수술] 물량 통이관(SET_INIT) 콜백 라우터 영구 소각 및 
-# V14 <-> V-REV 모드 전환 시 실잔고 '0주 락온(Lock-on)' 절대 방어막 이식 완료
-# MODIFIED: [V28.16 UX 팩트 패치] 0주 락온 발동 시 일회성 팝업(Alert) 무반응 맹점을 해체하고 옵션 A 텍스트 박제 완료
-# MODIFIED: [V28.18 UX 팩트 패치] 0주 락온 시 자기 자신의 모드(동일 모드) 서브메뉴 진입 허용 렌더링 완료
-# MODIFIED: [V28.19 그랜드 수술] KIS API 가짜 0주(Phantom 0-Share) 응답 맹점 원천 차단. 
-# holdings None Safe-Casting 쉴드 이식 및 V14 장부 + V-REV 큐 다이렉트 I/O를 결합한 삼중 교차 검증(Triple Verification) 방어막 최종 탑재 완료
-# MODIFIED: [V28.22 스냅샷 렌더링 디커플링 수술] 졸업 카드 발급(HIST:IMG) 시 
-# 콜백 데이터에 고유 식별자(ID)가 존재할 경우 해당 과거 지층(History)을 
-# 100% 정밀 타격하여 렌더링하도록 팩트 라우팅 엔진 이식.
-# MODIFIED: [V28.25 그랜드 수술] 동적 수수료율 설정을 위한 INPUT:FEE 콜백 라우팅 분기 신설 완료.
-# MODIFIED: [V28.27] 수동 매도로 인한 0주 락온 디커플링 상태 감지 및 /reset 유도 방어막 추가
-# MODIFIED: [V28.32] 코파일럿 아키텍처 채택: V14 전용 상방 스나이퍼 로직 충돌 방지를 위한 V-REV 락다운 방어막 원상 복구
-# MODIFIED: [V28.33] TQQQ 등 타 종목의 V-REV 횡단 진입 맹점 100% 소각 (SOXL 하드웨어 락온 이식)
-# 🚨 [V29.02 UX 팩트 패치] "역사 목록으로 돌아가기(HIST:LIST)" 콜백 시 cmd_history 호출에 따른 런타임 즉사 맹점 소각. 동적 리스트 렌더링 엔진 단독 이식 완료.
-# 🚨 [V29.03 핫픽스] UnboundLocalError 런타임 즉사 유발 원흉(AVWAP 내부 로컬 임포트 섀도잉) 100% 소각 완료.
-# NEW: [V29.04] queue_ledger.queues 객체 직접 참조 런타임 붕괴 데드코드 전면 소각 및 다이렉트 I/O 멱등성 방어막 이식
-# MODIFIED: [V30.09 핫픽스] 잔존 데드코드(pytz) 영구 소각 및 ZoneInfo 이식을 통한 타임존 무결성 락온 통일
-# 🚨 MODIFIED: [V32.00] 12차 백테스트 팩트 반영. 불필요해진 AVWAP 동적 파라미터(TARGET_SET, GAP_SET) 콜백 라우팅 전면 소각 완료.
-# NEW: [V40.XX 옴니 매트릭스] SOXL/SOXS 듀얼 모멘텀 티커 스위칭 완벽 분기 및 V-REV/AVWAP 권한 개방 완료
 # 🚨 MODIFIED: [V42.00 아키텍처 개편] SOXS 메인 종목 모드 전환 영구 락다운 및 듀얼 모멘텀 티커 라우팅 팩트 정립
-# 🚨 MODIFIED: [V42.01 갭 스위칭 자율주행] 수동 제어(ON/OFF/THRESH_SET) 콜백 라우터 영구 소각
-# 🚨 MODIFIED: [V42.02 핫픽스] 운용 종목 선택 메뉴(/ticker)에서 SOXS 듀얼 콤보 라우팅 원천 차단 (팻핑거 방어)
 # 🚨 MODIFIED: [V43.00 작전 통제실 복구] AVWAP 커스텀 목표수익률(Target) 및 근무모드(조기퇴근/출장) 변경 콜백(AVWAP_SET) 라우팅 신설 완료.
-# 🚨 MODIFIED: [V43.07] 체력 소진율 연동 익절 자율주행 모드(TARGET_AUTO/MANUAL) 및 리프레시 버튼 콜백 라우터 팩트 추가.
-# 🚨 MODIFIED: [V43.11 UI 극한 다이어트] 수동 전환과 목표가 텍스트 입력을 1개 라우터(TARGET_MANUAL)로 통폐합하여 UX 동선 최적화.
-# 🚨 MODIFIED: [V43.12 텔레그램 멱등성 붕괴 방어] AVWAP 콘솔 업데이트 시 발생하는 'Message is not modified' 400 에러를 Safe Bypass 쉴드로 원천 차단 완료.
-# 🚨 MODIFIED: [V43.13 런타임 캐시 락온] AVWAP_SET 콜백에서 봇 데몬의 팩트 app_data 메모리 참조를 동기화하여 스위칭 증발(Amnesia) 버그 영구 소각 완료.
-# 🚨 MODIFIED: [V43.14 직관적 버튼 렌더링] TARGET_MANUAL 콜백이 수동 모드 '전환(토글)'만을 전담하도록 팩트 분리 완료.
-# 🚨 MODIFIED: [V43.16 코어 메모리 강제 동기화] 콜백(버튼 조작) 시에도 백그라운드 job_queue의 코어 메모리(app_data)에 딥 인젝션을 수행하여 상태 증발 원천 차단 완료.
-# 🚨 MODIFIED: [V43.25 2-Button 미니멀리즘] TARGET_MANUAL 호출 시, 상태를 MANUAL로 변환함과 동시에 텍스트 입력 프롬프트를 띄우도록 원터치 스마트 스위칭 로직 결합.
-# 🚨 MODIFIED: [V43.26 콜백 시퀀스 교정 및 팝업 쉴드] 텔레그램 API가 Edit과 Send를 동시 호출 시 패킷을 누락(Drop)시키는 맹점을 타파하기 위해 실행 시퀀스를 분리하고, 강제 팝업(Alert) 쉴드를 장착하여 UX 무결성 락온 완료.
+# 🚨 MODIFIED: [V43.26 콜백 시퀀스 교정 및 팝업 쉴드] 텔레그램 API가 Edit과 Send를 동시 호출 시 패킷을 누락(Drop)시키는 맹점을 타파하기 위해 실행 시퀀스를 분리.
+# NEW: [V44.05 가상 에스크로 락다운] 수동 덫 장전(EXEC) 버튼 클릭 시, KIS 서버에 물리적 주문을 전송하지 않고 가상 에스크로(Virtual Escrow) 락온 팩트만 스냅샷에 업데이트하도록 우회(Bypass) 이식 완료
 # ==========================================================
 import logging
 import datetime
@@ -422,10 +394,102 @@ class TelegramCallbacks:
                     await query.edit_message_text("❌ 이미지 생성 중 오류가 발생했습니다.", parse_mode='HTML')
             
         elif action == "EXEC":
-            await query.answer()
             t = sub
             ver = self.cfg.get_version(t)
-            
+
+            # 🚨 NEW: [V44.05 가상 에스크로 락다운] V-REV는 자전거래 방어를 위해 물리적 수동 전송 원천 차단
+            if ver == "V_REV":
+                await query.answer("🛑 [가상 에스크로 락온] V-REV는 자전거래(FDS) 방어를 위해 물리적 덫 수동 장전 기능을 영구 소각하고 가상 장부로 100% 대체되었습니다.", show_alert=True)
+                
+                # 내부적으로 스냅샷을 갱신하고 가상 락온 상태로만 전환
+                async with self.tx_lock:
+                    cash, holdings = await asyncio.to_thread(self.broker.get_account_balance)
+                    safe_holdings = holdings if isinstance(holdings, dict) else {}
+                    h = safe_holdings.get(t, {'qty':0, 'avg':0})
+                    safe_avg = float(h.get('avg') or 0.0)
+                    safe_qty = int(float(h.get('qty') or 0))
+                    
+                    curr_p = float(await asyncio.to_thread(self.broker.get_current_price, t) or 0.0)
+                    prev_c = float(await asyncio.to_thread(self.broker.get_previous_close, t) or 0.0)
+                    
+                    q_data = self.queue_ledger.get_queue(t) if getattr(self, 'queue_ledger', None) else []
+                    cached_snap = getattr(self, 'strategy_rev', None)
+                    if cached_snap:
+                        cached_snap = cached_snap.load_daily_snapshot(t)
+                    logic_qty = safe_qty
+                    if cached_snap and "total_q" in cached_snap:
+                        logic_qty = cached_snap["total_q"]
+                    
+                    rev_budget = float(self.cfg.get_seed(t) or 0.0) * 0.15
+                    half_portion_cash = rev_budget * 0.5
+                    
+                    loc_orders = []
+                    
+                    if q_data and logic_qty > 0:
+                        dates_in_queue = sorted(list(set(item.get('date') for item in q_data if item.get('date'))), reverse=True)
+                        l1_qty = 0
+                        l1_price = 0.0
+                        if dates_in_queue:
+                            lots_1 = [item for item in q_data if item.get('date') == dates_in_queue[0]]
+                            l1_qty = sum(item.get('qty', 0) for item in lots_1)
+                            if l1_qty > 0:
+                                l1_price = sum(item.get('qty', 0) * item.get('price', 0.0) for item in lots_1) / l1_qty
+                        
+                        target_l1 = round(l1_price * 1.006, 2)
+                        
+                        if l1_qty > 0:
+                            loc_orders.append({'side': 'SELL', 'qty': l1_qty, 'price': target_l1, 'type': 'LOC', 'desc': '[가상 1층 단독]'})
+                            
+                        upper_qty = logic_qty - l1_qty
+                        if upper_qty > 0:
+                            upper_invested = (logic_qty * safe_avg) - (l1_qty * l1_price)
+                            if upper_invested > 0 and upper_qty > 0:
+                                upper_avg = upper_invested / upper_qty
+                            else:
+                                upper_avg = l1_price
+                                
+                            target_upper = round(upper_avg * 1.005, 2)
+                            loc_orders.append({'side': 'SELL', 'qty': upper_qty, 'price': target_upper, 'type': 'LOC', 'desc': '[가상 상위 재고]'})
+                    
+                    if prev_c > 0:
+                        b1_price = round(prev_c / 0.935 if logic_qty == 0 else prev_c * 0.995, 2)
+                        b2_price = round(prev_c * 0.999 if logic_qty == 0 else prev_c * 0.9725, 2)
+                        
+                        b1_qty = math.floor(half_portion_cash / b1_price) if b1_price > 0 else 0
+                        b2_qty = math.floor(half_portion_cash / b2_price) if b2_price > 0 else 0
+                        
+                        if b1_qty > 0:
+                            loc_orders.append({'side': 'BUY', 'qty': b1_qty, 'price': b1_price, 'type': 'LOC', 'desc': '가상 매수(Buy1)'})
+                        if b2_qty > 0:
+                            loc_orders.append({'side': 'BUY', 'qty': b2_qty, 'price': b2_price, 'type': 'LOC', 'desc': '가상 매수(Buy2)'})
+                            
+                        if logic_qty == 0:
+                            pass 
+                        elif b2_qty > 0 and b2_price > 0:
+                            for n in range(1, 6):
+                                grid_p = round(half_portion_cash / (b2_qty + n), 2)
+                                if grid_p >= 0.01 and grid_p < b2_price:
+                                    loc_orders.append({'side': 'BUY', 'qty': 1, 'price': grid_p, 'type': 'LOC', 'desc': f'가상 줍줍({n})'})
+
+                    msg = f"🛡️ <b>[{t}] V-REV 예방적 덫 가상 에스크로 수동 락온 완료</b>\n"
+                    
+                    if logic_qty == 0:
+                        msg += "🚫 <code>[0주 새출발] 기준 평단가 부재 (1층 확보 예산 가상 격리 완료)</code>\n"
+                        
+                    for o in loc_orders:
+                        msg += f"└ [가상격리] {o['desc']} {o['qty']}주 (${o['price']})\n"
+                        await asyncio.sleep(0.1)
+                        
+                    if len(loc_orders) > 0:
+                        self.cfg.set_lock(t, "REG")
+                        msg += "\n🔒 <b>VWAP 예산 가상 격리 완료 (물리적 전송 생략됨)</b>"
+                    else:
+                        msg += "\n⚠️ <b>가상 격리할 예산/수량이 없습니다.</b>"
+                        
+                    await query.edit_message_text(msg, parse_mode='HTML')
+                return
+
+            await query.answer()
             if ver == "V_REV" and getattr(self.cfg, 'get_manual_vwap_mode', lambda x: False)(t):
                 await context.bot.send_message(chat_id, "🚨 [격발 차단] 수동(한투 알고리즘) 모드가 가동 중입니다. 지시서를 참고하여 한투 앱(V앱)에서 직접 매매를 걸어주십시오.")
                 return
@@ -460,109 +524,15 @@ class TelegramCallbacks:
                     logging.debug(f"YF 정규장 종가 롤오버 스캔 실패 ({t}): {e}")
                     if curr_p > 0 and prev_c == 0.0:
                         prev_c = curr_p
-
-            if ver == "V_REV":
-                if not getattr(self, 'queue_ledger', None):
-                    from queue_ledger import QueueLedger
-                    self.queue_ledger = QueueLedger()
-                    
-                q_data = self.queue_ledger.get_queue(t)
-                
-                cached_snap = self.strategy.v_rev_plugin.load_daily_snapshot(t)
-                logic_qty = safe_qty
-                if cached_snap and "total_q" in cached_snap:
-                    logic_qty = cached_snap["total_q"]
-
-                rev_budget = float(self.cfg.get_seed(t) or 0.0) * 0.15
-                half_portion_cash = rev_budget * 0.5
-                
-                loc_orders = []
-                
-                if q_data and logic_qty > 0:
-                    dates_in_queue = sorted(list(set(item.get('date') for item in q_data if item.get('date'))), reverse=True)
-                    l1_qty = 0
-                    l1_price = 0.0
-                    if dates_in_queue:
-                        lots_1 = [item for item in q_data if item.get('date') == dates_in_queue[0]]
-                        l1_qty = sum(item.get('qty', 0) for item in lots_1)
-                        if l1_qty > 0:
-                            l1_price = sum(item.get('qty', 0) * item.get('price', 0.0) for item in lots_1) / l1_qty
-                    
-                    target_l1 = round(l1_price * 1.006, 2)
-                    
-                    if l1_qty > 0:
-                        loc_orders.append({'side': 'SELL', 'qty': l1_qty, 'price': target_l1, 'type': 'LOC', 'desc': '[1층 단독]'})
-                        
-                    upper_qty = logic_qty - l1_qty
-                    if upper_qty > 0:
-                        if safe_avg <= 0.0:
-                            msg = f"🚨 <b>[{t}] 수동 장전 차단:</b> KIS API가 유효한 평단가를 반환하지 않았습니다 (avg=0). 주문을 취소합니다."
-                            await context.bot.send_message(chat_id, msg, parse_mode='HTML')
-                            return
-
-                        upper_invested = (logic_qty * safe_avg) - (l1_qty * l1_price)
-                        if upper_invested > 0 and upper_qty > 0:
-                            upper_avg = upper_invested / upper_qty
-                        else:
-                            upper_avg = l1_price
-                            
-                        target_upper = round(upper_avg * 1.005, 2)
-                        loc_orders.append({'side': 'SELL', 'qty': upper_qty, 'price': target_upper, 'type': 'LOC', 'desc': '[상위 재고]'})
-                
-                if prev_c > 0:
-                    b1_price = round(prev_c / 0.935 if logic_qty == 0 else prev_c * 0.995, 2)
-                    b2_price = round(prev_c * 0.999 if logic_qty == 0 else prev_c * 0.9725, 2)
-                    
-                    b1_qty = math.floor(half_portion_cash / b1_price) if b1_price > 0 else 0
-                    b2_qty = math.floor(half_portion_cash / b2_price) if b2_price > 0 else 0
-                    
-                    if b1_qty > 0:
-                        loc_orders.append({'side': 'BUY', 'qty': b1_qty, 'price': b1_price, 'type': 'LOC', 'desc': '예방적 매수(Buy1)'})
-                    if b2_qty > 0:
-                        loc_orders.append({'side': 'BUY', 'qty': b2_qty, 'price': b2_price, 'type': 'LOC', 'desc': '예방적 매수(Buy2)'})
-                        
-                    if logic_qty == 0:
-                        pass 
-                    elif b2_qty > 0 and b2_price > 0:
-                        for n in range(1, 6):
-                            grid_p = round(half_portion_cash / (b2_qty + n), 2)
-                            if grid_p >= 0.01 and grid_p < b2_price:
-                                loc_orders.append({'side': 'BUY', 'qty': 1, 'price': grid_p, 'type': 'LOC', 'desc': f'예방적 줍줍({n})'})
-
-                msg = f"🛡️ <b>[{t}] V-REV 예방적 양방향 LOC 방어선 수동 장전 완료</b>\n"
-                
-                if logic_qty == 0:
-                    msg += "🚫 <code>[0주 새출발] 기준 평단가 부재로 줍줍 생략 (1층 확보에 예산 100% 집중)</code>\n"
-                    
-                all_success = True
-                for o in loc_orders:
-                    res = await asyncio.to_thread(self.broker.send_order, t, o['side'], o['qty'], o['price'], o['type'])
-                    is_success = res.get('rt_cd') == '0'
-                    if not is_success:
-                        all_success = False
-                        
-                    err_msg = res.get('msg1', '오류')
-                    status_icon = '✅' if is_success else f'❌({err_msg})'
-                    msg += f"└ {o['desc']} {o['qty']}주 (${o['price']}): {status_icon}\n"
-                    await asyncio.sleep(0.2)
-                    
-                if all_success and len(loc_orders) > 0:
-                    self.cfg.set_lock(t, "REG")
-                    msg += "\n🔒 <b>방어선 전송 완료 (매매 잠금 설정됨)</b>"
-                elif len(loc_orders) == 0:
-                    msg += "\n⚠️ <b>전송할 방어선(예산/수량)이 없습니다.</b>"
-                else:
-                    msg += "\n⚠️ <b>일부 방어선 구축 실패 (잠금 보류)</b>"
-                    
-                await context.bot.send_message(chat_id, msg, parse_mode='HTML')
-                return
             
             ma_5day = await asyncio.to_thread(self.broker.get_5day_ma, t)
             
             logic_qty_v14 = safe_qty
             is_manual_vwap = getattr(self.cfg, 'get_manual_vwap_mode', lambda x: False)(t)
             if is_manual_vwap:
-                cached_snap_v14 = self.strategy.v14_vwap_plugin.load_daily_snapshot(t)
+                cached_snap_v14 = None
+                if hasattr(self.strategy, 'v14_vwap_plugin'):
+                    cached_snap_v14 = self.strategy.v14_vwap_plugin.load_daily_snapshot(t)
                 if cached_snap_v14 and "total_q" in cached_snap_v14:
                     logic_qty_v14 = cached_snap_v14["total_q"]
 
@@ -747,12 +717,10 @@ class TelegramCallbacks:
                             job.data.setdefault('sniper_tracking', {})[f"AVWAP_TARGET_MODE_{ticker}"] = mode_value
                             render_app_data = job.data
 
-            # 🚨 [V43.26] 텔레그램 API 충돌(패킷 증발)을 막기 위해 시퀀스를 분리하고 강력한 팝업 쉴드 장착
             if action_type == "TARGET_MANUAL":
                 set_tracking_mode("MANUAL")
                 controller.user_states[chat_id] = f"CONF_AVWAP_TARGET_{ticker}"
                 
-                # 1. UI 선제 업데이트 (Bypass)
                 try:
                     from telegram_avwap_console import AvwapConsolePlugin
                     plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
@@ -761,10 +729,8 @@ class TelegramCallbacks:
                 except Exception:
                     pass
 
-                # 2. 메시지 프롬프트 발송 및 강력한 Alert(팝업) 알림
                 try:
                     await context.bot.send_message(chat_id, f"🖐️ <b>[{ticker}] 수동 고정 모드 전환!</b>\n🎯 <b>목표 수익률(%)</b>을 숫자로 입력하세요.\n(예: 2.0, 3.5, 4.0)\n※ -8.0% 하드스탑 컷은 안전을 위해 고정됩니다.", parse_mode='HTML')
-                    # 무조건 화면 중앙에 팝업창을 띄워 유저에게 지시 전달
                     await query.answer(f"[{ticker}] 채팅창에 목표 수익률을 숫자로 입력하세요!", show_alert=True)
                 except Exception as e:
                     logging.error(f"프롬프트 발송 실패: {e}")
@@ -869,7 +835,7 @@ class TelegramCallbacks:
             elif mode_val == "AVWAP_OFF":
                 if hasattr(self.cfg, 'set_avwap_hybrid_mode'):
                     self.cfg.set_avwap_hybrid_mode(ticker, False)
-                await query.edit_message_text(f"🛑 <b>[{ticker}] 차세대 AVWAP 하이브리드 전술이 즉시 해제되었습니다.</b>", parse_mode='HTML')
+                await query.edit_message_text(f"🛑 <b>[{ticker}] 차세대 AVWAP 하이브리 전술이 즉시 해제되었습니다.</b>", parse_mode='HTML')
                 return
 
             current_ver = self.cfg.get_version(ticker)
