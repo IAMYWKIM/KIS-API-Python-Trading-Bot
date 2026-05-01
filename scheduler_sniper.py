@@ -1,5 +1,5 @@
 # ==========================================================
-# [scheduler_sniper.py] - 🌟 100% 분할 캡슐화 완성본 (V44.21) 🌟
+# [scheduler_sniper.py] - 🌟 100% 분할 캡슐화 완성본 (V44.35) 🌟
 # 🚨 MODIFIED: [V32.00 그랜드 수술] 불필요한 AVWAP 동적 파라미터 배선 전면 소각 및 클린 라우팅 적용
 # NEW: [V40.XX 옴니 매트릭스] 전역 국면 데이터(regime_data) 수신 및 스나이퍼(AVWAP/V14) 듀얼 라우팅 락온 탑재
 # 🚨 MODIFIED: [V41.XX 파격적 수술] AVWAP 쿨다운 및 손절 셧다운 동결 전면 소각 & 무제한 다중 타격 룰 이식
@@ -9,6 +9,7 @@
 # NEW: [V44.07 암살자 타임라인 전진 배치] 옴니 매트릭스 스캔 및 스나이퍼 격발 10:20 -> 10:00 EST 락온 아키텍처 동기화 완료
 # 🚨 MODIFIED: [V44.20 암살자 마비 맹점 완벽 적출] YF 시가(Open) 스캔 실패 시 스케줄러가 통째로 스킵되던 치명적 맹점(continue)을 전면 소각하여 무결성 확보.
 # 🚨 MODIFIED: [V44.21 옴니 매트릭스 디커플링] 10:00 EST에 고정된 정적 국면(Regime) 데이터가 AVWAP의 실시간 동적 모멘텀(돌파)을 가로막던 하극상 락다운을 완벽히 해체(regime_data=None)하여 사냥 본능 100% 해방.
+# 🚨 MODIFIED: [V44.35 AVWAP 하드스탑 및 조기퇴근 셧다운 오버라이드 수술] reason 텍스트에 포함된 조기퇴근 및 HARD_STOP 플래그를 scheduler가 무시하고 False로 덮어쓰던 하극상 맹점 원천 차단. 팩트 기반 영구 동결(Shutdown) 락온 이식 완료.
 # ==========================================================
 import logging
 import datetime
@@ -81,7 +82,6 @@ async def scheduled_sniper_monitor(context):
             
             safe_holdings = holdings if isinstance(holdings, dict) else {}
             
-            # NEW: [V44.05 가상 에스크로 하드락] V-REV 종목의 당일 1회분(15%) 잔여 예산을 스캔하여 암살자 타격 가용금에서 영구 격리
             virtual_locked_budget = 0.0
             try:
                 est_tz = ZoneInfo('America/New_York')
@@ -103,7 +103,6 @@ async def scheduled_sniper_monitor(context):
                                     _st = json.load(_f)
                                     spent = float(_st.get("executed", {}).get("BUY_BUDGET", 0.0))
                             except Exception: pass
-                        # 15:27 EST 이전까지는 V-REV 예산을 가상으로 묶어둔다
                         if _now_est.time() < datetime.time(15, 27):
                             virtual_locked_budget += max(0.0, rev_daily_budget - spent)
             except Exception as e:
@@ -181,7 +180,6 @@ async def scheduled_sniper_monitor(context):
                         base_curr_p = float(await asyncio.to_thread(broker.get_current_price, target_base) or 0.0)
                         if base_curr_p <= 0: continue
                         
-                        # 🚨 [V44.20 팩트 교정] YF 시가(Open) 스캔 실패 시 암살자가 영구 마비되던 치명적 맹점 전면 소각
                         base_day_open = 0.0 
                         
                         df_1min_base = None
@@ -221,7 +219,7 @@ async def scheduled_sniper_monitor(context):
                             df_1min_base=df_1min_base,
                             now_est=now_est,
                             avwap_state=avwap_state_dict,
-                            regime_data=None, # 🚨 [V44.21 옴니 매트릭스 디커플링] 정적 국면(Regime) 개입을 전면 차단하여 실시간 VWAP 돌파 모멘텀을 100% 해방
+                            regime_data=None, 
                             prev_close=prev_c,
                             day_low=day_low,
                             atr5=atr5
@@ -360,16 +358,20 @@ async def scheduled_sniper_monitor(context):
                                         
                                         shutdown_flag = tracking_cache.get(f"AVWAP_SHUTDOWN_{current_target}", False)
                                         
+                                        # 🚨 MODIFIED: [V44.35 AVWAP 하드스탑 및 조기퇴근 셧다운 오버라이드 수술] 
                                         if new_qty == 0:
                                             strikes = tracking_cache.get(f"AVWAP_STRIKES_{current_target}", 0) + 1
                                             tracking_cache[f"AVWAP_STRIKES_{current_target}"] = strikes
                                             
                                             if "TIME_STOP" in reason:
-                                                msg += "\n🛡️ 금일 해당 종목의 15:55 타임스탑 청산 완료, 오버나이트 갭하락 방어를 위해 단타 작전을 영구 셧다운합니다."
+                                                msg += "\n🛡️ 금일 해당 종목의 15:55 타임스탑 청산 완료, 오버나이트 갭하락 방어를 위해 단타 작전을 <b>영구 동결(Shutdown)</b>합니다."
                                                 shutdown_flag = True
                                             elif "HARD_STOP" in reason or "손절" in reason:
-                                                msg += "\n🚨 손절(-8.0%) 피격 감지! <b>즉각 다음 모멘텀 타점 탐색</b>을 시작합니다."
-                                                shutdown_flag = False
+                                                msg += "\n🚨 손절(-8.0%) 피격 감지! 뇌동매매 방지를 위해 당일 암살자 작전을 <b>영구 동결(Shutdown)</b>합니다."
+                                                shutdown_flag = True
+                                            elif "조기퇴근" in reason:
+                                                msg += f"\n🛡️ <b>[ {strikes}회차 출장 익절 완료 ]</b> 조기퇴근 모드 설정에 따라 당일 암살자 작전을 <b>영구 동결(Shutdown)</b>합니다."
+                                                shutdown_flag = True
                                             else:
                                                 msg += f"\n🛡️ <b>[ {strikes}회차 출장 익절 완료 ]</b> 즉각 다음 모멘텀 타점 탐색을 시작합니다."
                                                 shutdown_flag = False

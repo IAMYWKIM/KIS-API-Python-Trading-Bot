@@ -1,7 +1,12 @@
-# MODIFIED: [V44.30 AVWAP 설정 라우터 통합] /settlement 호출 시 AVWAP의 실시간 타겟 모드(수동/자동)를 팩트로 스캔하여 뷰포트에 100% 주입하도록 동기화 엔진 수술 완료.
-# MODIFIED: [V44.30 수동 입력 렌더링 수술] 텔레그램 창에 수동 목표 수익률(%) 입력 후, /avwap 콘솔 갱신이 아닌 /settlement(환경설정) 화면으로 직결되도록 제자리 렌더링(edit_message_text) 파이프라인 개조 완료.
 # ==========================================================
-# FILE: telegram_bot.py
+# [telegram_bot.py] - 🌟 100% 통합 무결점 완성본 (V44.35) 🌟
+# 🚨 [V27.15 핫픽스] tx_lock 병목 해체 및 런타임 방어막 이식
+# 🚨 [V28.03 그랜드 수술] 10시 정각 확정 정산 및 졸업 발급 락온 구축
+# 🚨 [V28.10 스냅샷 디커플링 수술] 지시서 렌더링 시 실잔고 오염 방어막 이식
+# 🚨 [V29.01 평단가 하방 오염 영구 소각] KIS 평단가 대신 큐 장부 진성 평단가 역산 디커플링 적용
+# 🚨 [V30.04 AVWAP 타임라인 시간 텍스트 진공 압축] 사용자 인지 혼란 유발 텍스트 전면 도려냄
+# 🚨 [V44.09 AVWAP 유령 매수 환각 방어막 이식] V-REV 0주 졸업 판별 확정 시 AVWAP 인메모리 및 영속성 상태 파일을 100% 포맷 소각하여 허공에 주문을 난사하는 맹점 완벽 교정
+# 🚨 MODIFIED: [V44.35 0주 팩트 디커플링 수술] 실잔고가 0주(전량 익절 완료)임에도 과거 스냅샷의 물량(total_q)을 참조하여 지시서에 잭팟 텍스트를 유령 렌더링하던 시각적 맹점 영구 소각 완료.
 # ==========================================================
 import logging
 import datetime
@@ -42,7 +47,7 @@ class TelegramController:
     def _is_admin(self, update: Update):
         if self.admin_id is None:
             self.admin_id = self.cfg.get_chat_id()
-        
+            
         if self.admin_id is None:
             print("⚠️ 보안 경고: ADMIN_CHAT_ID가 설정되지 않아 알 수 없는 사용자의 접근을 차단했습니다.")
             return False
@@ -139,7 +144,6 @@ class TelegramController:
         
         state = self.user_states.get(chat_id)
         
-        # 🚨 MODIFIED: [V44.34 AVWAP 듀얼 모멘텀 미러링 팩트 교정] 목표수익률 입력 시 SOXL과 SOXS(그림자 티커)에 100% 동일한 수익률과 락온 모드가 주입되도록 듀얼 캐싱 파이프라인 이식 완료.
         if state and state.startswith("CONF_AVWAP_TARGET_"):
             ticker = state.split("_")[-1]
             try:
@@ -174,23 +178,6 @@ class TelegramController:
                 await update.message.reply_text("❌ 올바른 숫자를 입력하세요. (예: 2.5, 4.0)")
                 return
         
-        if "장부 조회" in text:
-            return await self.cmd_record(update, context)
-        elif "시드 변경" in text:
-            return await self.cmd_seed(update, context)
-        elif "모드 전환" in text:
-            return await self.cmd_ticker(update, context)
-        elif "분할 변경" in text or "환경 설정" in text or "세팅" in text:
-            return await self.cmd_settlement(update, context)
-        elif "스나이퍼" in text:
-            return await self.cmd_mode(update, context)
-        elif "명예의 전당" in text or "졸업" in text:
-            return await self.cmd_history(update, context)
-        elif "암살자" in text or "조기" in text or "avwap" in text.lower():
-            return await self.cmd_avwap(update, context)
-            
-        await self.states_handler.handle_message(update, context, self)
-
         if "장부 조회" in text:
             return await self.cmd_record(update, context)
         elif "시드 변경" in text:
@@ -492,11 +479,16 @@ class TelegramController:
             logic_qty = actual_qty
             is_zero_start_fact = (actual_qty == 0)
             if cached_snap:
-                if "total_q" in cached_snap:
-                    logic_qty = cached_snap["total_q"]
-                elif "initial_qty" in cached_snap:
-                    logic_qty = cached_snap["initial_qty"]
-                is_zero_start_fact = cached_snap.get("is_zero_start", logic_qty == 0)
+                if actual_qty == 0:
+                    # 🚨 MODIFIED: [V44.35 0주 팩트 디커플링 수술] 0주 스윕 후에도 과거 스냅샷의 수량을 참조하여 '잭팟' 유령 텍스트가 렌더링되던 맹점 영구 소각.
+                    logic_qty = 0
+                    is_zero_start_fact = True
+                else:
+                    if "total_q" in cached_snap:
+                        logic_qty = cached_snap["total_q"]
+                    elif "initial_qty" in cached_snap:
+                        logic_qty = cached_snap["initial_qty"]
+                    is_zero_start_fact = cached_snap.get("is_zero_start", logic_qty == 0)
 
             try:
                 jobs = context.job_queue.jobs() if context.job_queue else []
@@ -578,7 +570,7 @@ class TelegramController:
                         
                         target_upper = round(upper_avg * 1.005, 2)
                         v_rev_guidance += f" 🔵 매도2(Pop2) ${target_upper:.2f} <b>{upper_qty}주</b> ({tag})\n"
-                        
+                
                     if not is_manual_vwap:
                         temp_qty = 0
                         temp_inv = 0.0
@@ -595,7 +587,7 @@ class TelegramController:
                                     temp_inv += rem * float(item.get('price', 0.0))
                                 break
                         pure_queue_avg = temp_inv / temp_qty if temp_qty > 0 else 0.0
-                        
+                    
                         target_jackpot = round(pure_queue_avg * 1.01, 2) if pure_queue_avg > 0 else 0.0
                         v_rev_guidance += f" 🎯 [전체 잭팟] ${target_jackpot:.2f} <b>{logic_qty}주</b> (옵션)\n"
                 else:
@@ -898,8 +890,6 @@ class TelegramController:
         msg, markup = self.view.get_ticker_menu(self.cfg.get_active_tickers())
         await update.message.reply_text(msg, reply_markup=markup, parse_mode='HTML')
 
-    # 🚨 MODIFIED: [V44.28 제자리 갱신 수술] 수동 타겟 설정 등 콜백에서 호출 시 
-    # 채팅방에 불필요한 메시지가 추가되지 않고 제자리에서 뷰포트가 갱신(edit_text)되도록 라우터 교정 완료.
     async def cmd_settlement(self, update, context):
         if not self._is_admin(update):
             return
