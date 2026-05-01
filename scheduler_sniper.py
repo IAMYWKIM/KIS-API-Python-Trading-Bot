@@ -11,6 +11,7 @@
 # 🚨 MODIFIED: [V44.21 옴니 매트릭스 디커플링] 10:00 EST에 고정된 정적 국면(Regime) 데이터가 AVWAP의 실시간 동적 모멘텀(돌파)을 가로막던 하극상 락다운을 완벽히 해체(regime_data=None)하여 사냥 본능 100% 해방.
 # 🚨 MODIFIED: [V44.35 AVWAP 하드스탑 및 조기퇴근 셧다운 오버라이드 수술] reason 텍스트에 포함된 조기퇴근 및 HARD_STOP 플래그를 scheduler가 무시하고 False로 덮어쓰던 하극상 맹점 원천 차단. 팩트 기반 영구 동결(Shutdown) 락온 이식 완료.
 # MODIFIED: [V44.40 엣지 케이스 방어] AVWAP 및 스나이퍼 교착 방어, 조기퇴근 셧다운 오버라이드 및 V14 예산 중복 방어 이식.
+# MODIFIED: [V44.44 이벤트 루프 교착 방어] is_market_open 동기 함수 비동기 래핑 및 타임아웃 Fail-Open 족쇄 체결 완료.
 # ==========================================================
 import logging
 import datetime
@@ -27,7 +28,16 @@ import pandas_market_calendars as mcal
 from scheduler_core import is_market_open
 
 async def scheduled_sniper_monitor(context):
-    if not is_market_open(): return
+    # 🚨 MODIFIED: [V44.44 이벤트 루프 교착 방어] 무거운 I/O 동기 함수를 비동기 스레드로 격리하고 10초 타임아웃 족쇄 체결
+    try:
+        is_open = await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=10.0)
+    except asyncio.TimeoutError:
+        logging.error("⚠️ 달력 API 타임아웃. 스케줄 증발 방어를 위해 평일 강제 개장(Fail-Open) 처리합니다.")
+        est = ZoneInfo('America/New_York')
+        is_open = datetime.datetime.now(est).weekday() < 5
+
+    if not is_open:
+        return
     
     est = ZoneInfo('America/New_York')
     now_est = datetime.datetime.now(est)
@@ -360,7 +370,7 @@ async def scheduled_sniper_monitor(context):
                                             await asyncio.sleep(0.5)
                                         except Exception as e_cancel:
                                             logging.warning(f"⚠️ [{current_target}] AVWAP 매도 잔여 취소 실패: {e_cancel}")
-                                    
+                                            
                                     if ccld_qty > 0:
                                         msg = f"⚔️ <b>[AVWAP] 암살자 덤핑 타격!</b>\n▫️ 타겟: {current_target}\n▫️ 타점: ${exec_price}\n▫️ 팩트 체결수량: {ccld_qty}주 (목표 {qty}주)\n▫️ 사유: {reason}"
                                         
@@ -386,7 +396,7 @@ async def scheduled_sniper_monitor(context):
                                             else:
                                                 msg += f"\n🛡️ <b>[ {strikes}회차 출장 익절 완료 ]</b> 즉각 다음 모멘텀 타점 탐색을 시작합니다."
                                                 shutdown_flag = False
-                                            
+                                                
                                             new_avg = 0.0
                                             avwap_free_cash += (ccld_qty * exec_price)
                                         else:

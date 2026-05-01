@@ -7,6 +7,7 @@
 # MODIFIED: [V44.27 AVWAP 잔고 오염 방어] V14_VWAP 런타임 엔진에 KIS 총잔고 대신 암살자 물량이 배제된 pure_qty_v14를 주입하여 동적 플랜 훼손 원천 차단
 # MODIFIED: [V44.36 VWAP 페일세이프 락다운 버그 및 환각 방어막 이식] Nuke 실패 시 상태 플래그를 False로 리셋하여 다음 1분봉에서 재시도를 보장(EC-1 교정)하고, 코파일럿의 is_zero_start 역산 로직 훼손 시도를 원천 차단하는 백신 주석 하드코딩 완료.
 # MODIFIED: [V44.40 엣지 케이스 방어] V14_VWAP 당일 물량 역산 필터링 및 스냅샷 영구 박제(Failsafe) 강제 호출 로직 이식 완료.
+# MODIFIED: [V44.44 이벤트 루프 교착 방어] is_market_open 동기 함수 비동기 래핑 및 타임아웃 Fail-Open 족쇄 체결 완료.
 # ==========================================================
 import logging
 import datetime
@@ -23,7 +24,16 @@ import tempfile
 from scheduler_core import is_market_open
 
 async def scheduled_vwap_init_and_cancel(context):
-    if not is_market_open(): return
+    # 🚨 MODIFIED: [V44.44 이벤트 루프 교착 방어] 무거운 I/O 동기 함수를 비동기 스레드로 격리하고 10초 타임아웃 족쇄 체결
+    try:
+        is_open = await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=10.0)
+    except asyncio.TimeoutError:
+        logging.error("⚠️ 달력 API 타임아웃. 스케줄 증발 방어를 위해 평일 강제 개장(Fail-Open) 처리합니다.")
+        est = ZoneInfo('America/New_York')
+        is_open = datetime.datetime.now(est).weekday() < 5
+
+    if not is_open:
+        return
     
     est = ZoneInfo('America/New_York')
     now_est = datetime.datetime.now(est)
@@ -120,7 +130,16 @@ async def scheduled_vwap_init_and_cancel(context):
 
 
 async def scheduled_vwap_trade(context):
-    if not is_market_open(): return
+    # 🚨 MODIFIED: [V44.44 이벤트 루프 교착 방어] 무거운 I/O 동기 함수를 비동기 스레드로 격리하고 10초 타임아웃 족쇄 체결
+    try:
+        is_open = await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=10.0)
+    except asyncio.TimeoutError:
+        logging.error("⚠️ 달력 API 타임아웃. 스케줄 증발 방어를 위해 평일 강제 개장(Fail-Open) 처리합니다.")
+        est = ZoneInfo('America/New_York')
+        is_open = datetime.datetime.now(est).weekday() < 5
+
+    if not is_open:
+        return
     
     est = ZoneInfo('America/New_York')
     now_est = datetime.datetime.now(est)
@@ -302,7 +321,7 @@ async def scheduled_vwap_trade(context):
                                 logging.warning(f"🚨 [{t}] V-REV 스냅샷 증발! 큐 장부 타임머신 역산 결과 0주 새출발 팩트 복원 완료.")
                             else:
                                 is_zero_start = (total_q == 0)
-                                
+                            
                             # MODIFIED: [V44.40 엣지 케이스 방어] 역산 직후 스냅샷 영구 박제 (V_REV)
                             rev_alloc_cash = float(cfg.get_seed(t) or 0.0) * 0.15
                             strategy_rev.ensure_failsafe_snapshot(
@@ -411,7 +430,7 @@ async def scheduled_vwap_trade(context):
                                                     await asyncio.sleep(0.5)
                                                 except Exception as e_cancel:
                                                     logging.warning(f"⚠️ [{t}] 스윕 잔여 주문 취소 실패: {e_cancel}")
-                                                    
+                                            
                                             if ccld_qty > 0:
                                                 strategy_rev.record_execution(t, "SELL", ccld_qty, exec_price)
                                                 q_snap_before_pop = list(q_data)
@@ -426,6 +445,7 @@ async def scheduled_vwap_trade(context):
                                                             "exec_price": exec_price,
                                                             "total_q": total_q
                                                         }
+                                                        
                                                         def _save_pending_grad(f_path, p_data):
                                                             os.makedirs("data", exist_ok=True)
                                                             fd, tmp_path = tempfile.mkstemp(dir="data", text=True)
@@ -560,7 +580,7 @@ async def scheduled_vwap_trade(context):
                         if hasattr(strategy, 'load_avwap_state'):
                             avwap_state_v14 = strategy.load_avwap_state(t, now_est)
                             avwap_qty_v14 = int(avwap_state_v14.get('qty', 0))
-                            
+                        
                         pure_qty_v14 = max(0, actual_qty - avwap_qty_v14)
                         
                         v14_vwap_plugin = strategy.v14_vwap_plugin
@@ -648,7 +668,7 @@ async def scheduled_vwap_trade(context):
                                     
                             await asyncio.sleep(0.2)
 
-    try:
-        await asyncio.wait_for(_do_vwap(), timeout=45.0)
-    except Exception as e:
-        logging.error(f"🚨 VWAP 스케줄러 에러: {e}", exc_info=True)
+        try:
+            await asyncio.wait_for(_do_vwap(), timeout=45.0)
+        except Exception as e:
+            logging.error(f"🚨 VWAP 스케줄러 에러: {e}", exc_info=True)

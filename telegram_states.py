@@ -1,6 +1,8 @@
-# MODIFIED: [V44.30 수동 입력 렌더링 수술] 텔레그램 창에 수동 목표 수익률(%) 입력 후, /avwap 콘솔 갱신이 아닌 /settlement(환경설정) 화면으로 직결되도록 제자리 렌더링(edit_message_text) 파이프라인 개조 완료.
 # ==========================================================
 # FILE: telegram_states.py
+# ==========================================================
+# MODIFIED: [V44.30 수동 입력 렌더링 수술] 텔레그램 창에 수동 목표 수익률(%) 입력 후, /avwap 콘솔 갱신이 아닌 /settlement(환경설정) 화면으로 직결되도록 제자리 렌더링(edit_message_text) 파이프라인 개조 완료.
+# MODIFIED: [V44.44 이벤트 루프 교착 방어] 큐 장부 지층 수동 수정(EDIT_Q) 시 발생하는 직접적인 파일 I/O 작업을 비동기(asyncio.to_thread) 래핑하여 텔레그램 데드락 방어막 이식.
 # ==========================================================
 import logging
 import datetime
@@ -80,33 +82,37 @@ class TelegramStates:
                 except Exception:
                     pass
 
-                q_file = "data/queue_ledger.json"
-                all_q = {}
-                if os.path.exists(q_file):
-                    try:
-                        with open(q_file, 'r', encoding='utf-8') as f:
-                            all_q = json.load(f)
-                    except Exception:
-                        pass
-                        
-                ticker_q = all_q.get(ticker, [])
-                for item in ticker_q:
-                    if item.get('date') == target_date:
-                        item['qty'] = qty
-                        item['price'] = price
-                        break
-                
-                all_q[ticker] = ticker_q
-                
-                os.makedirs(os.path.dirname(q_file), exist_ok=True)
-                with open(q_file, 'w', encoding='utf-8') as f:
-                    json.dump(all_q, f, ensure_ascii=False, indent=4)
-                
-                if getattr(self, 'queue_ledger', None) and hasattr(self.queue_ledger, '_load'):
-                    try:
-                        self.queue_ledger._load()
-                    except:
-                        pass
+                # 🚨 MODIFIED: [V44.44 이벤트 루프 교착 방어] 파일 I/O 비동기 래핑
+                def _update_q_ledger():
+                    q_file = "data/queue_ledger.json"
+                    all_q = {}
+                    if os.path.exists(q_file):
+                        try:
+                            with open(q_file, 'r', encoding='utf-8') as f:
+                                all_q = json.load(f)
+                        except Exception:
+                            pass
+                            
+                    ticker_q = all_q.get(ticker, [])
+                    for item in ticker_q:
+                        if item.get('date') == target_date:
+                            item['qty'] = qty
+                            item['price'] = price
+                            break
+                    
+                    all_q[ticker] = ticker_q
+                    
+                    os.makedirs(os.path.dirname(q_file), exist_ok=True)
+                    with open(q_file, 'w', encoding='utf-8') as f:
+                        json.dump(all_q, f, ensure_ascii=False, indent=4)
+                    
+                    if getattr(self, 'queue_ledger', None) and hasattr(self.queue_ledger, '_load'):
+                        try:
+                            self.queue_ledger._load()
+                        except:
+                            pass
+                            
+                await asyncio.to_thread(_update_q_ledger)
                 
                 del controller.user_states[chat_id]
                 short_date = target_date[:10]
@@ -128,7 +134,7 @@ class TelegramStates:
                     return await update.message.reply_text("❌ 오류: 목표 수익률은 0보다 커야 합니다.")
                 ticker = parts[3]
                 if hasattr(self.cfg, 'set_avwap_target_profit'):
-                    self.cfg.set_avwap_target_profit(ticker, val)
+                    await asyncio.to_thread(self.cfg.set_avwap_target_profit, ticker, val)
                 
                 del controller.user_states[chat_id]
                 
@@ -158,7 +164,7 @@ class TelegramStates:
                 action, ticker = parts[1], parts[2]
                 curr = self.cfg.get_seed(ticker)
                 new_v = curr + val if action == "ADD" else (max(0, curr - val) if action == "SUB" else val)
-                self.cfg.set_seed(ticker, new_v)
+                await asyncio.to_thread(self.cfg.set_seed, ticker, new_v)
                 await update.message.reply_text(f"✅ [{ticker}] 시드 변경: ${new_v:,.0f}")
                 
             elif state.startswith("CONF_SPLIT"):
@@ -166,16 +172,22 @@ class TelegramStates:
                     return await update.message.reply_text("❌ 오류: 분할 횟수는 1 이상이어야 합니다.")
                     
                 ticker = parts[2]
-                d = self.cfg._load_json(self.cfg.FILES["SPLIT"], self.cfg.DEFAULT_SPLIT)
-                d[ticker] = val
-                self.cfg._save_json(self.cfg.FILES["SPLIT"], d)
+                # 🚨 MODIFIED: 파일 I/O 비동기 래핑
+                def _set_split():
+                    d = self.cfg._load_json(self.cfg.FILES["SPLIT"], self.cfg.DEFAULT_SPLIT)
+                    d[ticker] = val
+                    self.cfg._save_json(self.cfg.FILES["SPLIT"], d)
+                await asyncio.to_thread(_set_split)
                 await update.message.reply_text(f"✅ [{ticker}] 분할: {int(val)}회")
                 
             elif state.startswith("CONF_TARGET"):
                 ticker = parts[2]
-                d = self.cfg._load_json(self.cfg.FILES["PROFIT_CFG"], self.cfg.DEFAULT_TARGET)
-                d[ticker] = val
-                self.cfg._save_json(self.cfg.FILES["PROFIT_CFG"], d)
+                # 🚨 MODIFIED: 파일 I/O 비동기 래핑
+                def _set_target():
+                    d = self.cfg._load_json(self.cfg.FILES["PROFIT_CFG"], self.cfg.DEFAULT_TARGET)
+                    d[ticker] = val
+                    self.cfg._save_json(self.cfg.FILES["PROFIT_CFG"], d)
+                await asyncio.to_thread(_set_target)
                 await update.message.reply_text(f"✅ [{ticker}] 목표 수익률: {val}%")
 
             elif state.startswith("CONF_COMPOUND"):
@@ -183,7 +195,7 @@ class TelegramStates:
                     return await update.message.reply_text("❌ 오류: 복리율은 0 이상이어야 합니다.")
                     
                 ticker = parts[2]
-                self.cfg.set_compound_rate(ticker, val)
+                await asyncio.to_thread(self.cfg.set_compound_rate, ticker, val)
                 await update.message.reply_text(f"✅ [{ticker}] 졸업 시 자동 복리율: {val}%")
 
             elif state.startswith("CONF_FEE"):
@@ -191,7 +203,7 @@ class TelegramStates:
                     return await update.message.reply_text("🚨 <b>오입력 차단:</b> 수수료율은 0.0% ~ 10.0% 사이여야 합니다.", parse_mode='HTML')
                     
                 ticker = parts[2]
-                self.cfg.set_fee(ticker, val)
+                await asyncio.to_thread(self.cfg.set_fee, ticker, val)
                 await update.message.reply_text(f"💳 <b>[{ticker}] 증권사 거래 수수료: {val}% 적용 완료!</b>\n▫️ 다음 명예의 전당 정산부터 수익 연산 시 해당 수수료가 적용됩니다.", parse_mode='HTML')
                 
             elif state.startswith("CONF_STOCK_SPLIT"):
@@ -199,22 +211,20 @@ class TelegramStates:
                     return await update.message.reply_text("❌ 오류: 액면 보정 비율은 0보다 커야 합니다.")
                     
                 ticker = parts[2]
-                self.cfg.apply_stock_split(ticker, val)
+                await asyncio.to_thread(self.cfg.apply_stock_split, ticker, val)
                 
                 est = ZoneInfo('America/New_York')
                 today_str = datetime.datetime.now(est).strftime('%Y-%m-%d')
-                self.cfg.set_last_split_date(ticker, today_str)
+                await asyncio.to_thread(self.cfg.set_last_split_date, ticker, today_str)
                 
                 await update.message.reply_text(f"✅ [{ticker}] 수동 액면 보정 완료\n▫️ 모든 장부 기록이 {val}배 비율로 정밀하게 소급 조정되었습니다.")
 
             elif state.startswith("VREV_GAP"):
                 ticker = parts[2]
+                if val > 0: val = -val
                 
-                if val > 0:
-                    val = -val
-                    
                 if hasattr(self.cfg, 'set_vrev_gap_threshold'):
-                    self.cfg.set_vrev_gap_threshold(ticker, val)
+                    await asyncio.to_thread(self.cfg.set_vrev_gap_threshold, ticker, val)
                     
                 await update.message.reply_text(f"📉 <b>[{ticker}] V-REV 장막판 갭 스위칭 임계치 설정 완료!</b>\n▫️ 팩트 타격선: 기초자산 VWAP 대비 <b>{val}%</b>\n▫️ 다음 타임 슬라이싱 스케줄부터 즉시 적용됩니다.", parse_mode='HTML')
                 
