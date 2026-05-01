@@ -4,6 +4,7 @@
 # MODIFIED: [V44.30 AVWAP 설정 콜백 라우터 디커플링] 사용자가 AVWAP 타겟 모드(수동/자동) 및 출장 모드(조기/다중)를 변경할 때, AVWAP 콘솔이 아닌 /settlement 뷰포트를 갱신하도록 라우팅 배선 전면 교체 완료.
 # MODIFIED: [V44.30 순수 모니터 호출 개통] /avwap 레이더(모니터) 호출 시 더 이상 모드 활성화 유무에 막히지 않고 즉시 독립 관제탑을 띄우도록 필터링 가드 전면 해체.
 # MODIFIED: [V44.44 이벤트 루프 교착 방어] RESET, DEL_Q 등 텔레그램 버튼 클릭 시 발생하는 파일 I/O(json.dump/load) 작업을 비동기(asyncio.to_thread)로 래핑하여 텔레그램 응답 마비 현상 원천 차단 완료.
+# NEW: [V44.45 물리적 킬 스위치 (Physical Kill-Switch) 이식] AVWAP 암살자 OFF 시 논리적 스위치만 꺼지고 호가창에 미체결 주문이 고아(Orphan)로 살아남아 훗날 강제 격발되던 치명적 엣지 케이스 원천 차단. OFF 격발 즉시 거래소를 팩트 스캔하여 순수 지정가(00) 매수 덫을 100% 강제 소각(Nuke)하는 방어막 및 SOXS 그림자 티커 듀얼 소각 로직 완비.
 # ==========================================================
 import logging
 import datetime
@@ -771,12 +772,33 @@ class TelegramCallbacks:
                 return
             elif mode_val == "AVWAP_OFF":
                 if hasattr(self.cfg, 'set_avwap_hybrid_mode'):
+                    # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
+                    # 파일 I/O 동기 블로킹 방지를 위해 asyncio.to_thread 유지
                     await asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, ticker, False)
+                    # 🚨 MODIFIED: [V44.45 듀얼 모멘텀 그림자 동기화] SOXL 해제 시 SOXS(그림자 티커)도 논리적 강제 해제
+                    if ticker == "SOXL":
+                        await asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, "SOXS", False)
+
+                # NEW: [V44.45 AVWAP 물리적 킬 스위치 (Kill-Switch) 이식]
+                # 논리적 OFF 시 거래소 호가창에 고아(Orphan)로 살아남은 지정가(LIMIT, "00") 딥매수 덫을 100% 팩트 스캔하여 강제 소각(Nuke)
+                nuke_msg = ""
+                try:
+                    cancelled_buys = await asyncio.to_thread(self.broker.cancel_targeted_orders, ticker, "BUY", "00")
+                    if cancelled_buys > 0:
+                        nuke_msg += f"\n🛡️ <b>물리적 킬 스위치 가동:</b> [{ticker}] 미체결 딥매수 덫 {cancelled_buys}건 강제 소각 완료."
+                    
+                    if ticker == "SOXL":
+                        cancelled_soxs = await asyncio.to_thread(self.broker.cancel_targeted_orders, "SOXS", "BUY", "00")
+                        if cancelled_soxs > 0:
+                            nuke_msg += f"\n🛡️ <b>그림자 티커 킬 스위치:</b> [SOXS] 미체결 딥매수 덫 {cancelled_soxs}건 강제 소각 완료."
+                except Exception as e:
+                    logging.error(f"🚨 AVWAP 물리적 킬 스위치 가동 중 에러: {e}")
+
                 try:
                     await controller.cmd_settlement(update, context)
                 except Exception:
                     pass
-                await context.bot.send_message(chat_id, f"🛑 <b>[{ticker}] 차세대 AVWAP 하이브리드 전술이 즉시 해제되었습니다.</b>", parse_mode='HTML')
+                await context.bot.send_message(chat_id, f"🛑 <b>[{ticker}] 차세대 AVWAP 하이브리드 전술이 즉시 해제되었습니다.</b>{nuke_msg}", parse_mode='HTML')
                 return
 
             current_ver = self.cfg.get_version(ticker)
