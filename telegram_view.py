@@ -525,6 +525,9 @@ class TelegramView:
         return final_msg, InlineKeyboardMarkup(keyboard) if keyboard else None
 
     # 🚨 MODIFIED: [V44.30 AVWAP 설정 라우터 통합] /settlement 뷰포트에 AVWAP의 모든 설정(자율/수동, 다중/조기퇴근) 기능을 전면 팩트 이식 완료.
+# MODIFIED: [V44.31 AVWAP 수동 목표 수익률 표출 팩트 교정] /settlement 뷰포트에 수동 목표 수익률(%)이 렌더링되지 않던 맹점 원천 차단. config에서 타겟 수익률을 동적 스캔하여 UI에 100% 락온 렌더링 완료.
+# MODIFIED: [V44.32 UI 텍스트 다이어트 및 듀얼 모멘텀 팩트 교정] AVWAP 제어 버튼 텍스트가 모바일에서 잘리는 현상을 막기 위해 종목명(SOXL)을 도려내고 진공 압축. SOXS는 SOXL의 설정을 100% 추종하는 그림자 티커이므로 종목명 생략이 아키텍처상 더 정확함.
+# MODIFIED: [V44.33 AVWAP 관제탑 버튼 렌더링 락다운 해체] AVWAP 모드가 OFF 상태일 때도 실시간 레이더(모니터)를 상시 조회할 수 있도록, 관제탑 버튼의 렌더링을 is_avwap 조건문에서 전면 디커플링(적출)하여 100% 상시 표출되도록 팩트 수술 완료.
     def get_settlement_message(self, active_tickers, config, atr_data, tracking_cache=None):
         if tracking_cache is None: tracking_cache = {}
         
@@ -562,7 +565,10 @@ class TelegramView:
                     is_multi = getattr(config, 'get_avwap_multi_strike_mode', lambda x: False)(t)
                     mode_str = "다중 출장" if is_multi else "조기 퇴근"
                     target_mode = tracking_cache.get(f"AVWAP_TARGET_MODE_{t}", "AUTO")
-                    target_str = "🤖 자율주행 목표" if target_mode == "AUTO" else "🖐️ 수동고정 목표"
+                    
+                    user_target_pct = getattr(config, 'get_avwap_target_profit', lambda x: 4.0)(t)
+                    target_str = "🤖 자율주행 목표" if target_mode == "AUTO" else f"🖐️ 수동고정 목표 (+{user_target_pct:.1f}%)"
+                    
                     status_label = f"💼 {mode_str} / {target_str} 락온"
                     msg += f"▫️ AVWAP 암살자: <b>{status_label}</b>\n"
                 elif hasattr(config, 'get_avwap_hybrid_mode'):
@@ -603,27 +609,28 @@ class TelegramView:
                 
                 keyboard.append([InlineKeyboardButton(avwap_txt, callback_data=avwap_cb)])
                 
-                if is_avwap and t == "SOXL":
-                    # 🚨 MODIFIED: [V44.30] AVWAP 모니터 호출 링크
+                if t == "SOXL":
+                    # 🚨 팩트 교정: 관제탑 모니터 버튼은 AVWAP ON/OFF 상태와 무관하게 100% 항시 렌더링되도록 분리
                     keyboard.append([InlineKeyboardButton(f"🔫 {t} (롱) + SOXS (숏) 모멘텀 관제탑 (모니터)", callback_data=f"AVWAP:MENU:{t}")])
                     
-                    # 🚨 MODIFIED: [V44.30] 다중/조기 및 수동/자율 모드 설정 버튼 전면 편입
-                    is_multi = getattr(config, 'get_avwap_multi_strike_mode', lambda x: False)(t)
-                    strike_action = "MULTI" if not is_multi else "EARLY"
-                    strike_icon_btn = f"💼 {t} 조기퇴근 모드로 변경" if is_multi else f"🔁 {t} 다중출장 모드로 변경"
-                    
-                    target_mode = tracking_cache.get(f"AVWAP_TARGET_MODE_{t}", "AUTO")
-                    if target_mode == "AUTO":
-                        btn_mode_text = f"🖐️ {t} 수동 목표수익률로 전환"
-                        toggle_target_action = "TARGET_MANUAL"
-                    else:
-                        btn_mode_text = f"🤖 {t} 자율 목표수익률로 전환"
-                        toggle_target_action = "TARGET_AUTO"
+                    if is_avwap:
+                        is_multi = getattr(config, 'get_avwap_multi_strike_mode', lambda x: False)(t)
+                        strike_action = "MULTI" if not is_multi else "EARLY"
                         
-                    keyboard.append([
-                        InlineKeyboardButton(btn_mode_text, callback_data=f"AVWAP_SET:{toggle_target_action}:{t}"),
-                        InlineKeyboardButton(strike_icon_btn, callback_data=f"AVWAP_SET:{strike_action}:{t}")
-                    ])
+                        strike_icon_btn = "💼 조기퇴근 전환" if is_multi else "🔁 다중출장 전환"
+                        
+                        target_mode = tracking_cache.get(f"AVWAP_TARGET_MODE_{t}", "AUTO")
+                        if target_mode == "AUTO":
+                            btn_mode_text = "🖐️ 수동 목표 전환"
+                            toggle_target_action = "TARGET_MANUAL"
+                        else:
+                            btn_mode_text = "🤖 자율 목표 전환"
+                            toggle_target_action = "TARGET_AUTO"
+                            
+                        keyboard.append([
+                            InlineKeyboardButton(btn_mode_text, callback_data=f"AVWAP_SET:{toggle_target_action}:{t}"),
+                            InlineKeyboardButton(strike_icon_btn, callback_data=f"AVWAP_SET:{strike_action}:{t}")
+                        ])
             
             if ver == "V_REV":
                 row2 = [
