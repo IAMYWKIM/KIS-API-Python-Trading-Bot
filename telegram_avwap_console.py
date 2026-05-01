@@ -1,7 +1,7 @@
-# MODIFIED: [V44.30 AVWAP 관제탑 순수 모니터링화] /avwap 명령어가 모드 활성 유무와 무관하게 100% 모니터링(레이더) 화면으로 동작하도록 전면 개방. 
-# MODIFIED: [V44.30 AVWAP 설정 디커플링] 콘솔 하단의 버튼 제어(조기퇴근/다중출장, 수동/자동 전환) 기능을 전면 소각하고 오직 '관제탑 새로고침' 버튼만 락온 유지.
 # ==========================================================
 # FILE: telegram_avwap_console.py
+# MODIFIED: [V44.30] AVWAP 관제탑 순수 모니터링화 (설정 제어 버튼 소각)
+# MODIFIED: [V44.31] 체력 분석 기준 팩트 교정 - 현재가가 아닌 '당일 고가(High)' 기준으로 방전율 및 잔여 체력 계산 락온 완료
 # ==========================================================
 import logging
 import datetime
@@ -201,8 +201,9 @@ class AvwapConsolePlugin:
                 high_rebound_pct = (high_rebound_gap / prev_c) * 100 if prev_c > 0 else 0.0
                 curr_rebound_pct = actual_rebound_pct
                 
-                exh_5 = (actual_rebound_pct / atr5 * 100) if atr5 > 0 else 0
-                rem_5_pct = atr5 - actual_rebound_pct
+                # 🚨 MODIFIED: [V44.31 수술] 현재가(actual_rebound_pct)가 아닌 당일 고가(high_rebound_pct) 기준으로 방전율 및 잔여 체력 계산
+                exh_5 = (high_rebound_pct / atr5 * 100) if atr5 > 0 else 0
+                rem_5_pct = atr5 - high_rebound_pct
                 
                 rem_5_str = f"+{rem_5_pct:.2f}% 추가 상승 여력" if rem_5_pct >= 0 else "체력 완전 고갈 (오버슈팅)"
 
@@ -219,7 +220,7 @@ class AvwapConsolePlugin:
                 msg += f"🔋 <b>단기 체력 (ATR5 예상진폭: {atr5:.2f}%)</b>\n"
                 msg += f"▫️ 잔여 체력: <b>{rem_5_str}</b>\n"
                 msg += f"   [0%] {make_bar(exh_5)} [+{atr5:.2f}%]\n"
-                msg += f"               <b>({exh_5:.0f}% 소진)</b>\n"
+                msg += f"               <b>({exh_5:.0f}% 소진 / 고가 기준)</b>\n"
 
             if target_mode == "AUTO":
                 if exh_5 >= 90: base_target = 2.0
