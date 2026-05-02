@@ -1,15 +1,10 @@
 # ==========================================================
 # FILE: scheduler_vwap.py
 # ==========================================================
-# MODIFIED: [V44.27 0주 스냅샷 환각 락온] 서버 재시작으로 스냅샷이 증발했을 때, 장중 VWAP 매수 물량을 과거 물량으로 오판하여 기보유 상태로 전환되는 맹점 차단. 큐 장부 및 메인 장부에서 당일 날짜(EST)를 수학적으로 도려내고 순수 이월 장부만 역산하여 0주 출발 팩트 100% 복구 완료.
-# MODIFIED: [V44.27 뇌동매매 증발 오판 방어] KIS 총잔고에서 AVWAP 암살자 물량을 완벽히 격리한 pure_actual_qty 로 뇌동매매 증발(0주) 셧다운 감지 수행
-# MODIFIED: [V44.27 물귀신 덤핑 차단] V-REV 스윕 덤핑 시 암살자 물량이 동반 투매되는 사태를 막기 위해 순수 매도 가능 수량(pure_sellable_qty)으로 정밀 캡핑
-# MODIFIED: [V44.27 AVWAP 잔고 오염 방어] V14_VWAP 런타임 엔진에 KIS 총잔고 대신 암살자 물량이 배제된 pure_qty_v14를 주입하여 동적 플랜 훼손 원천 차단
-# MODIFIED: [V44.36 VWAP 페일세이프 락다운 버그 및 환각 방어막 이식] Nuke 실패 시 상태 플래그를 False로 리셋하여 다음 1분봉에서 재시도를 보장(EC-1 교정)하고, 코파일럿의 is_zero_start 역산 로직 훼손 시도를 원천 차단하는 백신 주석 하드코딩 완료.
-# MODIFIED: [V44.40 엣지 케이스 방어] V14_VWAP 당일 물량 역산 필터링 및 스냅샷 영구 박제(Failsafe) 강제 호출 로직 이식 완료.
-# MODIFIED: [V44.44 이벤트 루프 교착 방어] is_market_open 동기 함수 비동기 래핑 및 타임아웃 Fail-Open 족쇄 체결 완료.
-# NEW: [V44.45 잭팟 데드존 방어] 장막판 스윕 구간에서 잭팟 돌파 시 VWAP 분할 매도를 차단하던 환각 방어막 철거. 정상적으로 1분 슬라이싱 타격을 병행하도록 교정 완료.
-# NEW: [V44.46 달력 API 교착 원천 소각] 스케줄러 내부에서 스레드를 기절시키던 mcal 동기 호출을 비동기 래핑으로 100% 격리하여 장막판 타임아웃 패러독스 영구 차단.
+# 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
+# 제1헌법: queue_ledger.get_queue 등 모든 파일 I/O 및 락 점유 메서드는 무조건 asyncio.to_thread로 래핑하여 이벤트 루프 교착(Deadlock)을 원천 차단함.
+# 제9헌법: U_CURVE_WEIGHTS 하드코딩 배열 영구 소각. vwap_data.py에서 동적 로드하여 팩트 기반 재정규화 필수.
+# MODIFIED: [V44.47 이벤트 루프 데드락 영구 소각 및 동적 U-Curve 팩트 락온] 동기식 블로킹 호출 전면 비동기 래핑 및 하드코딩 배열 철거 완료.
 # ==========================================================
 import logging
 import datetime
@@ -39,7 +34,6 @@ async def scheduled_vwap_init_and_cancel(context):
     est = ZoneInfo('America/New_York')
     now_est = datetime.datetime.now(est)
     
-    # 🚨 NEW: [V44.46 달력 API 교착 원천 소각] 동기 달력 연산 비동기 래핑
     def _get_market_close():
         nyse = mcal.get_calendar('NYSE')
         return nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
@@ -96,21 +90,22 @@ async def scheduled_vwap_init_and_cancel(context):
                             
                             avwap_qty = 0
                             if hasattr(strategy, 'load_avwap_state'):
-                                avwap_state = strategy.load_avwap_state(t, now_est)
+                                avwap_state = await asyncio.to_thread(strategy.load_avwap_state, t, now_est)
                                 avwap_qty = int(avwap_state.get('qty', 0))
                             
                             if version == "V_REV" and strategy_rev and queue_ledger:
                                 rev_daily_budget = float(cfg.get_seed(t) or 0.0) * 0.15
-                                q_data = queue_ledger.get_queue(t)
-                                strategy_rev.ensure_failsafe_snapshot(
-                                    ticker=t, curr_p=curr_p, prev_c=prev_c, alloc_cash=rev_daily_budget, 
-                                    q_data=q_data, total_kis_qty=total_kis_qty, avwap_qty=avwap_qty
+                                # 🚨 [비동기 래핑] 파일 I/O 데드락 원천 차단
+                                q_data = await asyncio.to_thread(queue_ledger.get_queue, t)
+                                await asyncio.to_thread(
+                                    strategy_rev.ensure_failsafe_snapshot,
+                                    t, curr_p, prev_c, rev_daily_budget, q_data, total_kis_qty, avwap_qty
                                 )
                             elif version == "V14" and is_manual_vwap and strategy and hasattr(strategy, 'v14_vwap_plugin'):
-                                _, alloc_cash, _ = cfg.calculate_v14_state(t)
-                                strategy.v14_vwap_plugin.ensure_failsafe_snapshot(
-                                    ticker=t, current_price=curr_p, total_qty=total_kis_qty, 
-                                    avwap_qty=avwap_qty, avg_price=avg_price, prev_close=prev_c, alloc_cash=alloc_cash
+                                _, alloc_cash, _ = await asyncio.to_thread(cfg.calculate_v14_state, t)
+                                await asyncio.to_thread(
+                                    strategy.v14_vwap_plugin.ensure_failsafe_snapshot,
+                                    t, curr_p, total_kis_qty, avwap_qty, avg_price, prev_c, alloc_cash
                                 )
 
                             if version == "V14" and is_manual_vwap:
@@ -155,7 +150,6 @@ async def scheduled_vwap_trade(context):
         logging.warning("⚠️ [vwap_trade] tx_lock 미초기화. 이번 사이클 스킵.")
         return
         
-    # 🚨 NEW: [V44.46 달력 API 교착 원천 소각] 동기 달력 연산 비동기 래핑
     def _get_market_close():
         nyse = mcal.get_calendar('NYSE')
         return nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
@@ -210,10 +204,11 @@ async def scheduled_vwap_trade(context):
                 if version == "V_REV" and is_manual_vwap:
                     continue
 
+                # 🚨 [하드코딩 배열 소각] 동적 U-Curve 파이프라인 개통
                 try:
-                    profile = cfg.get_vwap_profile(t) if hasattr(cfg, 'get_vwap_profile') else {}
-                except Exception as e:
-                    logging.error(f"🚨 [{t}] VWAP 프로파일 로드 실패: {e}")
+                    from vwap_data import VWAP_PROFILES
+                    profile = VWAP_PROFILES.get(t, {})
+                except ImportError:
                     profile = {}
                     
                 target_keys = [f"15:{str(m).zfill(2)}" for m in range(27, 60)]
@@ -238,7 +233,7 @@ async def scheduled_vwap_trade(context):
                             
                             avwap_qty = 0
                             if hasattr(strategy, 'load_avwap_state'):
-                                avwap_state = strategy.load_avwap_state(t, now_est)
+                                avwap_state = await asyncio.to_thread(strategy.load_avwap_state, t, now_est)
                                 avwap_qty = int(avwap_state.get('qty', 0))
                             
                             if version == "V_REV":
@@ -246,16 +241,17 @@ async def scheduled_vwap_trade(context):
                                 queue_ledger = app_data.get('queue_ledger')
                                 if strategy_rev and queue_ledger:
                                     rev_daily_budget = float(cfg.get_seed(t) or 0.0) * 0.15
-                                    q_data = queue_ledger.get_queue(t)
-                                    strategy_rev.ensure_failsafe_snapshot(
-                                        ticker=t, curr_p=curr_p, prev_c=prev_c, alloc_cash=rev_daily_budget, 
-                                        q_data=q_data, total_kis_qty=total_kis_qty, avwap_qty=avwap_qty
+                                    # 🚨 [비동기 래핑] 파일 I/O 데드락 원천 차단
+                                    q_data = await asyncio.to_thread(queue_ledger.get_queue, t)
+                                    await asyncio.to_thread(
+                                        strategy_rev.ensure_failsafe_snapshot,
+                                        t, curr_p, prev_c, rev_daily_budget, q_data, total_kis_qty, avwap_qty
                                     )
                             elif version == "V14" and is_manual_vwap and hasattr(strategy, 'v14_vwap_plugin'):
-                                _, alloc_cash, _ = cfg.calculate_v14_state(t)
-                                strategy.v14_vwap_plugin.ensure_failsafe_snapshot(
-                                    ticker=t, current_price=curr_p, total_qty=total_kis_qty, 
-                                    avwap_qty=avwap_qty, avg_price=avg_price, prev_close=prev_c, alloc_cash=alloc_cash
+                                _, alloc_cash, _ = await asyncio.to_thread(cfg.calculate_v14_state, t)
+                                await asyncio.to_thread(
+                                    strategy.v14_vwap_plugin.ensure_failsafe_snapshot,
+                                    t, curr_p, total_kis_qty, avwap_qty, avg_price, prev_c, alloc_cash
                                 )
 
                             if version == "V14" and is_manual_vwap:
@@ -297,12 +293,13 @@ async def scheduled_vwap_trade(context):
                         
                         avwap_qty_for_shutdown = 0
                         if hasattr(strategy, 'load_avwap_state'):
-                            avwap_state_sd = strategy.load_avwap_state(t, now_est)
+                            avwap_state_sd = await asyncio.to_thread(strategy.load_avwap_state, t, now_est)
                             avwap_qty_for_shutdown = int(avwap_state_sd.get('qty', 0))
                             
                         pure_actual_qty = max(0, actual_qty - avwap_qty_for_shutdown)
                         
-                        q_data = queue_ledger.get_queue(t)
+                        # 🚨 [비동기 래핑] 파일 I/O 데드락 원천 차단
+                        q_data = await asyncio.to_thread(queue_ledger.get_queue, t)
                         total_q = sum(item.get("qty", 0) for item in q_data)
                         
                         if pure_actual_qty == 0 and total_q > 0:
@@ -320,7 +317,7 @@ async def scheduled_vwap_trade(context):
                                 )
                             continue
                         
-                        cached_plan = strategy_rev.load_daily_snapshot(t)
+                        cached_plan = await asyncio.to_thread(strategy_rev.load_daily_snapshot, t)
                         if not cached_plan:
                             today_str_est = now_est.strftime("%Y-%m-%d")
                             legacy_lots = [item for item in q_data if not str(item.get("date", "")).startswith(today_str_est)]
@@ -332,9 +329,9 @@ async def scheduled_vwap_trade(context):
                                 is_zero_start = (total_q == 0)
                             
                             rev_alloc_cash = float(cfg.get_seed(t) or 0.0) * 0.15
-                            strategy_rev.ensure_failsafe_snapshot(
-                                ticker=t, curr_p=curr_p, prev_c=prev_c, alloc_cash=rev_alloc_cash, 
-                                q_data=q_data, total_kis_qty=actual_qty, avwap_qty=avwap_qty_for_shutdown
+                            await asyncio.to_thread(
+                                strategy_rev.ensure_failsafe_snapshot,
+                                t, curr_p, prev_c, rev_alloc_cash, q_data, actual_qty, avwap_qty_for_shutdown
                             )
                         else:
                             is_zero_start = cached_plan.get("is_zero_start", cached_plan.get("total_q", -1) == 0)
@@ -342,7 +339,7 @@ async def scheduled_vwap_trade(context):
                         is_zero_start_session = is_zero_start 
                         virtual_q_data = [] if is_zero_start else q_data
                         
-                        strategy_rev._load_state_if_needed(t)
+                        await asyncio.to_thread(strategy_rev._load_state_if_needed, t)
                         held_in_cache = vwap_cache.get(f"REV_{t}_was_holding", False)
                         held_in_file = strategy_rev.was_holding.get(t, False)
                         if (held_in_cache or held_in_file) and total_q == 0:
@@ -352,7 +349,7 @@ async def scheduled_vwap_trade(context):
                             vwap_cache[f"REV_{t}_was_holding"] = True
                             if not strategy_rev.was_holding.get(t, False):
                                 strategy_rev.was_holding[t] = True
-                                strategy_rev._save_state(t)
+                                await asyncio.to_thread(strategy_rev._save_state, t)
                             
                         if total_q > 0:
                             avg_price = sum(item.get("qty", 0) * item.get("price", 0.0) for item in q_data) / total_q
@@ -395,7 +392,7 @@ async def scheduled_vwap_trade(context):
                                     
                                     avwap_qty_sweep = 0
                                     if hasattr(strategy, 'load_avwap_state'):
-                                        avwap_state_sw = strategy.load_avwap_state(t, now_est)
+                                        avwap_state_sw = await asyncio.to_thread(strategy.load_avwap_state, t, now_est)
                                         avwap_qty_sweep = int(avwap_state_sw.get('qty', 0))
                                     
                                     pure_sellable_qty = max(0, ord_psbl_qty - avwap_qty_sweep)
@@ -440,10 +437,11 @@ async def scheduled_vwap_trade(context):
                                                     logging.warning(f"⚠️ [{t}] 스윕 잔여 주문 취소 실패: {e_cancel}")
                                             
                                             if ccld_qty > 0:
-                                                strategy_rev.record_execution(t, "SELL", ccld_qty, exec_price)
+                                                await asyncio.to_thread(strategy_rev.record_execution, t, "SELL", ccld_qty, exec_price)
                                                 q_snap_before_pop = list(q_data)
-                                                queue_ledger.pop_lots(t, ccld_qty)
-                                                remaining_after_pop = queue_ledger.get_queue(t)
+                                                # 🚨 [비동기 래핑] 파일 I/O 데드락 원천 차단
+                                                await asyncio.to_thread(queue_ledger.pop_lots, t, ccld_qty)
+                                                remaining_after_pop = await asyncio.to_thread(queue_ledger.get_queue, t)
                                                 remaining_qty_after = sum(item.get('qty', 0) for item in remaining_after_pop)
                                                 if remaining_qty_after == 0 and total_q > 0:
                                                     try:
@@ -469,14 +467,14 @@ async def scheduled_vwap_trade(context):
                                             msg = f"⚠️ <b>[{t}] 스윕 피니셔 덤핑 생략 (MOC 락다운 감지)</b>\n▫️ 조건이 달성되었으나, 대상 물량이 수동 긴급 수혈(MOC) 등 취소 불가 상태로 미국 거래소에 묶여 있어 스윕 덤핑을 자동 스킵합니다."
                                             await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
                                             vwap_cache[f"REV_{t}_sweep_skip_msg"] = True
-                                            
+                            
                             # MODIFIED: [V44.45 잭팟 데드존 방어] 과잉 방어막 도려내기.
                             if target_sweep_qty > 0:
                                 continue 
                         
                         try:
                             df_1min = await asyncio.to_thread(broker.get_1min_candles_df, t)
-                            vwap_status = strategy.analyze_vwap_dominance(df_1min)
+                            vwap_status = await asyncio.to_thread(strategy.analyze_vwap_dominance, df_1min)
                         except Exception:
                             vwap_status = {"vwap_price": 0.0, "is_strong_up": False, "is_strong_down": False}
                         
@@ -493,7 +491,7 @@ async def scheduled_vwap_trade(context):
                             try:
                                 await asyncio.to_thread(broker.cancel_all_orders_safe, t, "BUY")
                                 await asyncio.to_thread(broker.cancel_all_orders_safe, t, "SELL")
-                                strategy_rev.reset_residual(t) 
+                                await asyncio.to_thread(strategy_rev.reset_residual, t) 
                             except Exception as e:
                                 err_msg = f"🛑 <b>[FATAL ERROR] {t} 공수 교대 중 기존 덫 취소 실패!</b>\n▫️ 2중 예산 소진 방어를 위해 당일 남은 V-REV 교전을 강제 중단(Hard-Lock)합니다.\n▫️ 상세 오류: {e}"
                                 await context.bot.send_message(chat_id=chat_id, text=err_msg, parse_mode='HTML')
@@ -511,7 +509,7 @@ async def scheduled_vwap_trade(context):
                         gap_thresh = getattr(cfg, 'get_vrev_gap_threshold', lambda x: -0.67)(t)
                         
                         omni_filter = {"allow_buy": True}  
-                            
+                        
                         if omni_filter["allow_buy"] and current_regime == "BUY" and not vwap_cache.get(f"REV_{t}_gap_hijack_fired"):
                             base_tkr = base_map.get(t, 'SOXX')
                             base_curr_p = float(await asyncio.to_thread(broker.get_current_price, base_tkr) or 0.0)
@@ -551,11 +549,11 @@ async def scheduled_vwap_trade(context):
                         if not target_orders:
                             rev_plan = None
                             try:
-                                rev_plan = strategy_rev.get_dynamic_plan(
-                                    ticker=t, curr_p=curr_p, prev_c=prev_c, 
-                                    current_weight=current_weight, vwap_status=vwap_status, 
-                                    min_idx=min_idx, alloc_cash=rev_daily_budget, q_data=virtual_q_data,
-                                    is_snapshot_mode=False
+                                # 🚨 [비동기 래핑] 파일 I/O 데드락 원천 차단
+                                rev_plan = await asyncio.to_thread(
+                                    strategy_rev.get_dynamic_plan,
+                                    t, curr_p, prev_c, current_weight, vwap_status, 
+                                    min_idx, rev_daily_budget, virtual_q_data, False
                                 )
                             except Exception as plan_e:
                                 logging.error(f"🚨 [{t}] get_dynamic_plan 실행 에러 (해당 티커 건너뜀): {plan_e}")
@@ -587,39 +585,39 @@ async def scheduled_vwap_trade(context):
                         
                         avwap_qty_v14 = 0
                         if hasattr(strategy, 'load_avwap_state'):
-                            avwap_state_v14 = strategy.load_avwap_state(t, now_est)
+                            avwap_state_v14 = await asyncio.to_thread(strategy.load_avwap_state, t, now_est)
                             avwap_qty_v14 = int(avwap_state_v14.get('qty', 0))
                         
                         pure_qty_v14 = max(0, actual_qty - avwap_qty_v14)
                         
                         v14_vwap_plugin = strategy.v14_vwap_plugin
                         
-                        cached_snap_v14 = v14_vwap_plugin.load_daily_snapshot(t)
+                        cached_snap_v14 = await asyncio.to_thread(v14_vwap_plugin.load_daily_snapshot, t)
                         if not cached_snap_v14:
                             ledger_qty = 0
                             try:
                                 today_str_est = now_est.strftime("%Y-%m-%d")
                                 recs = [r for r in cfg.get_ledger() if r['ticker'] == t and not str(r.get("date", "")).startswith(today_str_est)]
-                                ledger_qty, _, _, _ = cfg.calculate_holdings(t, recs)
+                                ledger_qty, _, _, _ = await asyncio.to_thread(cfg.calculate_holdings, t, recs)
                             except Exception: pass
                             
                             is_zero_start_session = (ledger_qty == 0)
                             if is_zero_start_session:
                                 pure_qty_v14 = 0 
-                                logging.warning(f"🚨 [{t}] V14_VWAP 스냅샷 증발! 메인 장부 역산 결과 0주 새출발 팩트 복원 완료.")
+                            logging.warning(f"🚨 [{t}] V14_VWAP 스냅샷 증발! 메인 장부 역산 결과 0주 새출발 팩트 복원 완료.")
                             
-                            _, v14_alloc_cash, _ = cfg.calculate_v14_state(t)
-                            v14_vwap_plugin.ensure_failsafe_snapshot(
-                                ticker=t, current_price=curr_p, total_qty=actual_qty, 
-                                avwap_qty=avwap_qty_v14, avg_price=actual_avg, prev_close=prev_c, alloc_cash=v14_alloc_cash
+                            _, v14_alloc_cash, _ = await asyncio.to_thread(cfg.calculate_v14_state, t)
+                            await asyncio.to_thread(
+                                v14_vwap_plugin.ensure_failsafe_snapshot,
+                                t, curr_p, actual_qty, avwap_qty_v14, actual_avg, prev_c, v14_alloc_cash
                             )
                         else:
                             is_zero_start_session = cached_snap_v14.get("is_zero_start", cached_snap_v14.get("total_q", -1) == 0)
-                        
-                        plan = v14_vwap_plugin.get_dynamic_plan(
-                            ticker=t, current_price=curr_p, prev_close=prev_c, 
-                            current_weight=current_weight, min_idx=min_idx, 
-                            alloc_cash=0.0, qty=pure_qty_v14, avg_price=actual_avg
+                            
+                        # 🚨 [비동기 래핑] 파일 I/O 데드락 원천 차단
+                        plan = await asyncio.to_thread(
+                            v14_vwap_plugin.get_dynamic_plan,
+                            t, curr_p, prev_c, current_weight, min_idx, 0.0, pure_qty_v14, actual_avg
                         )
                         target_orders = plan.get('orders', [])
 
@@ -667,11 +665,11 @@ async def scheduled_vwap_trade(context):
                                 
                             if ccld_qty > 0:
                                 if version == "V_REV":
-                                    strategy_rev.record_execution(t, side, ccld_qty, exec_price)
-                                    if side == "BUY": queue_ledger.add_lot(t, ccld_qty, exec_price, "VWAP_BUY")
-                                    elif side == "SELL": queue_ledger.pop_lots(t, ccld_qty)
+                                    await asyncio.to_thread(strategy_rev.record_execution, t, side, ccld_qty, exec_price)
+                                    if side == "BUY": await asyncio.to_thread(queue_ledger.add_lot, t, ccld_qty, exec_price, "VWAP_BUY")
+                                    elif side == "SELL": await asyncio.to_thread(queue_ledger.pop_lots, t, ccld_qty)
                                 elif version == "V14":
-                                    v14_vwap_plugin.record_execution(t, side, ccld_qty, exec_price)
+                                    await asyncio.to_thread(v14_vwap_plugin.record_execution, t, side, ccld_qty, exec_price)
                                     
                             await asyncio.sleep(0.2)
 

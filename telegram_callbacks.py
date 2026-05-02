@@ -1,11 +1,9 @@
 # ==========================================================
 # FILE: telegram_callbacks.py
 # ==========================================================
-# MODIFIED: [V44.30 AVWAP 설정 콜백 라우터 디커플링] 사용자가 AVWAP 타겟 모드(수동/자동) 및 출장 모드(조기/다중)를 변경할 때, AVWAP 콘솔이 아닌 /settlement 뷰포트를 갱신하도록 라우팅 배선 전면 교체 완료.
-# MODIFIED: [V44.30 순수 모니터 호출 개통] /avwap 레이더(모니터) 호출 시 더 이상 모드 활성화 유무에 막히지 않고 즉시 독립 관제탑을 띄우도록 필터링 가드 전면 해체.
-# MODIFIED: [V44.44 이벤트 루프 교착 방어] RESET, DEL_Q 등 텔레그램 버튼 클릭 시 발생하는 파일 I/O(json.dump/load) 작업을 비동기(asyncio.to_thread)로 래핑하여 텔레그램 응답 마비 현상 원천 차단 완료.
-# MODIFIED: [V44.45 헌법 수술] 파일 I/O 원자적 쓰기(Atomic Write) 엔진 전면 이식 및 런타임 붕괴 방어막(fsync) 하드코딩 완료.
-# NEW: [V44.45 물리적 킬 스위치 (Physical Kill-Switch) 이식] AVWAP 암살자 OFF 시 논리적 스위치만 꺼지고 호가창에 미체결 주문이 고아(Orphan)로 살아남아 훗날 강제 격발되던 치명적 엣지 케이스 원천 차단. OFF 격발 즉시 거래소를 팩트 스캔하여 순수 지정가(00) 매수 덫을 100% 강제 소각(Nuke)하는 방어막 및 SOXS 그림자 티커 듀얼 소각 로직 완비.
+# 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
+# 제1헌법: queue_ledger.get_queue 등 모든 파일 I/O 및 락 점유 메서드는 무조건 asyncio.to_thread로 래핑하여 이벤트 루프 교착(Deadlock)을 원천 차단함.
+# MODIFIED: [V44.47 이벤트 루프 데드락 영구 소각] 다이렉트 파일 I/O 및 config/ledger 접근 메서드 전면 비동기 래핑 완료.
 # ==========================================================
 import logging
 import datetime
@@ -30,12 +28,13 @@ class TelegramCallbacks:
         self.view = view
         self.tx_lock = tx_lock
 
-    def _get_max_holdings_qty(self, ticker, kis_qty):
+    # 🚨 [비동기 래핑] 파일 I/O 데드락 방어
+    async def _get_max_holdings_qty(self, ticker, kis_qty):
         v14_qty = 0
         vrev_qty = 0
         
         try:
-            ledger = self.cfg.get_ledger()
+            ledger = await asyncio.to_thread(self.cfg.get_ledger)
             net = 0
             for r in ledger:
                 if r.get('ticker') == ticker:
@@ -47,10 +46,13 @@ class TelegramCallbacks:
 
         try:
             q_file = "data/queue_ledger.json"
-            if os.path.exists(q_file):
-                with open(q_file, 'r', encoding='utf-8') as f:
-                    q_data = json.load(f)
-                vrev_qty = sum(int(float(lot.get('qty', 0))) for lot in q_data.get(ticker, []) if int(float(lot.get('qty', 0))) > 0)
+            def _read_q_file(f):
+                if os.path.exists(f):
+                    with open(f, 'r', encoding='utf-8') as file:
+                        return json.load(file)
+                return {}
+            q_data = await asyncio.to_thread(_read_q_file, q_file)
+            vrev_qty = sum(int(float(lot.get('qty', 0))) for lot in q_data.get(ticker, []) if int(float(lot.get('qty', 0))) > 0)
         except Exception:
             pass
 
@@ -90,7 +92,8 @@ class TelegramCallbacks:
             if sub == "VIEW":
                 ticker = data[2]
                 if getattr(self, 'queue_ledger', None):
-                    q_data = self.queue_ledger.get_queue(ticker)
+                    # 🚨 [비동기 래핑]
+                    q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
                 else:
                     q_data = []
                     # 🚨 MODIFIED: 파일 I/O 비동기 래핑
@@ -109,7 +112,7 @@ class TelegramCallbacks:
 
         elif action == "EMERGENCY_REQ":
             ticker = sub
-            status_code, _ = controller._get_market_status()
+            status_code, _ = await controller._get_market_status()
             if status_code not in ["PRE", "REG"]:
                 await query.answer("❌ [격발 차단] 현재 장운영시간(정규장/프리장)이 아닙니다.", show_alert=True)
                 return
@@ -118,7 +121,8 @@ class TelegramCallbacks:
                 from queue_ledger import QueueLedger
                 self.queue_ledger = QueueLedger()
                 
-            q_data = self.queue_ledger.get_queue(ticker)
+            # 🚨 [비동기 래핑]
+            q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
             total_q = sum(item.get("qty", 0) for item in q_data)
             
             if total_q == 0:
@@ -134,7 +138,7 @@ class TelegramCallbacks:
 
         elif action == "EMERGENCY_EXEC":
             ticker = sub
-            status_code, _ = controller._get_market_status()
+            status_code, _ = await controller._get_market_status()
             
             if status_code not in ["PRE", "REG"]:
                 await query.answer("❌ [격발 차단] 현재 장운영시간(정규장/프리장)이 아닙니다.", show_alert=True)
@@ -144,7 +148,8 @@ class TelegramCallbacks:
                 from queue_ledger import QueueLedger
                 self.queue_ledger = QueueLedger()
                 
-            q_data = self.queue_ledger.get_queue(ticker)
+            # 🚨 [비동기 래핑]
+            q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
             if not q_data:
                 await query.answer("⚠️ 큐(Queue)가 텅 비어있어 수혈할 잔여 물량이 없습니다.", show_alert=True)
                 return
@@ -165,7 +170,7 @@ class TelegramCallbacks:
                         msg += f"▫️ 포트폴리오 매니저의 승인 하에 최근 로트 <b>{emergency_qty}주</b>를 시장가(MOC)로 강제 청산했습니다.\n"
                         await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
                         
-                        new_q_data = self.queue_ledger.get_queue(ticker)
+                        new_q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
                         new_msg, markup = self.view.get_queue_management_menu(ticker, new_q_data)
                         await query.edit_message_text(new_msg, reply_markup=markup, parse_mode='HTML')
                     else:
@@ -177,7 +182,7 @@ class TelegramCallbacks:
             ticker = sub
             target_date = ":".join(data[2:])
             
-            q_data = self.queue_ledger.get_queue(ticker) if getattr(self, 'queue_ledger', None) else []
+            q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) if getattr(self, 'queue_ledger', None) else []
             if not q_data:
                 # 🚨 MODIFIED: 파일 I/O 비동기 래핑
                 def _read_q():
@@ -252,7 +257,7 @@ class TelegramCallbacks:
                     if not self.sync_engine.sync_locks[ticker].locked():
                         await self.sync_engine.process_auto_sync(ticker, chat_id, context, silent_ledger=True)
                         
-                    final_q = self.queue_ledger.get_queue(ticker) if getattr(self, 'queue_ledger', None) else new_q
+                    final_q = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) if getattr(self, 'queue_ledger', None) else new_q
                     msg, markup = self.view.get_queue_management_menu(ticker, final_q)
                     await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
                     
@@ -272,7 +277,8 @@ class TelegramCallbacks:
 
         elif action == "VERSION":
             await query.answer()
-            history_data = self.cfg.get_full_version_history()
+            # 🚨 [비동기 래핑]
+            history_data = await asyncio.to_thread(self.cfg.get_full_version_history)
             if sub == "LATEST":
                 msg, markup = self.view.get_version_message(history_data, page_index=None)
                 await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
@@ -284,7 +290,8 @@ class TelegramCallbacks:
         elif action == "RESET":
             await query.answer()
             if sub == "MENU":
-                active_tickers = self.cfg.get_active_tickers()
+                # 🚨 [비동기 래핑]
+                active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
                 msg, markup = self.view.get_reset_menu(active_tickers)
                 await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
             elif sub == "LOCK": 
@@ -301,7 +308,9 @@ class TelegramCallbacks:
                 await asyncio.to_thread(self.cfg.set_reverse_state, ticker, False, 0)
                 await asyncio.to_thread(self.cfg.clear_escrow_cash, ticker)
                 
-                ledger_data = [r for r in self.cfg.get_ledger() if r.get('ticker') != ticker]
+                # 🚨 [비동기 래핑]
+                ledger = await asyncio.to_thread(self.cfg.get_ledger)
+                ledger_data = [r for r in ledger if r.get('ticker') != ticker]
                 await asyncio.to_thread(self.cfg._save_json, self.cfg.FILES["LEDGER"], ledger_data)
                 
                 # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
@@ -377,7 +386,9 @@ class TelegramCallbacks:
             await query.answer()
             if sub == "VIEW":
                 hid = int(data[2])
-                target = next((h for h in self.cfg.get_history() if h['id'] == hid), None)
+                # 🚨 [비동기 래핑]
+                hist_data = await asyncio.to_thread(self.cfg.get_history)
+                target = next((h for h in hist_data if h['id'] == hid), None)
                 if target:
                     safe_trades = target.get('trades', [])
                     for t_rec in safe_trades:
@@ -386,7 +397,7 @@ class TelegramCallbacks:
                         if 'side' not in t_rec:
                             t_rec['side'] = 'BUY'
                             
-                    qty, avg, invested, sold = self.cfg.calculate_holdings(target['ticker'], safe_trades)
+                    qty, avg, invested, sold = await asyncio.to_thread(self.cfg.calculate_holdings, target['ticker'], safe_trades)
                     
                     try:
                         msg, markup = self.view.create_ledger_dashboard(target['ticker'], qty, avg, invested, sold, safe_trades, 0, 0, is_history=True, history_id=hid)
@@ -403,7 +414,9 @@ class TelegramCallbacks:
                 ticker = data[2]
                 target_id = int(data[3]) if len(data) > 3 else None
                 
-                hist_list = [h for h in self.cfg.get_history() if h['ticker'] == ticker]
+                # 🚨 [비동기 래핑]
+                hist_data = await asyncio.to_thread(self.cfg.get_history)
+                hist_list = [h for h in hist_data if h['ticker'] == ticker]
                 
                 if not hist_list:
                     await context.bot.send_message(chat_id, f"📭 <b>[{ticker}]</b> 발급 가능한 졸업 기록이 존재하지 않습니다.", parse_mode='HTML')
@@ -445,7 +458,8 @@ class TelegramCallbacks:
             
         elif action == "EXEC":
             t = sub
-            ver = self.cfg.get_version(t)
+            # 🚨 [비동기 래핑]
+            ver = await asyncio.to_thread(self.cfg.get_version, t)
 
             if ver == "V_REV":
                 await query.answer("🛑 [예방 덫 전면 소각] V-REV 모드는 자전거래 의심을 회피하고 AVWAP 암살자 가동을 위해 예방 덫 수동 장전 기능을 영구 소각했습니다.", show_alert=True)
@@ -461,7 +475,8 @@ class TelegramCallbacks:
             if holdings is None:
                 return await query.edit_message_text("❌ API 통신 오류로 주문을 실행할 수 없습니다.")
                 
-            _, allocated_cash = controller._calculate_budget_allocation(cash, self.cfg.get_active_tickers())
+            active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
+            _, allocated_cash = await asyncio.to_thread(controller._calculate_budget_allocation, cash, active_tickers)
             h = holdings.get(t, {'qty':0, 'avg':0})
             
             curr_p = float(await asyncio.to_thread(self.broker.get_current_price, t) or 0.0)
@@ -469,7 +484,7 @@ class TelegramCallbacks:
             safe_avg = float(h.get('avg') or 0.0)
             safe_qty = int(float(h.get('qty') or 0))
 
-            status_code, _ = controller._get_market_status()
+            status_code, _ = await controller._get_market_status()
             
             if status_code in ["AFTER", "CLOSE", "PRE"]:
                 try:
@@ -487,15 +502,17 @@ class TelegramCallbacks:
             ma_5day = await asyncio.to_thread(self.broker.get_5day_ma, t)
             
             logic_qty_v14 = safe_qty
-            is_manual_vwap = getattr(self.cfg, 'get_manual_vwap_mode', lambda x: False)(t)
+            # 🚨 [비동기 래핑]
+            is_manual_vwap = await asyncio.to_thread(getattr(self.cfg, 'get_manual_vwap_mode', lambda x: False), t)
             if is_manual_vwap:
                 cached_snap_v14 = None
                 if hasattr(self.strategy, 'v14_vwap_plugin'):
-                    cached_snap_v14 = self.strategy.v14_vwap_plugin.load_daily_snapshot(t)
+                    cached_snap_v14 = await asyncio.to_thread(self.strategy.v14_vwap_plugin.load_daily_snapshot, t)
                 if cached_snap_v14 and "total_q" in cached_snap_v14:
                     logic_qty_v14 = cached_snap_v14["total_q"]
 
-            plan = self.strategy.get_plan(t, curr_p, safe_avg, logic_qty_v14, prev_c, ma_5day=ma_5day, market_type="REG", available_cash=allocated_cash[t], is_simulation=True)
+            # 🚨 [비동기 래핑]
+            plan = await asyncio.to_thread(self.strategy.get_plan, t, curr_p, safe_avg, logic_qty_v14, prev_c, ma_5day=ma_5day, market_type="REG", available_cash=allocated_cash[t], is_simulation=True)
             
             if safe_qty == 0:
                 for o in plan.get('core_orders', []):
@@ -538,7 +555,8 @@ class TelegramCallbacks:
             await query.answer()
             new_ver = sub
             ticker = data[2]
-            current_ver = self.cfg.get_version(ticker)
+            # 🚨 [비동기 래핑]
+            current_ver = await asyncio.to_thread(self.cfg.get_version, ticker)
             
             if ticker == "TQQQ" and new_ver == "V_REV":
                 await context.bot.send_message(chat_id, "⚠️ [절대 헌법 위반] TQQQ는 V14 무매4 전용 아키텍처입니다. 전환이 차단되었습니다.")
@@ -555,7 +573,7 @@ class TelegramCallbacks:
                 return
                 
             kis_qty = int(float(holdings.get(ticker, {}).get('qty', 0)))
-            max_qty = self._get_max_holdings_qty(ticker, kis_qty)
+            max_qty = await self._get_max_holdings_qty(ticker, kis_qty)
             
             if kis_qty == 0 and max_qty > 0 and current_ver != new_ver:
                 msg = f"🚨 <b>[ 퀀트 모드 전환 강제 차단: 수동 매도 감지 ]</b>\n\n"
@@ -598,7 +616,8 @@ class TelegramCallbacks:
             await query.answer()
             mode_type = sub 
             ticker = data[2]
-            current_ver = self.cfg.get_version(ticker)
+            # 🚨 [비동기 래핑]
+            current_ver = await asyncio.to_thread(self.cfg.get_version, ticker)
             
             target_ver = "V_REV" if mode_type in ["AUTO", "MANUAL"] else "V14"
 
@@ -617,7 +636,7 @@ class TelegramCallbacks:
                 return
                 
             kis_qty = int(float(holdings.get(ticker, {}).get('qty', 0)))
-            max_qty = self._get_max_holdings_qty(ticker, kis_qty)
+            max_qty = await self._get_max_holdings_qty(ticker, kis_qty)
             
             if kis_qty == 0 and max_qty > 0 and current_ver != target_ver:
                 msg = f"🚨 <b>[ 퀀트 모드 전환 강제 차단: 수동 매도 감지 ]</b>\n\n"
@@ -825,7 +844,7 @@ class TelegramCallbacks:
                 await context.bot.send_message(chat_id, f"🛑 <b>[{ticker}] 차세대 AVWAP 하이브리드 전술이 즉시 해제되었습니다.</b>{nuke_msg}", parse_mode='HTML')
                 return
 
-            current_ver = self.cfg.get_version(ticker)
+            current_ver = await asyncio.to_thread(self.cfg.get_version, ticker)
             if current_ver == "V_REV" and mode_val == "ON":
                 await context.bot.send_message(chat_id, f"🚨 {current_ver} 모드에서는 로직 충돌 방지를 위해 상방 스나이퍼를 켤 수 없습니다!")
                 return

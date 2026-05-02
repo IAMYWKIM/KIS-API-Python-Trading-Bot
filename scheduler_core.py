@@ -1,7 +1,10 @@
-# MODIFIED: [V44.44 이벤트 루프 교착 방어] is_market_open, get_account_balance 등 무거운 동기 I/O 함수를 비동기 루프 내에서 직접 호출 시 발생하는 스케줄러 증발 현상을 원천 차단하기 위해 asyncio.to_thread 래핑 및 타임아웃 족쇄 체결.
-# MODIFIED: [V44.44 타임 패러독스 소각] 달력 API 실패 시 강제 휴장(Fail-Closed) 처리로 인해 스케줄이 증발하던 맹점을 평일 강제 개장(Fail-Open)으로 완벽 수리 완료.
 # ==========================================================
 # FILE: scheduler_core.py
+# ==========================================================
+# 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
+# 제1헌법: 파일 I/O 및 달력 API(mcal)는 무조건 asyncio.to_thread로 래핑하여 이벤트 루프 교착(Deadlock)을 원천 차단함.
+# 제3헌법: KST 타임존 및 is_dst 기반의 동적 스케줄링 전면 소각. 
+# MODIFIED: [V44.47 KST 타임 패러독스 영구 소각] 서머타임 분기 함수 통합 및 EST 절대 시간 기반으로 100% 디커플링 락온 완료.
 # ==========================================================
 import os
 import logging
@@ -16,7 +19,7 @@ import json
 import tempfile
 from zoneinfo import ZoneInfo
 
-# 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
+# 🚨 [AI 에이전트 절대 주의]
 # 이 함수는 동기(Synchronous) 블로킹 함수입니다. 비동기 루프 내에서 직접 호출하면 전체 스케줄러가 교착(Deadlock)되어 증발합니다. 
 # 반드시 호출부에서 await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=10.0) 패턴으로 래핑하세요.
 def is_market_open():
@@ -175,12 +178,19 @@ async def scheduled_token_check(context):
     logging.info("🔑 [API 토큰 갱신] 토큰 갱신이 안전하게 완료되었습니다.")
 
 async def scheduled_force_reset(context):
+    # 🚨 [EST 절대 시간 락온] 타임 패러독스 방어
+    est = ZoneInfo('America/New_York')
+    now_est = datetime.datetime.now(est)
+    
+    # 04:00 EST 실행 시간 이탈 여부 검증 (Jitter 방어)
+    if not (3 <= now_est.hour <= 5):
+        return
+
     try:
         is_open = await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=10.0)
     except asyncio.TimeoutError:
         logging.error("⚠️ [force_reset] is_market_open 달력 API 타임아웃. 평일 강제 개장 처리합니다.")
-        est = ZoneInfo('America/New_York')
-        is_open = datetime.datetime.now(est).weekday() < 5
+        is_open = now_est.weekday() < 5
 
     if not is_open:
         await context.bot.send_message(chat_id=context.job.chat_id, text="⛔ <b>오늘은 미국 증시 휴장일입니다. 금일 시스템 매매 잠금 해제 및 정규장 주문 스케줄을 모두 건너뜁니다.</b>", parse_mode='HTML')
@@ -203,8 +213,9 @@ async def scheduled_force_reset(context):
             
         msg_addons = ""
         
-        for t in cfg.get_active_tickers():
-            rev_state = cfg.get_reverse_state(t)
+        active_tickers = await asyncio.to_thread(cfg.get_active_tickers)
+        for t in active_tickers:
+            rev_state = await asyncio.to_thread(cfg.get_reverse_state, t)
             
             if rev_state.get("is_active"):
                 actual_avg = float(holdings.get(t, {'avg': 0})['avg'])
@@ -215,10 +226,10 @@ async def scheduled_force_reset(context):
                     exit_target = rev_state.get("exit_target", 0.0)
                     
                     if curr_ret >= exit_target:
-                        cfg.set_reverse_state(t, False, 0, 0.0)
-                        cfg.clear_escrow_cash(t)
+                        await asyncio.to_thread(cfg.set_reverse_state, t, False, 0, 0.0)
+                        await asyncio.to_thread(cfg.clear_escrow_cash, t)
                         
-                        ledger_data = cfg.get_ledger()
+                        ledger_data = await asyncio.to_thread(cfg.get_ledger)
                         changed = False
                         for lr in ledger_data:
                             if lr.get('ticker') == t and lr.get('is_reverse', False):
@@ -229,11 +240,11 @@ async def scheduled_force_reset(context):
                             
                         msg_addons += f"\n🌤️ <b>[{t}] 리버스 목표 달성({curr_ret:.2f}%)!</b> 격리 병동 졸업 및 Escrow 해제 완료!"
                     else:
-                        cfg.increment_reverse_day(t)
+                        await asyncio.to_thread(cfg.increment_reverse_day, t)
                 else:
-                    cfg.increment_reverse_day(t)
+                    await asyncio.to_thread(cfg.increment_reverse_day, t)
             else:
-                cfg.increment_reverse_day(t)
+                await asyncio.to_thread(cfg.increment_reverse_day, t)
                 
         final_msg = f"🔓 <b>[04:00 EST] 시스템 일일 초기화 완료 (매매 잠금 해제 & 고점 관측 센서 가동)</b>" + msg_addons
         await context.bot.send_message(chat_id=chat_id, text=final_msg, parse_mode='HTML')
@@ -241,15 +252,10 @@ async def scheduled_force_reset(context):
     except Exception as e:
         await context.bot.send_message(chat_id=context.job.chat_id, text=f"🚨 <b>시스템 초기화 중 에러 발생:</b> {e}", parse_mode='HTML')
 
-async def scheduled_auto_sync_summer(context):
-    logging.info("🌞 [여름 정산] 10:00 KST 확정 정산 엔진 다이렉트 가동")
-    await run_auto_sync(context, "10:00")
-
-async def scheduled_auto_sync_winter(context):
-    logging.info("❄️ [겨울 정산] 10:00 KST 확정 정산 엔진 다이렉트 가동")
-    await run_auto_sync(context, "10:00")
-
-async def run_auto_sync(context, time_str):
+# 🚨 [KST 분기 함수 통합] 21:00 EST 스케줄 단일화
+async def scheduled_auto_sync(context):
+    logging.info("✅ [확정 정산] 21:00 EST 팩트 기반 확정 정산 엔진 다이렉트 가동")
+    
     def _check_and_set_lock():
         est_tz = ZoneInfo('America/New_York')
         today_est = datetime.datetime.now(est_tz).strftime("%Y-%m-%d")
@@ -275,17 +281,19 @@ async def run_auto_sync(context, time_str):
 
         return True, today_est
 
+    # 🚨 [비동기 래핑] 파일 I/O 락 점유 원천 차단
     can_run, today_est = await asyncio.to_thread(_check_and_set_lock)
     if not can_run:
-        logging.info(f"⏳ [정산 멱등성 락온] 오늘({today_est} EST)의 10시 확정 정산이 이미 완료되었습니다. 중복 실행 및 다중 렌더링을 100% 차단합니다.")
+        logging.info(f"⏳ [정산 멱등성 락온] 오늘({today_est} EST)의 21:00 확정 정산이 이미 완료되었습니다. 중복 실행 및 다중 렌더링을 100% 차단합니다.")
         return
 
     chat_id = context.job.chat_id
     bot = context.job.data['bot']
-    status_msg = await context.bot.send_message(chat_id=chat_id, text=f"📝 <b>[{time_str}] 장부 자동 동기화(무결성 검증)를 시작합니다.</b>", parse_mode='HTML')
+    status_msg = await context.bot.send_message(chat_id=chat_id, text=f"📝 <b>[21:00 EST] 장부 자동 동기화(무결성 검증)를 시작합니다.</b>", parse_mode='HTML')
     
     success_tickers = []
-    for t in context.job.data['cfg'].get_active_tickers():
+    active_tickers = await asyncio.to_thread(context.job.data['cfg'].get_active_tickers)
+    for t in active_tickers:
         res = await bot.process_auto_sync(t, chat_id, context, silent_ledger=True)
         if res == "SUCCESS":
             success_tickers.append(t)
@@ -295,4 +303,4 @@ async def run_auto_sync(context, time_str):
             _, holdings = await asyncio.to_thread(context.job.data['broker'].get_account_balance)
         await bot._display_ledger(success_tickers[0], chat_id, context, message_obj=status_msg, pre_fetched_holdings=holdings)
     else:
-        await status_msg.edit_text(f"📝 <b>[{time_str}] 장부 동기화 완료</b> (표시할 진행 중인 장부가 없습니다)", parse_mode='HTML')
+        await status_msg.edit_text(f"📝 <b>[21:00 EST] 장부 동기화 완료</b> (표시할 진행 중인 장부가 없습니다)", parse_mode='HTML')
