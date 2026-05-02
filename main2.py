@@ -84,7 +84,8 @@ async def scheduled_volatility_scan(context):
     base_map = app_data.get('base_map', TICKER_BASE_MAP)
     
     print("\n" + "=" * 60)
-    print("📈 [자율주행 변동성 & 시장 국면 스캔 완료] (10:00 EST 스냅샷)")
+    # MODIFIED: [10:20 EST 락온] 옴니 매트릭스 스캔 스냅샷 시간 표기 팩트 교정
+    print("📈 [자율주행 변동성 & 시장 국면 스캔 완료] (10:20 EST 스냅샷)")
     
     regime_data = await determine_market_regime(broker)
     app_data['regime_data'] = regime_data
@@ -138,7 +139,8 @@ def main():
     print("=" * 60)
     print(f"🚀 옴니 매트릭스 퀀트 엔진 {latest_version} (V44.47 락온)")
     print(f"⏰ 자동 동기화: 21:00 EST 확정 정산 엔진 락온 가동")
-    print("🛡️ 1-Tier 자율주행 지표 스캔 대기 중... (매일 10:00 EST 격발)")
+    # MODIFIED: [10:20 EST 락온] 자율주행 지표 스캔 대기 브리핑 시간 팩트 교정
+    print("🛡️ 1-Tier 자율주행 지표 스캔 대기 중... (매일 10:20 EST 격발)")
     print("=" * 60)
     
     perform_self_cleaning()
@@ -204,8 +206,8 @@ def main():
     # 🚨 [EST 100% 락온] 매매 초기화: 04:00 EST
     jq.run_daily(scheduled_force_reset, time=datetime.time(4, 0, tzinfo=est_zone), days=(0,1,2,3,4), chat_id=ADMIN_CHAT_ID, data=app_data)
     
-    # 🚨 [EST 100% 락온] 옴니 매트릭스 변동성 스캔: 10:00 EST
-    jq.run_daily(scheduled_volatility_scan, time=datetime.time(10, 0, tzinfo=est_zone), days=(0,1,2,3,4), chat_id=ADMIN_CHAT_ID, data=app_data)
+    # MODIFIED: [10:20 EST 락온] 옴니 매트릭스 변동성 스캔 스케줄 10:20으로 강제 락온
+    jq.run_daily(scheduled_volatility_scan, time=datetime.time(10, 20, tzinfo=est_zone), days=(0,1,2,3,4), chat_id=ADMIN_CHAT_ID, data=app_data)
     
     # 🚨 [EST 100% 락온] 정규장 통합 주문: 04:05 EST
     jq.run_daily(scheduled_regular_trade, time=datetime.time(4, 5, tzinfo=est_zone), days=(0,1,2,3,4), chat_id=ADMIN_CHAT_ID, data=app_data)

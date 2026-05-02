@@ -5,6 +5,7 @@
 # 제1헌법: queue_ledger.get_queue 등 모든 파일 I/O 및 락 점유 메서드는 무조건 asyncio.to_thread로 래핑하여 이벤트 루프 교착(Deadlock)을 원천 차단함.
 # MODIFIED: [V44.47 이벤트 루프 데드락 영구 소각] 동기식 블로킹 호출(장부 I/O, JSON 파싱) 전면 비동기 래핑 및 Atomic Write 적용 완료.
 # MODIFIED: [V44.48 데드코드 소각] 클래스 내부에 잔존하는 _verify_and_update_queue 메서드 전체 100% 영구 소각.
+# NEW: [2단계 수술] process_auto_sync 내부의 MANUAL_SYNC 및 MANUAL_BUY 직후 hasattr 데드코드 전면 소각.
 # ==========================================================
 import logging
 import datetime
@@ -452,13 +453,8 @@ class TelegramSyncEngine:
                                         
                                     await asyncio.to_thread(_write_q_file, all_q, q_file)
                                     
-                                    if hasattr(self.queue_ledger, 'data'):
-                                        self.queue_ledger.data = all_q
-                                    if hasattr(self.queue_ledger, 'queues'):
-                                        self.queue_ledger.queues = all_q
-                                    if hasattr(self.queue_ledger, 'load'):
-                                        await asyncio.to_thread(self.queue_ledger.load)
-                                         
+                                    # 🚨 [2단계 수술] 여기서 남아있던 hasattr(self.queue_ledger...) 호출부 전면 소각
+                                    
                                     logging.info(f"🔧 [{ticker}] 미동기화 수동 매수 물량({missing_qty}주, 진성단가 ${missing_price})을 졸업 큐에 다이렉트 영속화하여 PnL 오차 교정 및 스냅샷 충돌 방어 완료.")
                                 except Exception as e:
                                     logging.error(f"🚨 MANUAL_SYNC LIFO 큐 파일 I/O 영속화 실패: {e}")
@@ -555,7 +551,7 @@ class TelegramSyncEngine:
                                     def _read_v_state(f_path):
                                         with open(f_path, 'r', encoding='utf-8') as vf:
                                             return json.load(vf)
-                                    
+                                            
                                     v_state = await asyncio.to_thread(_read_v_state, vwap_state_file)
                                     if "executed" in v_state and "SELL_QTY" in v_state["executed"]:
                                         old_sell_qty = v_state["executed"]["SELL_QTY"]
@@ -641,9 +637,8 @@ class TelegramSyncEngine:
                                     
                                 await asyncio.to_thread(_write_q_manual, all_q, q_file)
                                 
-                                if hasattr(self.queue_ledger, 'data'):
-                                    self.queue_ledger.data = all_q
-                                     
+                                # 🚨 [2단계 수술] 여기서 남아있던 hasattr(self.queue_ledger, 'data') 찌꺼기 전면 소각
+                                
                                 logging.info(f"🔧 [{ticker}] 수동 매수 감지! KIS 실잔고에 맞춰 LIFO 큐에 신규 지층({gap_qty}주, 진성단가 ${real_buy_price}) 다이렉트 편입 및 파일 영속화 완료.")
                                 await context.bot.send_message(chat_id, f"🔧 <b>[{ticker}] V-REV 큐(Queue) 수동 매수 편입 완료!</b>\n▫️ KIS 실잔고에 맞춰 신규 지층(<b>{gap_qty}주</b>, 추정단가 ${real_buy_price})을 정밀 추가했습니다.", parse_mode='HTML')
                             except Exception as e:

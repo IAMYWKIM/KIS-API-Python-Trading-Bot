@@ -4,6 +4,7 @@
 # MODIFIED: [V44.41 UI 팩트 교정] 지시서 렌더링 시 스냅샷 락온 상태를 뷰포트로 직결 전달(has_snapshot 팩트 이식)
 # MODIFIED: [V44.45 헌법 수술] _get_market_status 달력 API(mcal) 동기 블로킹 비동기 래핑 및 타임아웃 Fail-Open 족쇄 체결 완료. Callers 전면 await 동기화.
 # MODIFIED: [V44.48 텔레그램 다이렉트 파일 입출력 비동기 래핑 및 멱등성 보장] cmd_add_q, cmd_clear_q 데드코드 통신 배선 철거 및 인플레이스 원자적 쓰기 탑재.
+# NEW: [2단계 수술] cmd_add_q 및 cmd_clear_q 내부에 존재하던 낡은 hasattr(self.queue_ledger, '_load') 찌꺼기 100% 영구 소각.
 # ==========================================================
 import logging
 import datetime
@@ -96,7 +97,7 @@ class TelegramController:
         elif market_open <= now < market_close:
             return "REG", "🔥 정규장"
         elif market_close <= now < after_end:
-            return "AFTER", "🌙 애프터마켓"
+             return "AFTER", "🌙 애프터마켓"
         else:
             return "CLOSE", "⛔ 장마감"
 
@@ -349,12 +350,6 @@ class TelegramController:
                         os.remove(tmp_path)
                     raise e
                     
-                if getattr(self, 'queue_ledger', None) and hasattr(self.queue_ledger, '_load'):
-                    try:
-                        self.queue_ledger._load()
-                    except:
-                        pass
-
             await asyncio.to_thread(_write_add_q)
             
             chat_id = update.effective_chat.id
@@ -405,13 +400,7 @@ class TelegramController:
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
                 raise e
-                
-            if getattr(self, 'queue_ledger', None) and hasattr(self.queue_ledger, '_load'):
-                try:
-                    self.queue_ledger._load()
-                except:
-                    pass
-
+              
         try:
             await asyncio.to_thread(_write_clear_q)
             chat_id = update.effective_chat.id

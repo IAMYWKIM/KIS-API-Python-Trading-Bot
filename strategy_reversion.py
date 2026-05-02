@@ -13,12 +13,7 @@ import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-# NEW: [V40.XX 옴니 매트릭스] U-Curve 플러그인 로드 방어막
-try:
-    from vwap_data import VWAP_PROFILES
-except ImportError:
-    VWAP_PROFILES = {}
-    logging.warning("⚠️ [V-REV] vwap_data.py 플러그인을 찾을 수 없습니다.")
+# MODIFIED: [3단계 파이프라인 누수 수술] 최상단의 vwap_data 하드코딩 임포트 구문 전면 소각 완료.
 
 class ReversionStrategy:
     def __init__(self):
@@ -154,7 +149,6 @@ class ReversionStrategy:
         legacy_lots = [item for item in q_data if not str(item.get("date", "")).startswith(today_str_est)]
         legacy_q = sum(int(item.get("qty", 0)) for item in legacy_lots if float(item.get('price', 0.0)) > 0)
         
-        # NEW: [V44.36 큐 장부 vs 브로커 실잔고 불일치 팩트 스캔]
         if pure_qty != legacy_q:
             logging.warning(f"⚠️ [{ticker}] V-REV 페일세이프 경고: KIS 순수 본대 수량({pure_qty}주)과 이월 큐 장부 수량({legacy_q}주) 불일치 감지. CALIB 비파괴 보정 또는 수동 동기화 요망.")
             
@@ -231,7 +225,13 @@ class ReversionStrategy:
                 legacy_q = sum(int(item.get("qty", 0)) for item in legacy_lots)
                 is_zero_start_session = (legacy_q == 0)
 
-        profile = VWAP_PROFILES.get(ticker, {})
+        # MODIFIED: [3단계 파이프라인 누수 수술] 하드코딩된 VWAP_PROFILES 딕셔너리 참조를 소각하고 ConfigManager의 동적 로더(get_vwap_profile)로 배선 교정 완료.
+        try:
+            profile = getattr(self, 'cfg').get_vwap_profile(ticker) if hasattr(self, 'cfg') and hasattr(self.cfg, 'get_vwap_profile') else {}
+        except Exception as e:
+            logging.error(f"🚨 [{ticker}] VWAP 프로파일 로드 실패: {e}")
+            profile = {}
+            
         target_keys = [f"15:{str(m).zfill(2)}" for m in range(27, 60)]
         total_target_vol = sum(profile.get(k, 0.0) for k in target_keys)
         
@@ -334,7 +334,7 @@ class ReversionStrategy:
                         if (q2 + n) > 0:
                             grid_p2 = round(b2_budget / (q2 + n), 2)
                             if grid_p2 >= 0.01 and grid_p2 < p2_trigger:
-                                orders.append({"side": "BUY", "qty": 1, "price": grid_p2})
+                                 orders.append({"side": "BUY", "qty": 1, "price": grid_p2})
                 
             rem_qty_total = max(0, int(total_q) - int(self.executed["SELL_QTY"].get(ticker, 0)))
             if rem_qty_total > 0:
@@ -344,7 +344,7 @@ class ReversionStrategy:
                     available_l1 = min(l1_qty, rem_qty_total)
                     l1_queued = 0
                     if available_l1 > 0 and curr_p >= trigger_l1:
-                        orders.append({"side": "SELL", "qty": available_l1, "price": trigger_l1})
+                         orders.append({"side": "SELL", "qty": available_l1, "price": trigger_l1})
                         l1_queued = available_l1
                         
                     available_upper = min(upper_qty, rem_qty_total - l1_queued)
@@ -407,7 +407,7 @@ class ReversionStrategy:
                     alloc_q2 = int(math.floor(b2_budget_slice / curr_p))
                     self.residual["BUY2"][ticker] = b2_bucket - (alloc_q2 * curr_p)
                     if alloc_q2 > 0:
-                        orders.append({"side": "BUY", "qty": alloc_q2, "price": p2_trigger})
+                         orders.append({"side": "BUY", "qty": alloc_q2, "price": p2_trigger})
                 else:
                     self.residual["BUY2"][ticker] = b2_bucket
             else:
@@ -437,7 +437,7 @@ class ReversionStrategy:
                             self.residual["SELL_L1"][ticker] = float(exact_l1 - alloc_l1)
                             if alloc_l1 > 0:
                                 orders.append({"side": "SELL", "qty": alloc_l1, "price": trigger_l1})
-                                rem_qty_total -= alloc_l1
+                            rem_qty_total -= alloc_l1
 
                     if upper_qty > 0 and trigger_upper > 0 and curr_p >= trigger_upper and rem_qty_total > 0:
                         exact_upper = float(rem_qty_total * slice_ratio_sell) + float(self.residual["SELL_UPPER"].get(ticker, 0.0))

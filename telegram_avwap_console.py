@@ -2,6 +2,7 @@
 # FILE: telegram_avwap_console.py
 # MODIFIED: [V44.30] AVWAP 관제탑 순수 모니터링화 (설정 제어 버튼 소각)
 # MODIFIED: [V44.31] 체력 분석 기준 팩트 교정 - 현재가가 아닌 '당일 고가(High)' 기준으로 방전율 및 잔여 체력 계산 락온 완료
+# NEW: [1단계 타임라인 수술] 10:00 EST 타임쉴드 버그를 10:20 EST로 절대 락온 및 UI 텍스트 팩트 교정.
 # ==========================================================
 import logging
 import datetime
