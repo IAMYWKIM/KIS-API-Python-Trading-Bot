@@ -7,6 +7,7 @@
 # MODIFIED: [V44.44 이벤트 루프 교착 방어] 달력 API(pandas_market_calendars) 동기 블로킹 비동기 래핑 및 타임아웃 Fail-Open 족쇄 체결 완료.
 # 🚨 MODIFIED: [V44.47 이벤트 루프 데드락 영구 소각] JSON 및 장부 데이터를 스캔하는 모든 동기 호출을 예외 없이 비동기 래핑 완료.
 # 🚨 MODIFIED: [V44.51 V-REV 락온 및 LIFO 큐 팩트 수술] 애프터마켓 로터리 덫이 V14 종목(TQQQ 등)을 무지성 타격하던 치명적 맹점(Fall-through) 원천 차단. 오직 V-REV 모드에서만, 그리고 LIFO 큐 장부의 팩트 데이터(수량/평단가) 기반으로만 덫이 장전되도록 절대 헌법 적용 완료.
+# 🚨 MODIFIED: [V44.52 애프터마켓 모드 검증 락온 최상단 전진 배치] V14 종목(TQQQ 등)의 정규장 매도 방어선 무지성 철거 방어 완결.
 # ==========================================================
 import logging
 import asyncio
@@ -54,6 +55,13 @@ async def scheduled_after_market_lottery(context):
     active_tickers = await asyncio.to_thread(cfg.get_active_tickers)
 
     for t in active_tickers:
+        # 🚨 MODIFIED: [V44.52 애프터마켓 모드 검증 락온 최상단 전진 배치]
+        # V14 종목(TQQQ 등)의 정규장 방어선(SELL 주문)이 무지성 취소되는 치명적 맹점을 막기 위해 루프 최상단에서 우선 필터링.
+        ver = await asyncio.to_thread(cfg.get_version, t)
+        if ver != "V_REV":
+            logging.info(f"🛡️ [{t}] {ver} 모드는 애프터마켓 로터리 덫 엑시트 대상이 아니므로 안전하게 바이패스합니다.")
+            continue
+
         # 🚨 [V40.03 팩트 수술 1단계] 호가창에 묶인 미체결 매도 주문 강제 취소 (주식 해방)
         try:
             await asyncio.to_thread(broker.cancel_all_orders_safe, t, "SELL")
@@ -73,14 +81,6 @@ async def scheduled_after_market_lottery(context):
         # 🚨 [V40.03 팩트 수술 2단계] 총 보유수량(qty) 대신 주문 가능 수량(ord_psbl_qty) 절대 락온
         ord_psbl_qty = int(h_data.get('ord_psbl_qty', 0))
         
-        # 🚨 [비동기 래핑] 파일 I/O 동기 블로킹 방어
-        ver = await asyncio.to_thread(cfg.get_version, t)
-        
-        # 🚨 NEW: [V44.51 치명적 맹점 전면 수술] V-REV 모드가 아니면 애프터마켓 로터리 덫 무조건 강제 패스 (Bypass)
-        if ver != "V_REV":
-            logging.info(f"🛡️ [{t}] {ver} 모드는 애프터마켓 로터리 덫 엑시트 대상이 아니므로 안전하게 바이패스합니다.")
-            continue
-
         target_avg = 0.0
         target_qty = 0
         avwap_qty = 0
