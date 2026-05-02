@@ -119,12 +119,12 @@ class ConfigManager:
             dir_name = os.path.dirname(filename) or '.'
             if not os.path.exists(dir_name):
                 os.makedirs(dir_name, exist_ok=True)
-                
+                 
             fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 fd = None
                 json.dump(data, f, ensure_ascii=False, indent=2)
-                f.flush()         
+                f.flush()       
                 os.fsync(f.fileno()) 
                 
             os.replace(temp_path, filename)
@@ -140,10 +140,10 @@ class ConfigManager:
 
     def _load_file(self, filename, default=None):
         if os.path.exists(filename):
-            try:
+             try:
                 with open(filename, 'r', encoding='utf-8') as f:
                     return f.read().strip()
-            except Exception as e:
+             except Exception as e:
                 print(f"⚠️ [Config] 파일 로드 에러 ({filename}): {e}")
         return default
 
@@ -195,9 +195,9 @@ class ConfigManager:
         for r in reversed(ledger):
             if r.get('ticker') == ticker:
                 if r.get('is_reverse', False):
-                    if r['side'] == 'SELL':
+                     if r['side'] == 'SELL':
                         escrow += (r['qty'] * r['price'])
-                    elif r['side'] == 'BUY':
+                     elif r['side'] == 'BUY':
                         escrow -= (r['qty'] * r['price'])
                 else:
                     break
@@ -251,7 +251,7 @@ class ConfigManager:
         est = ZoneInfo('America/New_York')
         today = datetime.datetime.now(est).strftime('%Y-%m-%d')
         def _update(locks):
-            locks[f"{today}_{ticker}_{market_type}"] = True
+             locks[f"{today}_{ticker}_{market_type}"] = True
         self._atomic_update_locks(_update)
 
     def reset_locks(self):
@@ -417,7 +417,7 @@ class ConfigManager:
                 exec_id = str(r.get('exec_id', ''))
                 if 'INIT' in exec_id:
                     continue
-                    
+                  
                 if r['side'] == 'BUY' and actual_buy_price > 0.0:
                     if abs(r['price'] - actual_buy_price) >= 0.01:
                         r['price'] = actual_buy_price
@@ -487,7 +487,6 @@ class ConfigManager:
         d[ticker] = {"is_active": is_active, "day_count": day_count, "exit_target": exit_target, "last_update_date": last_update_date}
         self._save_json(self.FILES["REVERSE_CFG"], d)
 
-    # MODIFIED: [V44.49 달력 API 중복 연산 데드코드 전면 소각 및 스레드 교착 원천 차단]
     def increment_reverse_day(self, ticker):
         state = self.get_reverse_state(ticker)
         if state.get("is_active"):
@@ -620,6 +619,10 @@ class ConfigManager:
         self.clear_ledger_for_ticker(ticker)
         
         return new_hist, added_seed
+
+    # MODIFIED: [V44.45 맹점 1 수술] get_history 메서드 누락 팩트 복구로 명예의 전당 런타임 붕괴 영구 차단
+    def get_history(self):
+        return self._load_json(self.FILES["HISTORY"], [])
 
     def get_full_version_history(self):
         return VERSION_HISTORY
@@ -766,3 +769,4 @@ class ConfigManager:
         v = self._load_file(self.FILES["CHAT_ID"])
         return int(v) if v else None
     def set_chat_id(self, v): self._save_file(self.FILES["CHAT_ID"], v)
+

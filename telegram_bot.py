@@ -6,6 +6,7 @@
 # MODIFIED: [V44.48 텔레그램 다이렉트 파일 입출력 비동기 래핑 및 멱등성 보장] cmd_add_q, cmd_clear_q 데드코드 통신 배선 철거 및 인플레이스 원자적 쓰기 탑재.
 # NEW: [2단계 수술] cmd_add_q 및 cmd_clear_q 내부에 존재하던 낡은 hasattr(self.queue_ledger, '_load') 찌꺼기 100% 영구 소각.
 # 🚨 MODIFIED: [V44.49 cmd_sync 이벤트 루프 교착 방어] 통합 지시서 렌더링 시 발생하는 모든 파일 I/O 스캔 작업 비동기 래핑 완료.
+# 🚨 MODIFIED: [맹점 4 수술] 텔레그램 명령어 호출 시 발생하는 모든 동기 I/O(cfg 속성 조회) 전면 비동기 래핑 완료.
 # ==========================================================
 import logging
 import datetime
@@ -421,7 +422,8 @@ class TelegramController:
             return
             
         target_hour, season_icon = self._get_dst_info()
-        latest_version = self.cfg.get_latest_version() 
+        # MODIFIED: [맹점 4 수술] 파일 I/O 동기 블로킹 비동기 래핑
+        latest_version = await asyncio.to_thread(self.cfg.get_latest_version) 
         msg = self.view.get_start_message(target_hour, season_icon, latest_version) 
         await update.message.reply_text(msg, parse_mode='HTML')
 
@@ -444,10 +446,10 @@ class TelegramController:
         
         # 🚨 MODIFIED: [V44.49] 파일 I/O 및 객체 속성 조회 작업 비동기 래핑
         tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
-        
         render_tickers = list(tickers)
-                
-        sorted_tickers, allocated_cash = self._calculate_budget_allocation(cash, render_tickers)
+        
+        # MODIFIED: [맹점 4 수술] _calculate_budget_allocation 블로킹 방어
+        sorted_tickers, allocated_cash = await asyncio.to_thread(self._calculate_budget_allocation, cash, render_tickers)
         
         ticker_data_list = []
         total_buy_needed = 0.0
@@ -606,7 +608,7 @@ class TelegramController:
                 q_list = await asyncio.to_thread(self.queue_ledger.get_queue, t)
                 v_rev_q_lots = len(q_list)
                 v_rev_q_qty = sum(item.get('qty', 0) for item in q_list)
-    
+
                 one_portion_cash = seed * 0.15
                 plan['one_portion'] = one_portion_cash
                 half_portion_cash = one_portion_cash * 0.5
@@ -792,7 +794,7 @@ class TelegramController:
                 'profit_pct': (curr - actual_avg) / actual_avg * 100 if actual_avg > 0 else 0,
                 'upward_sniper': "ON" if upward_sniper_mode_on else "OFF",
                 'target': target_val, 'star_pct': round(plan.get('star_ratio', 0) * 100, 2) if 'star_ratio' in plan else 0.0,
-                'seed': seed, 'one_portion': plan.get('one_portion', 0.0), 'plan': plan,
+                'seed': safe_seed, 'one_portion': plan.get('one_portion', 0.0), 'plan': plan,
                 'is_locked': is_already_ordered, 'mode': "REG",
                 'is_reverse': is_rev, 'star_price': plan.get('star_price', 0.0),
                 'escrow': escrow_val,
@@ -860,7 +862,9 @@ class TelegramController:
         status_msg = await context.bot.send_message(chat_id, "🛡️ <b>장부 무결성 검증 및 동기화 중...</b>", parse_mode='HTML')
         
         success_tickers = []
-        for t in self.cfg.get_active_tickers():
+        # MODIFIED: [맹점 4 수술] 파일 I/O 동기 블로킹 비동기 래핑
+        active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
+        for t in active_tickers:
             res = await self.sync_engine.process_auto_sync(t, chat_id, context, silent_ledger=True)
             if res == "SUCCESS":
                 success_tickers.append(t)
@@ -877,7 +881,8 @@ class TelegramController:
             return
             
         try:
-            history_data = self.cfg.get_history()
+            # MODIFIED: [맹점 4 수술] 파일 I/O 동기 블로킹 비동기 래핑
+            history_data = await asyncio.to_thread(self.cfg.get_history)
         except Exception:
             history_data = []
             
@@ -909,7 +914,8 @@ class TelegramController:
         if not self._is_admin(update):
             return
         
-        active_tickers = self.cfg.get_active_tickers()
+        # MODIFIED: [맹점 4 수술] 파일 I/O 동기 블로킹 비동기 래핑
+        active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
 
         report = "📊 <b>[ 자율주행 변동성 마스터 지표 상세 분석 ]</b>\n\n"
         
@@ -950,7 +956,8 @@ class TelegramController:
         report += "🎯 <b>[ 수동 상방 스나이퍼 독립 제어 ]</b>\n"
         keyboard = []
         for t in active_tickers:
-            is_sniper = self.cfg.get_upward_sniper_mode(t)
+            # MODIFIED: [맹점 4 수술] 파일 I/O 동기 블로킹 비동기 래핑
+            is_sniper = await asyncio.to_thread(self.cfg.get_upward_sniper_mode, t)
             status_txt = 'ON (가동중)' if is_sniper else 'OFF (대기중)'
             report += f"▫️ {t} 현재 상태 : {status_txt}\n"
             
@@ -965,7 +972,8 @@ class TelegramController:
         if not self._is_admin(update):
             return
             
-        active_tickers = self.cfg.get_active_tickers()
+        # MODIFIED: [맹점 4 수술] 파일 I/O 동기 블로킹 비동기 래핑
+        active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
         msg, markup = self.view.get_reset_menu(active_tickers)
         await update.message.reply_text(msg, reply_markup=markup, parse_mode='HTML')
 
@@ -975,8 +983,10 @@ class TelegramController:
             
         msg = "💵 <b>[ 종목별 시드머니 관리 ]</b>\n\n"
         keyboard = []
-        for t in self.cfg.get_active_tickers():
-            current_seed = self.cfg.get_seed(t)
+        # MODIFIED: [맹점 4 수술] 파일 I/O 동기 블로킹 비동기 래핑
+        active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
+        for t in active_tickers:
+            current_seed = await asyncio.to_thread(self.cfg.get_seed, t)
             msg += f"💎 <b>{t}</b>: ${current_seed:,.0f}\n"
             keyboard.append([
                 InlineKeyboardButton(f"➕ {t} 추가", callback_data=f"SEED:ADD:{t}"), 
@@ -989,14 +999,17 @@ class TelegramController:
         if not self._is_admin(update):
             return
             
-        msg, markup = self.view.get_ticker_menu(self.cfg.get_active_tickers())
+        # MODIFIED: [맹점 4 수술] 파일 I/O 동기 블로킹 비동기 래핑
+        active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
+        msg, markup = self.view.get_ticker_menu(active_tickers)
         await update.message.reply_text(msg, reply_markup=markup, parse_mode='HTML')
 
     async def cmd_settlement(self, update, context):
         if not self._is_admin(update):
             return
         
-        active_tickers = self.cfg.get_active_tickers()
+        # MODIFIED: [맹점 4 수술] 파일 I/O 동기 블로킹 비동기 래핑
+        active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
         atr_data = {}
         dynamic_target_data = {} 
         
@@ -1033,6 +1046,7 @@ class TelegramController:
         if not self._is_admin(update):
             return
             
-        history_data = self.cfg.get_full_version_history()
+        # MODIFIED: [맹점 4 수술] 파일 I/O 동기 블로킹 비동기 래핑
+        history_data = await asyncio.to_thread(self.cfg.get_full_version_history)
         msg, markup = self.view.get_version_message(history_data, page_index=None)
         await update.message.reply_text(msg, reply_markup=markup, parse_mode='HTML')
