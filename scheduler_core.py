@@ -39,7 +39,7 @@ def is_market_open():
         else:
             return False
     except Exception as e:
-        logging.error(f"⚠️ 달력 라이브러 에러 발생. 스케줄 증발 방어를 위해 평일 강제 개장(Fail-Open) 처리합니다: {e}")
+        logging.error(f"⚠️ 달력 라이브러리 에러 발생. 스케줄 증발 방어를 위해 평일 강제 개장(Fail-Open) 처리합니다: {e}")
         est = ZoneInfo('America/New_York')
         return datetime.datetime.now(est).weekday() < 5
 
@@ -109,7 +109,7 @@ def get_budget_allocation(cash, tickers, cfg):
                     free_cash -= portion
                 else: 
                     allocated[tx] = 0.0
-                
+        
     return sorted_tickers, allocated
 
 def get_actual_execution_price(execs, target_qty, side_cd):
@@ -290,6 +290,11 @@ async def scheduled_force_reset(context):
 # 🚨 [KST 분기 함수 통합] 21:00 EST 스케줄 단일화
 async def scheduled_auto_sync(context):
     logging.info("✅ [확정 정산] 21:00 EST 팩트 기반 확정 정산 엔진 다이렉트 가동")
+
+    # MODIFIED: [V44.68 콜드 스타트 방어막 전진 배치 및 팩트 교정]
+    if context.job.data.get('tx_lock') is None:
+        logging.warning("⚠️ [auto_sync] tx_lock 미초기화. 장부 표시 스킵.")
+        return
     
     def _check_and_set_lock():
         est_tz = ZoneInfo('America/New_York')
@@ -338,11 +343,6 @@ async def scheduled_auto_sync(context):
         if res == "SUCCESS":
             success_tickers.append(t)
             
-    # NEW: [콜드 스타트 런타임 붕괴 방어] tx_lock None 가드 이식
-    if context.job.data.get('tx_lock') is None:
-        logging.warning("⚠️ [auto_sync] tx_lock 미초기화. 장부 표시 스킵.")
-        return
-
     if success_tickers:
         async with context.job.data['tx_lock']:
             _, holdings = await asyncio.to_thread(context.job.data['broker'].get_account_balance)
