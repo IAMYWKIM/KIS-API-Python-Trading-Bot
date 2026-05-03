@@ -5,6 +5,8 @@
 # 제1헌법: 파일 I/O 및 달력 API(mcal)는 무조건 asyncio.to_thread로 래핑하여 이벤트 루프 교착(Deadlock)을 원천 차단함.
 # 제3헌법: KST 타임존 및 is_dst 기반의 동적 스케줄링 전면 소각. 
 # MODIFIED: [V44.47 KST 타임 패러독스 영구 소각] 서머타임 분기 함수 통합 및 EST 절대 시간 기반으로 100% 디커플링 락온 완료.
+# NEW: [콜드 스타트 런타임 붕괴 방어] scheduled_auto_sync 내부 tx_lock None 가드 이식.
+# NEW: [전역 타임아웃 이식] scheduled_force_reset 이벤트 루프 교착 방어 타임아웃 래퍼 적용.
 # ==========================================================
 import os
 import logging
@@ -37,7 +39,7 @@ def is_market_open():
         else:
             return False
     except Exception as e:
-        logging.error(f"⚠️ 달력 라이브러리 에러 발생. 스케줄 증발 방어를 위해 평일 강제 개장(Fail-Open) 처리합니다: {e}")
+        logging.error(f"⚠️ 달력 라이브러 에러 발생. 스케줄 증발 방어를 위해 평일 강제 개장(Fail-Open) 처리합니다: {e}")
         est = ZoneInfo('America/New_York')
         return datetime.datetime.now(est).weekday() < 5
 
@@ -186,98 +188,104 @@ async def scheduled_force_reset(context):
     if not (3 <= now_est.hour <= 5):
         return
 
-    try:
-        is_open = await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=10.0)
-    except asyncio.TimeoutError:
-        logging.error("⚠️ [force_reset] is_market_open 달력 API 타임아웃. 평일 강제 개장 처리합니다.")
-        is_open = now_est.weekday() < 5
+    async def _do_force_reset():
+        try:
+            is_open = await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=10.0)
+        except asyncio.TimeoutError:
+            logging.error("⚠️ [force_reset] is_market_open 달력 API 타임아웃. 평일 강제 개장 처리합니다.")
+            is_open = now_est.weekday() < 5
 
-    if not is_open:
-        await context.bot.send_message(chat_id=context.job.chat_id, text="⛔ <b>오늘은 미국 증시 휴장일입니다. 금일 시스템 매매 잠금 해제 및 정규장 주문 스케줄을 모두 건너뜁니다.</b>", parse_mode='HTML')
-        return
-    
-    try:
-        app_data = context.job.data
-        cfg = app_data['cfg']
-        broker = app_data['broker']
-        tx_lock = app_data['tx_lock']
-        chat_id = context.job.chat_id
-        
-        # 🚨 MODIFIED: [V44.65 KST 17:00 런타임 붕괴 및 이벤트 루프 교착 방어]
-        # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막]
-        if tx_lock is None:
-            logging.warning("⚠️ [force_reset] tx_lock 미초기화. 이번 사이클 스킵.")
-            try:
-                await context.bot.send_message(chat_id=chat_id, text="⚠️ <b>[시스템 경고]</b> tx_lock 미초기화로 초기화 스케줄을 1회 스킵합니다.", parse_mode='HTML')
-            except Exception:
-                pass
+        if not is_open:
+            await context.bot.send_message(chat_id=context.job.chat_id, text="⛔ <b>오늘은 미국 증시 휴장일입니다. 금일 시스템 매매 잠금 해제 및 정규장 주문 스케줄을 모두 건너뜁니다.</b>", parse_mode='HTML')
             return
-
-        await asyncio.to_thread(cfg.reset_locks)
         
-        # MODIFIED: [버그 2 수술] force_reset tx_lock 점유율 압축 및 병목 해체
-        # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
-        # 04:05 EST regular_trade 블로킹 방지를 위해 외부 API 루프와 Lock 구간을 100% 분리 격리함
-        async with tx_lock:
-            _, holdings = await asyncio.to_thread(broker.get_account_balance)
+        try:
+            app_data = context.job.data
+            cfg = app_data['cfg']
+            broker = app_data['broker']
+            tx_lock = app_data['tx_lock']
+            chat_id = context.job.chat_id
             
-        if holdings is None:
-            holdings = {}
-            
-        msg_addons = ""
-        
-        active_tickers = await asyncio.to_thread(cfg.get_active_tickers)
-        for t in active_tickers:
-            rev_state = await asyncio.to_thread(cfg.get_reverse_state, t)
-            
-            if rev_state.get("is_active"):
-                actual_avg = float(holdings.get(t, {'avg': 0})['avg'])
-                
-                # 🚨 MODIFIED: [V44.65 KST 17:00 런타임 붕괴 및 이벤트 루프 교착 방어]
-                # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막]
+            # 🚨 MODIFIED: [V44.65 KST 17:00 런타임 붕괴 및 이벤트 루프 교착 방어]
+            # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막]
+            if tx_lock is None:
+                logging.warning("⚠️ [force_reset] tx_lock 미초기화. 이번 사이클 스킵.")
                 try:
-                    curr_p_val = await asyncio.wait_for(
-                        asyncio.to_thread(broker.get_current_price, t),
-                        timeout=10.0
-                    )
-                    curr_p = float(curr_p_val or 0.0)
-                except asyncio.TimeoutError:
-                    logging.error(f"⚠️ [{t}] 현재가 조회 타임아웃 (10초). 0.0으로 폴백합니다.")
-                    curr_p = 0.0
-                except Exception as e:
-                    logging.error(f"⚠️ [{t}] 현재가 조회 실패: {e}")
-                    curr_p = 0.0
+                    await context.bot.send_message(chat_id=chat_id, text="⚠️ <b>[시스템 경고]</b> tx_lock 미초기화로 초기화 스케줄을 1회 스킵합니다.", parse_mode='HTML')
+                except Exception:
+                    pass
+                return
+
+            await asyncio.to_thread(cfg.reset_locks)
+            
+            # MODIFIED: [버그 2 수술] force_reset tx_lock 점유율 압축 및 병목 해체
+            # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막] 이곳의 tx_lock 점유 구간은 이미 V44.66에서 극한 압축되었다. 락 대기 병목을 핑계로 로직을 확장하는 오버 엔지니어링을 절대 금지한다.
+            async with tx_lock:
+                _, holdings = await asyncio.to_thread(broker.get_account_balance)
                 
-                if curr_p > 0 and actual_avg > 0:
-                    curr_ret = (curr_p - actual_avg) / actual_avg * 100.0
-                    exit_target = rev_state.get("exit_target", 0.0)
+            if holdings is None:
+                holdings = {}
+                
+            msg_addons = ""
+            
+            active_tickers = await asyncio.to_thread(cfg.get_active_tickers)
+            for t in active_tickers:
+                rev_state = await asyncio.to_thread(cfg.get_reverse_state, t)
+                
+                if rev_state.get("is_active"):
+                    actual_avg = float(holdings.get(t, {'avg': 0})['avg'])
                     
-                    if curr_ret >= exit_target:
-                        await asyncio.to_thread(cfg.set_reverse_state, t, False, 0, 0.0)
-                        await asyncio.to_thread(cfg.clear_escrow_cash, t)
+                    # 🚨 MODIFIED: [V44.65 KST 17:00 런타임 붕괴 및 이벤트 루프 교착 방어]
+                    # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막]
+                    try:
+                        curr_p_val = await asyncio.wait_for(
+                            asyncio.to_thread(broker.get_current_price, t),
+                            timeout=10.0
+                        )
+                        curr_p = float(curr_p_val or 0.0)
+                    except asyncio.TimeoutError:
+                        logging.error(f"⚠️ [{t}] 현재가 조회 타임아웃 (10초). 0.0으로 폴백합니다.")
+                        curr_p = 0.0
+                    except Exception as e:
+                        logging.error(f"⚠️ [{t}] 현재가 조회 실패: {e}")
+                        curr_p = 0.0
+                    
+                    if curr_p > 0 and actual_avg > 0:
+                        curr_ret = (curr_p - actual_avg) / actual_avg * 100.0
+                        exit_target = rev_state.get("exit_target", 0.0)
                         
-                        ledger_data = await asyncio.to_thread(cfg.get_ledger)
-                        changed = False
-                        for lr in ledger_data:
-                            if lr.get('ticker') == t and lr.get('is_reverse', False):
-                                lr['is_reverse'] = False
-                                changed = True
-                        if changed:
-                            await asyncio.to_thread(cfg._save_json, cfg.FILES["LEDGER"], ledger_data)
+                        if curr_ret >= exit_target:
+                            await asyncio.to_thread(cfg.set_reverse_state, t, False, 0, 0.0)
+                            await asyncio.to_thread(cfg.clear_escrow_cash, t)
                             
-                        msg_addons += f"\n🌤️ <b>[{t}] 리버스 목표 달성({curr_ret:.2f}%)!</b> 격리 병동 졸업 및 Escrow 해제 완료!"
+                            ledger_data = await asyncio.to_thread(cfg.get_ledger)
+                            changed = False
+                            for lr in ledger_data:
+                                if lr.get('ticker') == t and lr.get('is_reverse', False):
+                                    lr['is_reverse'] = False
+                                    changed = True
+                            if changed:
+                                await asyncio.to_thread(cfg._save_json, cfg.FILES["LEDGER"], ledger_data)
+                            
+                            msg_addons += f"\n🌤️ <b>[{t}] 리버스 목표 달성({curr_ret:.2f}%)!</b> 격리 병동 졸업 및 Escrow 해제 완료!"
+                        else:
+                            await asyncio.to_thread(cfg.increment_reverse_day, t)
                     else:
                         await asyncio.to_thread(cfg.increment_reverse_day, t)
                 else:
                     await asyncio.to_thread(cfg.increment_reverse_day, t)
-            else:
-                await asyncio.to_thread(cfg.increment_reverse_day, t)
-                
-        final_msg = f"🔓 <b>[04:00 EST] 시스템 일일 초기화 완료 (매매 잠금 해제 & 고점 관측 센서 가동)</b>" + msg_addons
-        await context.bot.send_message(chat_id=chat_id, text=final_msg, parse_mode='HTML')
-        
+                    
+            final_msg = f"🔓 <b>[04:00 EST] 시스템 일일 초기화 완료 (매매 잠금 해제 & 고점 관측 센서 가동)</b>" + msg_addons
+            await context.bot.send_message(chat_id=chat_id, text=final_msg, parse_mode='HTML')
+            
+        except Exception as e:
+            await context.bot.send_message(chat_id=context.job.chat_id, text=f"🚨 <b>시스템 초기화 중 에러 발생:</b> {e}", parse_mode='HTML')
+
+    # NEW: [전역 타임아웃 이식] 메인 로직 전체 180초 타임아웃 족쇄 체결
+    try:
+        await asyncio.wait_for(_do_force_reset(), timeout=180.0)
     except Exception as e:
-        await context.bot.send_message(chat_id=context.job.chat_id, text=f"🚨 <b>시스템 초기화 중 에러 발생:</b> {e}", parse_mode='HTML')
+        logging.error(f"🚨 [force_reset] 전역 타임아웃(180초) 또는 런타임 붕괴 발생: {e}")
 
 # 🚨 [KST 분기 함수 통합] 21:00 EST 스케줄 단일화
 async def scheduled_auto_sync(context):
@@ -330,6 +338,11 @@ async def scheduled_auto_sync(context):
         if res == "SUCCESS":
             success_tickers.append(t)
             
+    # NEW: [콜드 스타트 런타임 붕괴 방어] tx_lock None 가드 이식
+    if context.job.data.get('tx_lock') is None:
+        logging.warning("⚠️ [auto_sync] tx_lock 미초기화. 장부 표시 스킵.")
+        return
+
     if success_tickers:
         async with context.job.data['tx_lock']:
             _, holdings = await asyncio.to_thread(context.job.data['broker'].get_account_balance)

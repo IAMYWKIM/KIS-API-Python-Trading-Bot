@@ -5,7 +5,8 @@
 # 제1헌법: queue_ledger.get_queue 등 모든 파일 I/O 및 락 점유 메서드는 무조건 asyncio.to_thread로 래핑하여 이벤트 루프 교착(Deadlock)을 원천 차단함.
 # 제9헌법: U_CURVE_WEIGHTS 하드코딩 배열 영구 소각. vwap_data.py에서 동적 로드하여 팩트 기반 재정규화 필수.
 # MODIFIED: [V44.47 이벤트 루프 데드락 영구 소각 및 동적 U-Curve 팩트 락온] 동기식 블로킹 호출 전면 비동기 래핑 및 하드코딩 배열 철거 완료.
-# MODIFIED: [맹점 3 수술] 루프 내부 cfg 접근(파일 I/O) 메서드 전면 비동기(asyncio.to_thread) 래핑 완료.
+# MODIFIED: [맹점 3 수술] 루프 내부 cfg 접근(파일 I/O) 메서 전면 비동기(asyncio.to_thread) 래핑 완료.
+# NEW: [콜드 스타트 런타임 붕괴 방어] scheduled_vwap_init_and_cancel 진입부 tx_lock None 가드 이식 완료.
 # ==========================================================
 import logging
 import datetime
@@ -22,6 +23,12 @@ import tempfile
 from scheduler_core import is_market_open
 
 async def scheduled_vwap_init_and_cancel(context):
+    # NEW: [콜드 스타트 런타임 붕괴 방어]
+    # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]: 콜드 스타트 시 tx_lock 미초기화 런타임 즉사 방어
+    if context.job.data.get('tx_lock') is None:
+        logging.warning("⚠️ [vwap_init_and_cancel] tx_lock 미초기화. 이번 사이클 스킵.")
+        return
+
     try:
         is_open = await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=10.0)
     except asyncio.TimeoutError:
@@ -357,7 +364,7 @@ async def scheduled_vwap_trade(context):
                             vwap_cache[f"REV_{t}_was_holding"] = True
                             if not strategy_rev.was_holding.get(t, False):
                                 strategy_rev.was_holding[t] = True
-                                await asyncio.to_thread(strategy_rev._save_state, t)
+                            await asyncio.to_thread(strategy_rev._save_state, t)
                             
                         if total_q > 0:
                             avg_price = sum(item.get("qty", 0) * item.get("price", 0.0) for item in q_data) / total_q
