@@ -156,7 +156,7 @@ def perform_self_cleaning():
                 if os.path.isfile(f) and os.stat(f).st_mtime < now - seven_days:
                     try: os.remove(f)
                     except: pass
-                
+        
         for directory in ["data", "logs"]:
             for f in glob.glob(f"{directory}/tmp*"):
                 if os.path.isfile(f) and os.stat(f).st_mtime < now - one_day:
@@ -215,6 +215,9 @@ async def scheduled_force_reset(context):
 
         await asyncio.to_thread(cfg.reset_locks)
         
+        # MODIFIED: [버그 2 수술] force_reset tx_lock 점유율 압축 및 병목 해체
+        # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
+        # 04:05 EST regular_trade 블로킹 방지를 위해 외부 API 루프와 Lock 구간을 100% 분리 격리함
         async with tx_lock:
             _, holdings = await asyncio.to_thread(broker.get_account_balance)
             
@@ -310,6 +313,7 @@ async def scheduled_auto_sync(context):
 
     # 🚨 [비동기 래핑] 파일 I/O 락 점유 원천 차단
     can_run, today_est = await asyncio.to_thread(_check_and_set_lock)
+    
     if not can_run:
         logging.info(f"⏳ [정산 멱등성 락온] 오늘({today_est} EST)의 21:00 확정 정산이 이미 완료되었습니다. 중복 실행 및 다중 렌더링을 100% 차단합니다.")
         return

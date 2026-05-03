@@ -138,6 +138,11 @@ async def post_init(application: Application):
     tx_lock = asyncio.Lock()
     application.bot_data['app_data']['tx_lock'] = tx_lock
     application.bot_data['bot_controller'].tx_lock = tx_lock
+    
+    # MODIFIED: [버그 1 수술] 이중 tx_lock 패러독스 영구 소각 (동시성 제어 무결성 확보)
+    # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
+    application.bot_data['bot_controller'].sync_engine.tx_lock = tx_lock
+    application.bot_data['bot_controller'].callbacks_handler.tx_lock = tx_lock
 
 def main():
     est_zone = ZoneInfo('America/New_York')
