@@ -203,6 +203,16 @@ async def scheduled_force_reset(context):
         tx_lock = app_data['tx_lock']
         chat_id = context.job.chat_id
         
+        # 🚨 MODIFIED: [V44.65 KST 17:00 런타임 붕괴 및 이벤트 루프 교착 방어]
+        # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막]
+        if tx_lock is None:
+            logging.warning("⚠️ [force_reset] tx_lock 미초기화. 이번 사이클 스킵.")
+            try:
+                await context.bot.send_message(chat_id=chat_id, text="⚠️ <b>[시스템 경고]</b> tx_lock 미초기화로 초기화 스케줄을 1회 스킵합니다.", parse_mode='HTML')
+            except Exception:
+                pass
+            return
+
         await asyncio.to_thread(cfg.reset_locks)
         
         async with tx_lock:
@@ -219,7 +229,21 @@ async def scheduled_force_reset(context):
             
             if rev_state.get("is_active"):
                 actual_avg = float(holdings.get(t, {'avg': 0})['avg'])
-                curr_p = float(await asyncio.to_thread(broker.get_current_price, t) or 0.0)
+                
+                # 🚨 MODIFIED: [V44.65 KST 17:00 런타임 붕괴 및 이벤트 루프 교착 방어]
+                # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막]
+                try:
+                    curr_p_val = await asyncio.wait_for(
+                        asyncio.to_thread(broker.get_current_price, t),
+                        timeout=10.0
+                    )
+                    curr_p = float(curr_p_val or 0.0)
+                except asyncio.TimeoutError:
+                    logging.error(f"⚠️ [{t}] 현재가 조회 타임아웃 (10초). 0.0으로 폴백합니다.")
+                    curr_p = 0.0
+                except Exception as e:
+                    logging.error(f"⚠️ [{t}] 현재가 조회 실패: {e}")
+                    curr_p = 0.0
                 
                 if curr_p > 0 and actual_avg > 0:
                     curr_ret = (curr_p - actual_avg) / actual_avg * 100.0

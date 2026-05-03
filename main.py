@@ -109,12 +109,21 @@ async def scheduled_volatility_scan(context):
         vol_engine = VolatilityEngine()
         for ticker in active_tickers:
             target_base = base_map.get(ticker, ticker)
+            
+            # 🚨 MODIFIED: [V44.65 엣지 타임라인 동기화 및 오프닝 휩소 원천 락다운]
+            # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막]
             try:
-                weight_data = await asyncio.to_thread(vol_engine.calculate_weight, target_base)
+                weight_data = await asyncio.wait_for(
+                    asyncio.to_thread(vol_engine.calculate_weight, target_base),
+                    timeout=15.0
+                )
                 raw_weight = weight_data.get('weight', 1.0) if isinstance(weight_data, dict) else weight_data
                 real_weight = float(raw_weight)
                 if not math.isfinite(real_weight):
                     raise ValueError(f"비정상 수학 수치 산출: {real_weight}")
+            except asyncio.TimeoutError:
+                logging.warning(f"[{ticker}] 변동성 지표 산출 타임아웃 (15초 초과). 중립 안전마진(1.0) 강제 적용.")
+                real_weight = 1.0
             except Exception as e:
                 logging.warning(f"[{ticker}] 변동성 지표 산출 실패. 중립 안전마진(1.0) 강제 적용: {e}")
                 real_weight = 1.0 
@@ -158,11 +167,13 @@ def main():
         queue_ledger=queue_ledger, strategy_rev=strategy_rev
     )
     
+    # 🚨 MODIFIED: [V44.65 엣지 타임라인 동기화 및 오프닝 휩소 원천 락다운]
+    # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막]
     app_data = {
         'cfg': cfg, 'broker': broker, 'strategy': strategy, 
         'queue_ledger': queue_ledger, 'strategy_rev': strategy_rev,  
         'bot': bot, 'tx_lock': None, 'base_map': TICKER_BASE_MAP,
-        'tz_est': est_zone, 'regime_data': None 
+        'tz_est': est_zone, 'regime_data': {"status": "pending", "msg": "10:00 EST 이전 오프닝 휩소 대기"} 
     }
 
     app = (
@@ -214,8 +225,10 @@ def main():
     # 🚨 [EST 100% 락온] 정규장 통합 주문: 04:05 EST
     jq.run_daily(scheduled_regular_trade, time=datetime.time(4, 5, tzinfo=est_zone), days=(0,1,2,3,4), chat_id=ADMIN_CHAT_ID, data=app_data)
     
-    # 🚨 [EST 100% 락온] VWAP 1분 타격 개시 전 Fail-Safe: 15:30 EST
-    jq.run_daily(scheduled_vwap_init_and_cancel, time=datetime.time(15, 30, tzinfo=est_zone), days=(0,1,2,3,4), chat_id=ADMIN_CHAT_ID, data=app_data)
+    # 🚨 MODIFIED: [V44.65 엣지 타임라인 동기화 및 오프닝 휩소 원천 락다운]
+    # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막]
+    # 🚨 [EST 100% 락온] VWAP 1분 타격 개시 전 Fail-Safe: 15:27 EST
+    jq.run_daily(scheduled_vwap_init_and_cancel, time=datetime.time(15, 27, tzinfo=est_zone), days=(0,1,2,3,4), chat_id=ADMIN_CHAT_ID, data=app_data)
 
     # 매 1분 스나이퍼 및 VWAP 타격
     jq.run_repeating(scheduled_sniper_monitor, interval=60, first=30, chat_id=ADMIN_CHAT_ID, data=app_data)
