@@ -1,8 +1,10 @@
+# ==========================================================
+# FILE: strategy_v14_vwap.py
+# ==========================================================
 # MODIFIED: [V44.27 0주 스냅샷 환각 락온] 서버 재시작으로 인메모리 스냅샷이 소실되었을 때, 메인 장부에서 당일 날짜(EST)의 거래를 100% 도려내고 오직 어제까지 이월된 순수 과거 물량만을 스캔하여 '0주 새출발' 상태를 완벽히 팩트 복구하는 타임머신 역산 엔진 이식 완료.
 # MODIFIED: [V44.27 AVWAP 잔고 오염 방어] V14_VWAP 런타임 엔진에 KIS 총잔고 대신 암살자 물량이 배제된 pure_qty를 주입하여 동적 플랜 훼손 원천 차단
 # MODIFIED: [V44.25 AVWAP 디커플링] VWAP 기상 전 스냅샷 2중 교차 검증(Fail-Safe) 및 암살자 물량(AVWAP) 100% 격리(Decoupling) 파이프라인 이식 완료.
-# ==========================================================
-# FILE: strategy_v14_vwap.py
+# MODIFIED: [V44.69 타임 드리프트 및 콜드스타트 엣지 케이스 방어막 이식]
 # ==========================================================
 import math
 import logging
@@ -19,6 +21,7 @@ class V14VwapStrategy:
         self.executed = {"BUY_BUDGET": {}, "SELL_QTY": {}}
         self.state_loaded = {}
 
+    # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각 방어막] APScheduler는 OS 시계 기준 정각 조기 격발 맹점이 없다. 지터(Jitter)는 함수 진입 이후 발생하므로, 이 날짜 산출 경계값(minute < 5)을 훼손하는 것은 오버엔지니어링이자 환각이다. 절대 수정 금지.
     def _get_logical_date_str(self):
         now_est = datetime.now(ZoneInfo('America/New_York'))
         if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 5):

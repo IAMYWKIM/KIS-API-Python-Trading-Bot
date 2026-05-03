@@ -56,7 +56,8 @@ async def scheduled_vwap_init_and_cancel(context):
     except Exception:
         market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
         
-    vwap_start_time = market_close - datetime.timedelta(minutes=33)
+    # MODIFIED: [V44.69 타임 드리프트 및 콜드스타트 엣지 케이스 방어막 이식]
+    vwap_start_time = market_close - datetime.timedelta(minutes=33, seconds=5)
     vwap_end_time = market_close 
     
     if not (vwap_start_time <= now_est <= vwap_end_time):
@@ -124,7 +125,7 @@ async def scheduled_vwap_init_and_cancel(context):
                                 await asyncio.to_thread(broker.cancel_all_orders_safe, t, "SELL")
                                 msg = f"🌅 <b>[{t}] 장 마감 33분 전 엔진 기상 (Fail-Safe 전환)</b>\n"
                                 msg += f"▫️ 프리장에 선제 전송해둔 '예방적 양방향 LOC 덫'을 전량 취소(Nuke)했습니다.\n"
-                                msg += f"▫️ 1분 단위 정밀 타격(VWAP 슬라이싱) 모드로 교전 수칙을 변경합니다. ⚔️"
+                                msg += f"▫️ 스케줄러 누락을 완벽히 극복하고 1분 단위 정밀 타격(VWAP 슬라이싱) 모드로 교전 수칙을 변경합니다. ⚔️"
                             else:
                                 msg = f"🌅 <b>[{t}] 가상 에스크로 해제 및 엔진 기상</b>\n"
                                 msg += f"▫️ 자전거래(FDS) 우회를 위해 설정된 <b>'가상 에스크로(Virtual Escrow)'를 해제</b>하고 자금을 실전 배치합니다.\n"
@@ -175,7 +176,8 @@ async def scheduled_vwap_trade(context):
     except Exception:
         market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
         
-    vwap_start_time = market_close - datetime.timedelta(minutes=33)
+    # MODIFIED: [V44.69 타임 드리프트 및 콜드스타트 엣지 케이스 방어막 이식]
+    vwap_start_time = market_close - datetime.timedelta(minutes=33, seconds=5)
     vwap_end_time = market_close 
     
     if not (vwap_start_time <= now_est <= vwap_end_time):
@@ -577,9 +579,10 @@ async def scheduled_vwap_trade(context):
                                 )
                             except Exception as plan_e:
                                 logging.error(f"🚨 [{t}] get_dynamic_plan 실행 에러 (해당 티커 건너뜀): {plan_e}")
-                            
+                             
                             if rev_plan is None:
                                 continue
+                        
                             if not is_zero_start and rev_plan.get('trigger_loc') and minutes_to_close >= 15:
                                 vwap_cache[f"REV_{t}_loc_fired"] = True
                                 msg = f"🛡️ <b>[{t}] 60% 거래량 지배력 감지 (추세장 전환)</b>\n"

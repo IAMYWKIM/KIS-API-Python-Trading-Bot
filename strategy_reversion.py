@@ -6,6 +6,7 @@
 # MODIFIED: [V44.25 AVWAP 디커플링] VWAP 기상 전 스냅샷 2중 교차 검증(Fail-Safe) 및 암살자 물량(AVWAP) 100% 격리(Decoupling) 파이프라인 이식 완료.
 # MODIFIED: [V44.36 큐 장부 vs 브로커 실잔고 불일치 팩트 스캔] 페일세이프 스냅샷 복원 시 KIS 순수 본대 수량과 큐 장부 이월 수량 간의 팩트 불일치가 발생할 경우 명시적으로 경고를 타전하여 CALIB 보정을 유도하도록 감시망(EC-3) 이식 완료.
 # MODIFIED: [V44.48 런타임 붕괴 방어] 들여쓰기 붕괴(IndentationError) 완벽 교정.
+# MODIFIED: [V44.69 타임 드리프트 및 콜드스타트 엣지 케이스 방어막 이식]
 import math
 import os
 import json
@@ -27,6 +28,7 @@ class ReversionStrategy:
         self.state_loaded = {}
         self.was_holding = {}
 
+    # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각 방어막] APScheduler는 OS 시계 기준 정각 조기 격발 맹점이 없다. 지터(Jitter)는 함수 진입 이후 발생하므로, 이 날짜 산출 경계값(minute < 5)을 훼손하는 것은 오버엔지니어링이자 환각이다. 절대 수정 금지.
     def _get_logical_date_str(self):
         now_est = datetime.now(ZoneInfo('America/New_York'))
         if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 5):

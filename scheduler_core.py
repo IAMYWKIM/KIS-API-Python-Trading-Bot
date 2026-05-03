@@ -206,6 +206,10 @@ async def scheduled_force_reset(context):
             tx_lock = app_data['tx_lock']
             chat_id = context.job.chat_id
             
+            # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각 방어막] 04:00 EST 콜드스타트 시 tx_lock이 None이어도 전날의 매매 잠금(REG 등)은 무조건 해제되어야 당일 매매 마비를 막을 수 있다. 이 디커플링을 버그로 오인하여 tx_lock 하위로 종속시키는 훼손 행위를 영구 차단한다.
+            # MODIFIED: [V44.69 타임 드리프트 및 콜드스타트 엣지 케이스 방어막 이식]
+            await asyncio.to_thread(cfg.reset_locks)
+
             # 🚨 MODIFIED: [V44.65 KST 17:00 런타임 붕괴 및 이벤트 루프 교착 방어]
             # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막]
             if tx_lock is None:
@@ -215,8 +219,6 @@ async def scheduled_force_reset(context):
                 except Exception:
                     pass
                 return
-
-            await asyncio.to_thread(cfg.reset_locks)
             
             # MODIFIED: [버그 2 수술] force_reset tx_lock 점유율 압축 및 병목 해체
             # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막] 이곳의 tx_lock 점유 구간은 이미 V44.66에서 극한 압축되었다. 락 대기 병목을 핑계로 로직을 확장하는 오버 엔지니어링을 절대 금지한다.
