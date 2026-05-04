@@ -8,6 +8,8 @@
 # 🚨 MODIFIED: [V44.62 인덴테이션 붕괴 수술] PEP8 규격 강제 및 IndentationError(런타임 즉사) 맹점 영구 소각 완료.
 # MODIFIED: [V44.63 자율주행 수익률 하향 스위칭] AUTO 모드 수익률 스펙트럼 1.0%~4.0% 절대 락온 완료
 # 🚨 MODIFIED: [V44.72 팩트 교정] AVWAP 관제탑 day_high 파라미터 누수 배선 연결
+# 🚨 MODIFIED: [V44.73 팩트 교정] AVWAP 관제탑 가상 예산(0.0) 누수 및 타격 조건 충족 렌더링 락온
+# 🚨 MODIFIED: [V44.74 팩트 교정] AVWAP 관제탑 딥매수 완료 후 현재가 증발 맹점 완벽 수술
 # ==========================================================
 import logging
 import datetime
@@ -201,27 +203,23 @@ class AvwapConsolePlugin:
             else:
                 msg += f"▫️ 모드: <b>{strike_icon_txt} 세팅됨</b>\n"
 
-            msg += f"▫️ 독립 물량/평단: {avwap_qty}주 / ${avwap_avg:.2f}\n"
+            msg += f"▫️ 독립 물량: {avwap_qty}주\n"
 
             exh_5 = 0.0
             rem_5_pct = 0.0
 
             if atr5 > 0 and prev_c > 0 and day_low > 0:
-                ref_price = avwap_avg if (avwap_qty > 0 and avwap_avg > 0) else curr_p
-                ref_label = "매수평단" if (avwap_qty > 0 and avwap_avg > 0) else "현재가"
-                
                 high_pct = ((day_high - prev_c) / prev_c) * 100 if prev_c > 0 else 0.0
                 low_pct = ((day_low - prev_c) / prev_c) * 100 if prev_c > 0 else 0.0
-                curr_pct = ((ref_price - prev_c) / prev_c) * 100 if prev_c > 0 else 0.0
                 
-                rebound_gap = ref_price - day_low if ref_price >= day_low else 0.0
-                actual_rebound_pct = (rebound_gap / prev_c) * 100 if prev_c > 0 else 0.0
+                curr_pct = ((curr_p - prev_c) / prev_c) * 100 if prev_c > 0 else 0.0
+                curr_rebound_gap = curr_p - day_low if curr_p >= day_low else 0.0
+                curr_rebound_pct = (curr_rebound_gap / prev_c) * 100 if prev_c > 0 else 0.0
                 
                 high_rebound_gap = day_high - day_low if day_high >= day_low else 0.0
                 high_rebound_pct = (high_rebound_gap / prev_c) * 100 if prev_c > 0 else 0.0
-                curr_rebound_pct = actual_rebound_pct
                 
-                # 🚨 MODIFIED: [V44.31 수술] 현재가(actual_rebound_pct)가 아닌 당일 고가(high_rebound_pct) 기준으로 방전율 및 잔여 체력 계산
+                # 🚨 MODIFIED: [V44.31 수술] 현재가가 아닌 당일 고가 기준으로 방전율 및 잔여 체력 계산
                 exh_5 = (high_rebound_pct / atr5 * 100) if atr5 > 0 else 0
                 rem_5_pct = atr5 - high_rebound_pct
                 
@@ -235,7 +233,15 @@ class AvwapConsolePlugin:
                 msg += f"▫️ 전일 종가: <b>${prev_c:.2f}</b> (베이스라인)\n"
                 msg += f"▫️ 당일 고가: <b>${day_high:.2f}</b> ({high_pct:+.2f}%/<b>+{high_rebound_pct:.2f}%</b>)\n"
                 msg += f"▫️ 당일 저가: <b>${day_low:.2f}</b> ({low_pct:+.2f}%/<b>베이스</b>)\n"
-                msg += f"▫️ {ref_label}: <b>${ref_price:.2f}</b> ({curr_pct:+.2f}%/<b>+{curr_rebound_pct:.2f}%</b>)\n\n"
+                msg += f"▫️ 현재가: <b>${curr_p:.2f}</b> ({curr_pct:+.2f}%/<b>+{curr_rebound_pct:.2f}%</b>)\n"
+                
+                # 🚨 MODIFIED: [V44.74 팩트 교정] 매수평단과 현재가 동시 표출 락온
+                if avwap_qty > 0 and avwap_avg > 0:
+                    avg_pct = ((avwap_avg - prev_c) / prev_c) * 100 if prev_c > 0 else 0.0
+                    avg_rebound_gap = avwap_avg - day_low if avwap_avg >= day_low else 0.0
+                    avg_rebound_pct = (avg_rebound_gap / prev_c) * 100 if prev_c > 0 else 0.0
+                    msg += f"▫️ 매수평단: <b>${avwap_avg:.2f}</b> ({avg_pct:+.2f}%/<b>+{avg_rebound_pct:.2f}%</b>)\n"
+                msg += "\n"
                 
                 msg += f"🔋 <b>단기 체력 (ATR5 예상진폭: {atr5:.2f}%)</b>\n"
                 msg += f"▫️ 잔여 체력: <b>{rem_5_str}</b>\n"
@@ -293,19 +299,25 @@ class AvwapConsolePlugin:
                         base_day_open=0.0,
                         avwap_avg_price=avwap_avg,
                         avwap_qty=avwap_qty,
-                        avwap_alloc_cash=0.0,
+                        avwap_alloc_cash=999999.0, # 🚨 MODIFIED: [V44.73] 텔레그램 관제탑 가상 예산(0.0) 누수 방어를 위해 넉넉한 가상 예산 주입
                         context_data=avwap_ctx,
                         df_1min_base=df_1m,
                         now_est=now_est,
                         avwap_state=avwap_state_dict,
                         regime_data=None,
                         prev_close=prev_c,
-                        day_high=day_high,  # 🚨 MODIFIED: [V44.72 팩트 교정] AVWAP 관제탑 day_high 파라미터 누수 배선 연결
+                        day_high=day_high,
                         day_low=day_low,
                         atr5=atr5
                     )
+                    
+                    action = decision.get('action')
                     reason = decision.get('reason', '')
-                    if reason:
+                    
+                    # 🚨 MODIFIED: [V44.73] 타격 조건 충족 시 직관적 렌더링 락온
+                    if action in ['BUY', 'SELL']:
+                        status_txt = f"🔥 타격 조건 100% 충족 ({reason})"
+                    elif reason:
                         status_txt = f"⏳ 대기 ({reason})"
                 except Exception as e:
                     logging.debug(f"AVWAP 상태 텍스트 추출 에러: {e}")
