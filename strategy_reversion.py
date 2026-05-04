@@ -6,6 +6,7 @@
 # MODIFIED: [V44.25 AVWAP 디커플링] VWAP 기상 전 스냅샷 2중 교차 검증(Fail-Safe) 및 암살자 물량(AVWAP) 100% 격리(Decoupling) 파이프라인 이식 완료.
 # MODIFIED: [V44.36 큐 장부 vs 브로커 실잔고 불일치 팩트 스캔] 페일세이프 스냅샷 복원 시 KIS 순수 본대 수량과 큐 장부 이월 수량 간의 팩트 불일치가 발생할 경우 명시적으로 경고를 타전하여 CALIB 보정을 유도하도록 감시망(EC-3) 이식 완료.
 # MODIFIED: [V44.48 런타임 붕괴 방어] 들여쓰기 붕괴(IndentationError) 완벽 교정.
+# NEW: [VWAP 잔차 증발 방어 롤백 엔진] 주문 거절/미체결 시 삭감된 예산을 버킷 식별자 기반으로 원상 복구(Refund)하는 환불 파이프라인 개통 완료.
 import math
 import os
 import json
@@ -102,6 +103,14 @@ class ReversionStrategy:
                     os.unlink(temp_path)
                 except OSError:
                     pass
+
+    # NEW: [VWAP 잔차 증발 방어를 위한 롤백(환불) 엔진 이식]
+    def refund_residual(self, ticker, bucket, refund_value):
+        """ 스케줄러에서 미체결/거절로 인해 스킵된 예산 또는 수량을 해당 버킷에 원상 복구합니다. """
+        self._load_state_if_needed(ticker)
+        if bucket in self.residual:
+            self.residual[bucket][ticker] = float(self.residual[bucket].get(ticker, 0.0)) + float(refund_value)
+            self._save_state(ticker)
 
     def save_daily_snapshot(self, ticker, plan_data):
         snap_file = self._get_snapshot_file(ticker)
@@ -413,7 +422,8 @@ class ReversionStrategy:
                     alloc_q1 = int(math.floor(b1_budget_slice / curr_p))
                     self.residual["BUY1"][ticker] = b1_bucket - (alloc_q1 * curr_p)
                     if alloc_q1 > 0:
-                        orders.append({"side": "BUY", "qty": alloc_q1, "price": p1_trigger})
+                        # MODIFIED: [잔차 증발 방어] 버킷 식별자 주입
+                        orders.append({"side": "BUY", "qty": alloc_q1, "price": p1_trigger, "bucket": "BUY1"})
                 else:
                     self.residual["BUY1"][ticker] = b1_bucket
 
@@ -421,7 +431,8 @@ class ReversionStrategy:
                     alloc_q2 = int(math.floor(b2_budget_slice / curr_p))
                     self.residual["BUY2"][ticker] = b2_bucket - (alloc_q2 * curr_p)
                     if alloc_q2 > 0:
-                        orders.append({"side": "BUY", "qty": alloc_q2, "price": p2_trigger})
+                        # MODIFIED: [잔차 증발 방어] 버킷 식별자 주입
+                        orders.append({"side": "BUY", "qty": alloc_q2, "price": p2_trigger, "bucket": "BUY2"})
                 else:
                     self.residual["BUY2"][ticker] = b2_bucket
             else:
@@ -440,7 +451,8 @@ class ReversionStrategy:
                     alloc_qs = int(min(math.floor(exact_qs), rem_qty_total))
                     self.residual["SELL_JACKPOT"][ticker] = float(exact_qs - alloc_qs)
                     if alloc_qs > 0:
-                        orders.append({"side": "SELL", "qty": alloc_qs, "price": trigger_jackpot})
+                        # MODIFIED: [잔차 증발 방어] 버킷 식별자 주입
+                        orders.append({"side": "SELL", "qty": alloc_qs, "price": trigger_jackpot, "bucket": "SELL_JACKPOT"})
                 else:
                     if l1_qty > 0 and curr_p >= trigger_l1:
                         sold_so_far = int(total_q) - rem_qty_total
@@ -450,7 +462,8 @@ class ReversionStrategy:
                             alloc_l1 = int(min(math.floor(exact_l1), rem_l1_qty))
                             self.residual["SELL_L1"][ticker] = float(exact_l1 - alloc_l1)
                             if alloc_l1 > 0:
-                                orders.append({"side": "SELL", "qty": alloc_l1, "price": trigger_l1})
+                                # MODIFIED: [잔차 증발 방어] 버킷 식별자 주입
+                                orders.append({"side": "SELL", "qty": alloc_l1, "price": trigger_l1, "bucket": "SELL_L1"})
                             rem_qty_total -= alloc_l1
 
                     if upper_qty > 0 and trigger_upper > 0 and curr_p >= trigger_upper and rem_qty_total > 0:
@@ -458,7 +471,8 @@ class ReversionStrategy:
                         alloc_upper = int(min(math.floor(exact_upper), rem_qty_total))
                         self.residual["SELL_UPPER"][ticker] = float(exact_upper - alloc_upper)
                         if alloc_upper > 0:
-                            orders.append({"side": "SELL", "qty": alloc_upper, "price": trigger_upper})
+                            # MODIFIED: [잔차 증발 방어] 버킷 식별자 주입
+                            orders.append({"side": "SELL", "qty": alloc_upper, "price": trigger_upper, "bucket": "SELL_UPPER"})
 
         if is_zero_start_session and market_type != "AFTER":
             orders = [o for o in orders if o.get("side") != "SELL"]
