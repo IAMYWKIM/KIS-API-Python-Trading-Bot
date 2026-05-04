@@ -1,7 +1,7 @@
 # ==========================================================
 # FILE: strategy_v_avwap.py
 # ==========================================================
-# [strategy_v_avwap.py] - 🌟 V44.61 앱솔루트 팩트 교정 🌟
+# [strategy_v_avwap.py] - 🌟 V45.00 앱솔루트 팩트 교정 🌟
 # 💡 V-REV 하이브리드 전용 차세대 AVWAP 스나이퍼 플러그인 (Dual-Referencing)
 # ⚠️ 초공격형 당일 청산 암살자 (V-REV 잉여 현금 100% 몰빵 & -8% 하드스탑)
 # 🚨 [V29.03 팩트 수술] 기억상실(Amnesia) 엣지 케이스 방어막 (Persistence 엔진 탑재)
@@ -20,6 +20,7 @@
 # 🚨 MODIFIED: [V44.61 팩트 교정] 당일 실시간 VWAP 연산 시 프리마켓 노이즈 전면 소각 및 정규장 100% 락온
 # MODIFIED: [V44.62 자율주행 수익률 하향 스위칭] AUTO 모드 수익률 스펙트럼 1.0%~4.0% 절대 락온 완료
 # MODIFIED: [V44.64 진입 마지노선 하향 락온] 최소 잔여 체력 진입 금지선을 2.0%에서 1.0%로 팩트 교정 완료
+# NEW: [V45.00 동적 킬 스위치(Kill Switch) 락온] 정규장 동안 전일 종가(Zero-Line)를 위아래로 모두 관통하여 횡보장(Sideways)으로 판별 시, 빈손 대기 중인 암살자의 신규 진입을 100% 차단하고 당일 셧다운을 격발하는 절대 방어막 이식 완료.
 # ==========================================================
 import logging
 import datetime
@@ -190,33 +191,42 @@ class VAvwapHybridPlugin:
         vwap_success = False 
         avg_vwap_5m = base_curr_p
         
+        # NEW: [V45.00 동적 킬 스위치] 정규장 실시간 고가/저가 초기화
+        base_reg_high = base_curr_p
+        base_reg_low = base_curr_p
+        
         is_inverse = exec_ticker.upper() in ["SOXS", "SQQQ", "SPXU"]
         
         if df_1min_base is not None and not df_1min_base.empty:
             try:
                 df = df_1min_base.copy()
                 
-                # MODIFIED: [V44.61 팩트 수술] 당일 실시간 VWAP 연산 시 프리마켓 노이즈 원천 차단
+                # 🚨 MODIFIED: [V44.61 팩트 수술] 당일 실시간 VWAP 연산 시 프리마켓 노이즈 원천 차단
                 if 'time_est' in df.columns:
                     df = df[(df['time_est'] >= '093000') & (df['time_est'] <= '155900')]
+                
+                if not df.empty:
+                    # NEW: [V45.00 동적 킬 스위치] 정규장 전용 순수 고가/저가 스캔 락온
+                    base_reg_high = float(df['high'].astype(float).max())
+                    base_reg_low = float(df['low'].astype(float).min())
                     
-                df['tp'] = (df['high'].astype(float) + df['low'].astype(float) + df['close'].astype(float)) / 3.0
-                df['vol'] = df['volume'].astype(float)
-                df['vol_tp'] = df['tp'] * df['vol']
-                
-                cum_vol = df['vol'].sum()
-                if cum_vol > 0:
-                    base_vwap = df['vol_tp'].sum() / cum_vol
-                    vwap_success = True
-                
-                if len(df) >= 5:
-                    recent_5 = df.tail(5)
-                    sum_vol_5 = recent_5['vol'].sum()
-                    if sum_vol_5 > 0:
-                        avg_vwap_5m = recent_5['vol_tp'].sum() / sum_vol_5
-                else:
+                    df['tp'] = (df['high'].astype(float) + df['low'].astype(float) + df['close'].astype(float)) / 3.0
+                    df['vol'] = df['volume'].astype(float)
+                    df['vol_tp'] = df['tp'] * df['vol']
+                    
+                    cum_vol = df['vol'].sum()
                     if cum_vol > 0:
-                        avg_vwap_5m = base_vwap
+                        base_vwap = df['vol_tp'].sum() / cum_vol
+                        vwap_success = True
+                
+                    if len(df) >= 5:
+                        recent_5 = df.tail(5)
+                        sum_vol_5 = recent_5['vol'].sum()
+                        if sum_vol_5 > 0:
+                            avg_vwap_5m = recent_5['vol_tp'].sum() / sum_vol_5
+                    else:
+                        if cum_vol > 0:
+                            avg_vwap_5m = base_vwap
 
             except Exception as e:
                 logging.error(f"🚨 [V_AVWAP] 기초자산 1분봉 VWAP/5MA 연산 실패: {e}")
@@ -239,7 +249,7 @@ class VAvwapHybridPlugin:
         safe_qty = int(math.floor(float(avwap_qty)))
 
         # ---------------------------------------------------------
-        # 1. 매도 (보유 중일 때) 로직
+        # 1. 매도 (보유 중일 때) 로직 - 옵션 A (횡보장 셧다운 무시)
         # ---------------------------------------------------------
         if safe_qty > 0:
             safe_avg = avwap_avg_price if avwap_avg_price > 0 else exec_curr_p
@@ -289,13 +299,21 @@ class VAvwapHybridPlugin:
             return _build_res('HOLD', '보유중_관망')
 
         # ---------------------------------------------------------
-        # 2. 매수 (포지션 0주 일 때) 로직
+        # 2. 매수 (포지션 0주 일 때) 로직 - 동적 킬 스위치 감시
         # ---------------------------------------------------------
         if not context_data:
             return _build_res('WAIT', '매크로_데이터_수집대기')
 
         if avwap_state.get('shutdown', False):
             return _build_res('WAIT', '작전완수_또는_강제청산으로_인한_당일영구동결')
+
+        # NEW: [V45.00 동적 킬 스위치 (옵션 A 락온)] 빈손 대기 중 횡보장(Zero-Line 관통) 감지 시 즉각 셧다운
+        base_prev_c_for_kill = float(context_data.get('prev_close', 0.0)) if context_data else 0.0
+        if base_prev_c_for_kill > 0 and base_reg_high > 0 and base_reg_low > 0:
+            if base_reg_high > base_prev_c_for_kill and base_reg_low < base_prev_c_for_kill:
+                avwap_state["shutdown"] = True
+                self.save_state(exec_ticker, now_est, avwap_state)
+                return _build_res('SHUTDOWN', '실시간_횡보장_감지(Zero-Line_관통)_신규진입_영구동결(조기퇴근)')
 
         # MODIFIED: [10:00 EST 롤백] 타임쉴드 판별 및 반환 텍스트 100% 팩트 교정
         if curr_time < time_1000:

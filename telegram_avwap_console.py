@@ -11,6 +11,7 @@
 # 🚨 MODIFIED: [V44.73 팩트 교정] AVWAP 관제탑 가상 예산(0.0) 누수 및 타격 조건 충족 렌더링 락온
 # 🚨 MODIFIED: [V44.74 팩트 교정] AVWAP 관제탑 딥매수 완료 후 현재가 증발 맹점 완벽 수술
 # 🚨 MODIFIED: [V44.75 팩트 교정] 봇 재가동(업데이트) 시 메모리 증발로 인한 AVWAP 정보 유실(0주 표출) 시각적 맹점 원천 차단. 관제탑 자체 Self-Healing 로드 엔진 이식
+# NEW: [V45.00 동적 킬 스위치 상태 렌더링] 기초자산 정규장 순수 진폭(High/Low)을 추출하여 Zero-Line 관통 여부(횡보 감시) 및 SHUTDOWN 상태를 직관적으로 렌더링.
 # ==========================================================
 import logging
 import datetime
@@ -49,6 +50,8 @@ class AvwapConsolePlugin:
         base_prev_vwap, base_curr_vwap = 0.0, 0.0
         avg_vwap_5m = 0.0
         base_day_high, base_day_low, base_prev_c = 0.0, 0.0, 0.0
+        # NEW: [V45.00 동적 킬 스위치] 정규장 스캔용 변수
+        base_reg_high, base_reg_low = 0.0, 0.0
         
         df_1m = None
         try:
@@ -84,6 +87,10 @@ class AvwapConsolePlugin:
                     df = df[(df['time_est'] >= '093000') & (df['time_est'] <= '155900')]
                 
                 if not df.empty:
+                    # NEW: [V45.00 동적 킬 스위치] 정규장 전용 순수 고가/저가 스캔 락온
+                    base_reg_high = float(df['high'].astype(float).max())
+                    base_reg_low = float(df['low'].astype(float).min())
+                    
                     df['tp'] = (df['high'].astype(float) + df['low'].astype(float) + df['close'].astype(float)) / 3.0
                     df['vol'] = df['volume'].astype(float)
                     df['vol_tp'] = df['tp'] * df['vol']
@@ -115,8 +122,16 @@ class AvwapConsolePlugin:
         if base_prev_c > 0 and base_day_high > 0 and base_day_low > 0:
             b_high_pct = ((base_day_high - base_prev_c) / base_prev_c) * 100
             b_low_pct = ((base_day_low - base_prev_c) / base_prev_c) * 100
-            msg += f"▫️ 당일 고가: <b>${base_day_high:.2f}</b> ({b_high_pct:+.2f}%)\n"
-            msg += f"▫️ 당일 저가: <b>${base_day_low:.2f}</b> ({b_low_pct:+.2f}%)\n"
+            msg += f"▫️ 당일 고가(프리포함): <b>${base_day_high:.2f}</b> ({b_high_pct:+.2f}%)\n"
+            msg += f"▫️ 당일 저가(프리포함): <b>${base_day_low:.2f}</b> ({b_low_pct:+.2f}%)\n"
+            
+        # NEW: [V45.00 동적 킬 스위치 상태 렌더링]
+        if base_prev_c > 0 and base_reg_high > 0 and base_reg_low > 0:
+            if base_reg_high > base_prev_c and base_reg_low < base_prev_c:
+                zero_line_status = "🔴 관통 (추세 붕괴 / 횡보장 셧다운)"
+            else:
+                zero_line_status = "🟢 방어 (추세 유지 / 원웨이)"
+            msg += f"▫️ 횡보 감시: <b>{zero_line_status}</b>\n"
         
         if base_prev_vwap > 0:
             msg += f"▫️ 전일 VWAP: <b>${base_prev_vwap:,.2f}</b>\n"
@@ -329,9 +344,11 @@ class AvwapConsolePlugin:
                     action = decision.get('action')
                     reason = decision.get('reason', '')
                     
-                    # 🚨 MODIFIED: [V44.73] 타격 조건 충족 시 직관적 렌더링 락온
+                    # 🚨 MODIFIED: [V45.00] 타격 조건 충족 및 셧다운 격발 직관적 렌더링 락온
                     if action in ['BUY', 'SELL']:
                         status_txt = f"🔥 타격 조건 100% 충족 ({reason})"
+                    elif action == 'SHUTDOWN':
+                        status_txt = f"🛑 셧다운 격발 ({reason})"
                     elif reason:
                         status_txt = f"⏳ 대기 ({reason})"
                 except Exception as e:
