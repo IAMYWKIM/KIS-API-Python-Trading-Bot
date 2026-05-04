@@ -75,7 +75,9 @@ def get_budget_allocation(cash, tickers, cfg):
             try:
                 est = ZoneInfo('America/New_York')
                 _now_est = datetime.datetime.now(est)
-                if _now_est.hour < 4 or (_now_est.hour == 4 and _now_est.minute < 5):
+                
+                # MODIFIED: [04:05 EST 논리적 날짜 경계선 붕괴 방어] 04:04:59 조기 격발 오염 방지를 위해 4분으로 축소 교정
+                if _now_est.hour < 4 or (_now_est.hour == 4 and _now_est.minute < 4):
                     _logical_date = _now_est - datetime.timedelta(days=1)
                 else:
                     _logical_date = _now_est
@@ -147,7 +149,7 @@ def perform_self_cleaning():
             if os.path.isfile(f) and os.stat(f).st_mtime < now - seven_days:
                 try: os.remove(f)
                 except: pass
-                
+                 
         for f in glob.glob("data/*.bak_*"):
             if os.path.isfile(f) and os.stat(f).st_mtime < now - seven_days:
                 try: os.remove(f)
@@ -202,14 +204,14 @@ async def scheduled_force_reset(context):
         try:
             app_data = context.job.data
             cfg = app_data['cfg']
+            
+            # MODIFIED: [초기화 누수 및 락온 해제] tx_lock 미초기화 시 스킵되더라도 매매 잠금은 무조건 해제되도록 전진 배치하여 멱등성 확보
+            await asyncio.to_thread(cfg.reset_locks)
+            
             broker = app_data['broker']
             tx_lock = app_data['tx_lock']
             chat_id = context.job.chat_id
-            
-            # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각 방어막] 04:00 EST 콜드스타트 시 tx_lock이 None이어도 전날의 매매 잠금(REG 등)은 무조건 해제되어야 당일 매매 마비를 막을 수 있다. 이 디커플링을 버그로 오인하여 tx_lock 하위로 종속시키는 훼손 행위를 영구 차단한다.
-            # MODIFIED: [V44.69 타임 드리프트 및 콜드스타트 엣지 케이스 방어막 이식]
-            await asyncio.to_thread(cfg.reset_locks)
-
+             
             # 🚨 MODIFIED: [V44.65 KST 17:00 런타임 붕괴 및 이벤트 루프 교착 방어]
             # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막]
             if tx_lock is None:
@@ -268,7 +270,7 @@ async def scheduled_force_reset(context):
                                     changed = True
                             if changed:
                                 await asyncio.to_thread(cfg._save_json, cfg.FILES["LEDGER"], ledger_data)
-                            
+                             
                             msg_addons += f"\n🌤️ <b>[{t}] 리버스 목표 달성({curr_ret:.2f}%)!</b> 격리 병동 졸업 및 Escrow 해제 완료!"
                         else:
                             await asyncio.to_thread(cfg.increment_reverse_day, t)
@@ -287,7 +289,7 @@ async def scheduled_force_reset(context):
     try:
         await asyncio.wait_for(_do_force_reset(), timeout=180.0)
     except Exception as e:
-        logging.error(f"🚨 [force_reset] 전역 타임아웃(180초) 또는 런타임 붕괴 발생: {e}")
+         logging.error(f"🚨 [force_reset] 전역 타임아웃(180초) 또는 런타임 붕괴 발생: {e}")
 
 # 🚨 [KST 분기 함수 통합] 21:00 EST 스케줄 단일화
 async def scheduled_auto_sync(context):
@@ -340,7 +342,7 @@ async def scheduled_auto_sync(context):
     success_tickers = []
     active_tickers = await asyncio.to_thread(context.job.data['cfg'].get_active_tickers)
     for t in active_tickers:
-        # MODIFIED: [제2헌법 라우팅 누수 런타임 붕괴 방어] sync_engine 호출로 팩트 교정
+         # MODIFIED: [제2헌법 라우팅 누수 런타임 붕괴 방어] sync_engine 호출로 팩트 교정
         res = await bot.sync_engine.process_auto_sync(t, chat_id, context, silent_ledger=True)
         if res == "SUCCESS":
             success_tickers.append(t)

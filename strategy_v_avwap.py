@@ -10,7 +10,7 @@
 # 🚨 MODIFIED: [V32.00 방어막] 2차 손절망(재진입) 환각을 영구 차단하는 13계명 백신 주석 이식 완료.
 # 🚨 MODIFIED: [V41.XX 파격적 수술] 0% 쿨다운, 갭 타격, 손절 셧다운 전면 폐기 & 무제한 VWAP 모멘텀 돌파 엔진 이식.
 # 🚨 MODIFIED: [V42.12 그랜드 핫픽스] 부등호 논리 완벽 원상 복구! (당일 > 5분평균 = 상승 롱 / 당일 < 5분평균 = 하락 숏)
-# 🚨 MODIFIED: [V43.00 작전 통제실 복구] 사용자가 설정한 커스텀 목표 수익률(Target) 수신 및 조기퇴근/다중출장 모드 연동 엔진 대수술 완료.
+# 🚨 MODIFIED: [V43.00 작전 통제실 복구] 사용자가 설정한 커스텀 목표 수익률(Target) 및 근무 모드(조기퇴근/다중출장) 파라미터를 하위 플러그인(strategy_v_avwap)으로 전달하는 라우터 배선 복구 완료.
 # 🚨 MODIFIED: [V43.07] 체력 소진율(ATR5) 연동 목표 수익률 자율주행(Auto) 익절 렌더링 엔진 완벽 융합 완료.
 # 🚨 MODIFIED: [V44.03 체력 보존 락온] 매수(BUY) 트리거 최상단에 5일 ATR 기반 잔여 체력 검증 파이프라인을 이식하여 상승/하락 여력이 1.0% 미만일 경우 즉시 방아쇠를 강제 파기(WAIT)하는 무결점 락온 확립.
 # 🚨 MODIFIED: [V44.08 팩트 교정] 5분 평균 VWAP 부등호 역배선 100% 원상 복구 및 절대 헌법 락온
@@ -39,7 +39,8 @@ class VAvwapHybridPlugin:
         self.base_stop_loss_pct = 0.08 / 3.0  # 레버리지 3배 환산 시 -8.0% 하드스탑 고정
         
     def _get_logical_date_str(self, now_est):
-        if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 5):
+        # MODIFIED: [04:05 EST 논리적 날짜 경계선 붕괴 방어] 04:04:59 조기 격발 오염 방지를 위해 4분으로 축소 교정
+        if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 4):
             target_date = now_est - datetime.timedelta(days=1)
         else:
             target_date = now_est
@@ -104,7 +105,7 @@ class VAvwapHybridPlugin:
                     df_prev_day = df_past_1m[df_past_1m.index.date == last_date].copy()
                     
                     df_prev_day = df_prev_day.between_time('09:30', '15:59')
-                    
+                     
                     if not df_prev_day.empty:
                         prev_close = float(df_prev_day['Close'].iloc[-1])
                         
@@ -332,4 +333,3 @@ class VAvwapHybridPlugin:
             return _build_res('WAIT', '순수현금예산_부족_관망')
             
         return _build_res('WAIT', '타점_대기중')
-

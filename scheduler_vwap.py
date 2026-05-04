@@ -56,8 +56,8 @@ async def scheduled_vwap_init_and_cancel(context):
     except Exception:
         market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
         
-    # MODIFIED: [V44.69 타임 드리프트 및 콜드스타트 엣지 케이스 방어막 이식]
-    vwap_start_time = market_close - datetime.timedelta(minutes=33, seconds=5)
+    # MODIFIED: [타임 윈도우 조기 격발 증발 방어] 15초 안전 마진 결속
+    vwap_start_time = market_close - datetime.timedelta(minutes=33, seconds=15)
     vwap_end_time = market_close 
     
     if not (vwap_start_time <= now_est <= vwap_end_time):
@@ -125,7 +125,7 @@ async def scheduled_vwap_init_and_cancel(context):
                                 await asyncio.to_thread(broker.cancel_all_orders_safe, t, "SELL")
                                 msg = f"🌅 <b>[{t}] 장 마감 33분 전 엔진 기상 (Fail-Safe 전환)</b>\n"
                                 msg += f"▫️ 프리장에 선제 전송해둔 '예방적 양방향 LOC 덫'을 전량 취소(Nuke)했습니다.\n"
-                                msg += f"▫️ 스케줄러 누락을 완벽히 극복하고 1분 단위 정밀 타격(VWAP 슬라이싱) 모드로 교전 수칙을 변경합니다. ⚔️"
+                                msg += f"▫️ 1분 단위 정밀 타격(VWAP 슬라이싱) 모드로 교전 수칙을 변경합니다. ⚔️"
                             else:
                                 msg = f"🌅 <b>[{t}] 가상 에스크로 해제 및 엔진 기상</b>\n"
                                 msg += f"▫️ 자전거래(FDS) 우회를 위해 설정된 <b>'가상 에스크로(Virtual Escrow)'를 해제</b>하고 자금을 실전 배치합니다.\n"
@@ -176,8 +176,8 @@ async def scheduled_vwap_trade(context):
     except Exception:
         market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
         
-    # MODIFIED: [V44.69 타임 드리프트 및 콜드스타트 엣지 케이스 방어막 이식]
-    vwap_start_time = market_close - datetime.timedelta(minutes=33, seconds=5)
+    # MODIFIED: [타임 윈도우 조기 격발 증발 방어] 15초 안전 마진 결속
+    vwap_start_time = market_close - datetime.timedelta(minutes=33, seconds=15)
     vwap_end_time = market_close 
     
     if not (vwap_start_time <= now_est <= vwap_end_time):
@@ -574,8 +574,7 @@ async def scheduled_vwap_trade(context):
                                 # 🚨 [비동기 래핑] 파일 I/O 데드락 원천 차단
                                 rev_plan = await asyncio.to_thread(
                                     strategy_rev.get_dynamic_plan,
-                                    t, curr_p, prev_c, current_weight, vwap_status, 
-                                    min_idx, rev_daily_budget, virtual_q_data, False
+                                    t, curr_p, prev_c, current_weight, vwap_status, min_idx, rev_daily_budget, virtual_q_data, False
                                 )
                             except Exception as plan_e:
                                 logging.error(f"🚨 [{t}] get_dynamic_plan 실행 에러 (해당 티커 건너뜀): {plan_e}")
@@ -595,7 +594,7 @@ async def scheduled_vwap_trade(context):
                                         await asyncio.to_thread(broker.send_order, t, o['side'], o['qty'], o['price'], "LOC")
                                         await asyncio.sleep(0.2)
                                 continue
-                                
+                                 
                             target_orders = rev_plan.get('orders', [])
 
                     elif version == "V14":

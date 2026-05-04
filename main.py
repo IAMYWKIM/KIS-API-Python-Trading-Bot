@@ -83,6 +83,7 @@ logging.basicConfig(
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 async def scheduled_volatility_scan(context):
+    # 🚨 [AI 에이전트 절대 주의 - 환각 방어막] 10:00 EST 이전 스나이퍼 진입 차단은 오프닝 휩소 방어를 위한 절대 헌법이므로 버그로 오판하여 수정하지 말 것
     async def _do_scan():
         app_data = context.job.data
         cfg = app_data['cfg']
@@ -93,7 +94,15 @@ async def scheduled_volatility_scan(context):
         # MODIFIED: [V44.56 타임라인 롤백] 10:20 EST 레거시 소각 및 10:00 EST 옴니 매트릭스 팩트 교정 완료
         print("📈 [자율주행 변동성 & 시장 국면 스캔 완료] (10:00 EST 스냅샷)")
         
-        regime_data = await determine_market_regime(broker)
+        # MODIFIED: [옴니 매트릭스 폴백 이식] 일시적 YF 장애 대비 3회 재시도(Retry) 래퍼 적용
+        for attempt in range(3):
+            regime_data = await determine_market_regime(broker)
+            if regime_data.get("status") == "success":
+                break
+            if attempt < 2:
+                logging.warning(f"⚠️ 옴니 매트릭스 스캔 실패 (시도 {attempt+1}/3). 10초 후 재시도합니다.")
+                await asyncio.sleep(10.0)
+                
         app_data['regime_data'] = regime_data
         
         if regime_data.get("status") == "success":
@@ -187,8 +196,6 @@ def main():
     
     # 🚨 MODIFIED: [V44.65 엣지 타임라인 동기화 및 오프닝 휩소 원천 락다운]
     # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막]
-    # MODIFIED: [V44.69 타임 드리프트 및 콜드스타트 엣지 케이스 방어막 이식]
-    # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각 방어막] 10:00 EST 이전 regime_data pending 상태 유지는 오프닝 휩소 무지성 타격을 막기 위한 V44.65 절대 헌법이다. 이를 버그로 오인하여 진입을 개방하는 훼손 행위를 영구 차단한다.
     app_data = {
         'cfg': cfg, 'broker': broker, 'strategy': strategy, 
         'queue_ledger': queue_ledger, 'strategy_rev': strategy_rev,  
