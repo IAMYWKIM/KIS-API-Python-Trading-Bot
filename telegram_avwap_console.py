@@ -10,6 +10,7 @@
 # 🚨 MODIFIED: [V44.72 팩트 교정] AVWAP 관제탑 day_high 파라미터 누수 배선 연결
 # 🚨 MODIFIED: [V44.73 팩트 교정] AVWAP 관제탑 가상 예산(0.0) 누수 및 타격 조건 충족 렌더링 락온
 # 🚨 MODIFIED: [V44.74 팩트 교정] AVWAP 관제탑 딥매수 완료 후 현재가 증발 맹점 완벽 수술
+# 🚨 MODIFIED: [V44.75 팩트 교정] 봇 재가동(업데이트) 시 메모리 증발로 인한 AVWAP 정보 유실(0주 표출) 시각적 맹점 원천 차단. 관제탑 자체 Self-Healing 로드 엔진 이식
 # ==========================================================
 import logging
 import datetime
@@ -132,6 +133,20 @@ class AvwapConsolePlugin:
         keyboard = []
 
         for t in active_avwap:
+            # 🚨 MODIFIED: [V44.75 팩트 수술] 관제탑 호출 시 메모리 증발(업데이트/재부팅) 상태라면 디스크에서 직접 자가 복구(Self-Healing) 실행
+            if not tracking_cache.get(f"AVWAP_INIT_{t}"):
+                try:
+                    saved_state = await asyncio.to_thread(self.strategy.v_avwap_plugin.load_state, t, now_est)
+                    if saved_state:
+                        tracking_cache[f"AVWAP_BOUGHT_{t}"] = saved_state.get('bought', False)
+                        tracking_cache[f"AVWAP_SHUTDOWN_{t}"] = saved_state.get('shutdown', False)
+                        tracking_cache[f"AVWAP_QTY_{t}"] = saved_state.get('qty', 0)
+                        tracking_cache[f"AVWAP_AVG_{t}"] = saved_state.get('avg_price', 0.0)
+                        tracking_cache[f"AVWAP_STRIKES_{t}"] = saved_state.get('strikes', 0)
+                    tracking_cache[f"AVWAP_INIT_{t}"] = True
+                except Exception as e:
+                    logging.error(f"🚨 AVWAP 관제탑 상태 자가 복구 실패 ({t}): {e}")
+
             # 🚨 MODIFIED: 파일 I/O 속성 조회 비동기 래핑
             is_avwap_active = await asyncio.to_thread(getattr(self.cfg, 'get_avwap_hybrid_mode', lambda x: False), "SOXL" if t == "SOXS" else t)
             active_str = "🟢 가동 중" if is_avwap_active else "⚪ 대기 중 (OFF)"
