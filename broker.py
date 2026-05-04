@@ -29,7 +29,7 @@
 # MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo 도입으로 LMT 버그 차단 및 타임존 무결성 100% 확보
 # MODIFIED: [V40.XX 옴니 매트릭스] 거래소 동적 탐색 실패 시 SOXS 티커 AMEX Fallback 이식 및 타겟 인덱스 방어막 락온
 # NEW: [V40.XX 옴니 매트릭스] 전일 팩트 VWAP 및 당일 실시간 VWAP 듀얼 파싱 엔진(get_daily_vwap_info) 탑재
-# 🚨 MODIFIED: [V44.71 팩트 교정] 고/저가 스캔 시 프리마켓 노이즈 원천 차단 및 정규장 100% 락온
+# 🚨 MODIFIED: [V44.76 팩트 교정] 당일 고가/저가 스캔 시 프리마켓 진폭 100% 합산 롤백 (보수적 체력 방어막 복원)
 # ==========================================================
 
 import requests
@@ -121,7 +121,7 @@ class KoreaInvestmentBroker:
                         try: os.remove(temp_path)
                         except Exception: pass
             else:
-                print(f"❌ [Broker] 토큰 발급 실패: {data.get('error_description', '알 수 없는 오류')}")
+                print(f"❌ [Broker] 토큰 발급 실패: {data.get('error_description', '알 수 정 없는 오류')}")
         except Exception as e:
             print(f"❌ [Broker] 토큰 통신 에러: {e}")
 
@@ -318,7 +318,6 @@ class KoreaInvestmentBroker:
         """
         최근 5일간의 1분봉 데이터를 로드하여 정규장(09:30~15:59) 거래 내역만 추출,
         일자별 순수 VWAP을 계산하여 반환합니다.
-        return: (prev_vwap, curr_vwap)
         """
         try:
             stock = yf.Ticker(ticker)
@@ -909,22 +908,12 @@ class KoreaInvestmentBroker:
     def get_day_high_low(self, ticker):
         try:
             stock = yf.Ticker(ticker)
-            # 🚨 MODIFIED: [V44.71 팩트 교정] 고/저가 스캔 시 프리마켓 노이즈 원천 차단 및 정규장 100% 락온
-            hist = stock.history(period="1d", interval="1m", prepost=False, timeout=5)
+            # 🚨 MODIFIED: [V44.76] 프리장 진폭 롤백 (보수적 체력 방어막 복구)
+            hist = stock.history(period="1d", interval="1m", prepost=True, timeout=5)
             if not hist.empty:
                 hist = _flatten_columns(hist)
-                est = ZoneInfo('America/New_York')
-                if hist.index.tz is None: 
-                    hist.index = hist.index.tz_localize('UTC').tz_convert(est)
-                else: 
-                    hist.index = hist.index.tz_convert(est)
-                
-                reg_hist = hist.between_time('09:30', '15:59')
-                if not reg_hist.empty:
-                    return float(reg_hist['High'].max()), float(reg_hist['Low'].min())
-                else:
-                    return float(hist['High'].max()), float(hist['Low'].min())
-            else: raise ValueError("YF 고가/저가 데이터 응답 지연 (timeout)")
+                return float(hist['High'].max()), float(hist['Low'].min())
+            else: raise ValueError("YF 고가/저가 데이터 응답 지연")
         except Exception as e: pass
 
         try:
