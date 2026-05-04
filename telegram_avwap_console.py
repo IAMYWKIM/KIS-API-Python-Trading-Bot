@@ -7,6 +7,7 @@
 # 🚨 MODIFIED: [V44.61 팩트 교정] 관제탑 실시간 VWAP 연산 시 프리마켓 노이즈 전면 소각 및 정규장 100% 락온
 # 🚨 MODIFIED: [V44.62 인덴테이션 붕괴 수술] PEP8 규격 강제 및 IndentationError(런타임 즉사) 맹점 영구 소각 완료.
 # MODIFIED: [V44.63 자율주행 수익률 하향 스위칭] AUTO 모드 수익률 스펙트럼 1.0%~4.0% 절대 락온 완료
+# 🚨 MODIFIED: [V44.72 팩트 교정] AVWAP 관제탑 day_high 파라미터 누수 배선 연결
 # ==========================================================
 import logging
 import datetime
@@ -299,6 +300,7 @@ class AvwapConsolePlugin:
                         avwap_state=avwap_state_dict,
                         regime_data=None,
                         prev_close=prev_c,
+                        day_high=day_high,  # 🚨 MODIFIED: [V44.72 팩트 교정] AVWAP 관제탑 day_high 파라미터 누수 배선 연결
                         day_low=day_low,
                         atr5=atr5
                     )
@@ -320,4 +322,3 @@ class AvwapConsolePlugin:
         msg += f"💡 <i>설정 제어는 /settlement (전술설정) 메뉴에서 가능합니다.</i>"
 
         return msg, InlineKeyboardMarkup(keyboard)
-
