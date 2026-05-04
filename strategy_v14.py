@@ -63,7 +63,7 @@ class V14Strategy:
             "star_ratio": float(plan_data.get('star_ratio', 0.0)),
             "t_val": float(plan_data.get('t_val', 0.0)),
             "is_reverse": bool(plan_data.get('is_reverse', False)),
-             "orders": plan_data.get('orders', []),
+            "orders": plan_data.get('orders', []),
             "core_orders": plan_data.get('core_orders', []),
             "bonus_orders": plan_data.get('bonus_orders', []),
             "process_status": plan_data.get('process_status', '')
@@ -284,7 +284,7 @@ class V14Strategy:
                     if one_portion_amt > 0 and star_price > 0:
                         buy_price = max(0.01, round(star_price - 0.01, 2))
                         if buy_price > 0: 
-                             buy_qty = int(math.floor(one_portion_amt / buy_price))
+                            buy_qty = int(math.floor(one_portion_amt / buy_price))
                             if buy_qty > 0:
                                 core_orders.append({"side": "BUY", "price": buy_price, "qty": buy_qty, "type": "LOC", "desc": "⚓잔금매수"})
                      
@@ -292,7 +292,7 @@ class V14Strategy:
                         core_orders.append({"side": "SELL", "price": star_price, "qty": sell_qty, "type": "LOC", "desc": "🌟별값매도"})
 
                     if one_portion_amt > 0 and buy_price > 0:
-                         for i in range(1, 6):
+                        for i in range(1, 6):
                             target_qty = buy_qty + i 
                             raw_jup_price = self._floor(one_portion_amt / target_qty)
                             capped_jup_price = min(raw_jup_price, buy_price - 0.01)
@@ -310,17 +310,17 @@ class V14Strategy:
                 process_status = "🎉대박익절(리버스생략)"
                 if qty > 0:
                     core_orders.append({"side": "SELL", "price": target_price, "qty": int(qty), "type": "LIMIT", "desc": "🎯전량대박익절"})
-                 core_orders, bonus_orders = self._apply_wash_trade_shield(core_orders, bonus_orders)        
+                core_orders, bonus_orders = self._apply_wash_trade_shield(core_orders, bonus_orders)        
                 orders = core_orders + bonus_orders
                 return {
                     "orders": orders, "core_orders": core_orders, "bonus_orders": bonus_orders, "total_q": qty, "avg_price": avg_price,
-                     "t_val": t_val, "one_portion": one_portion_amt, "process_status": process_status,
+                    "t_val": t_val, "one_portion": one_portion_amt, "process_status": process_status,
                     "is_reverse": False, "star_price": star_price, "star_ratio": star_ratio,
                     "real_cash_used": real_available_cash,
                     "tracking_info": tr_info 
                 }
             elif is_last_lap: process_status = "🏁마지막회차"
-             elif is_money_short: process_status = "🛡️방어모드(부족)"
+            elif is_money_short: process_status = "🛡️방어모드(부족)"
             elif t_val < (split / 2): process_status = "🌓전반전"
             else: process_status = "🌕후반전"
 
@@ -386,7 +386,7 @@ class V14Strategy:
             return {
                 "orders": orders, "core_orders": core_orders, "bonus_orders": bonus_orders, "total_q": qty, "avg_price": avg_price,
                 "t_val": t_val, "one_portion": one_portion_amt, "process_status": process_status,
-                 "is_reverse": is_reverse, "star_price": star_price, "star_ratio": star_ratio,
+                "is_reverse": is_reverse, "star_price": star_price, "star_ratio": star_ratio,
                 "real_cash_used": real_available_cash,
                 "tracking_info": tr_info 
             }
