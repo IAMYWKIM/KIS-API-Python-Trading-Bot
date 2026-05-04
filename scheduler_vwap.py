@@ -8,6 +8,7 @@
 # MODIFIED: [맹점 3 수술] 루프 내부 cfg 접근(파일 I/O) 메서 전면 비동기(asyncio.to_thread) 래핑 완료.
 # NEW: [콜드 스타트 런타임 붕괴 방어] scheduled_vwap_init_and_cancel 진입부 tx_lock None 가드 이식 완료.
 # NEW: [VWAP 잔차 증발 방어 롤백 엔진 이식] 타격 스킵(호가 이탈) 및 주문 거절/미체결 발생 시 삭감된 예산을 코어 엔진(버킷)으로 100% 환불(Refund)하는 파이프라인 개통 완료.
+# MODIFIED: [V44.79 팩트 교정] 잔차 환불 인플레이션 맹점 및 미체결 늪 원천 차단
 # ==========================================================
 import logging
 import datetime
@@ -138,7 +139,7 @@ async def scheduled_vwap_init_and_cancel(context):
                         except Exception as e:
                             logging.error(f"🚨 자가 치유 Nuke 실패: {e}", exc_info=True)
                             vwap_cache[f"REV_{t}_nuked"] = False 
-                    
+             
     try:
         await asyncio.wait_for(_do_init(), timeout=45.0)
     except Exception as e:
@@ -432,7 +433,7 @@ async def scheduled_vwap_trade(context):
                                                     msg += f"▫️ 장 마감 3분 전 데드존 철거. 1층 앵커({layer_1_trigger:.2f}) 방어를 확인했습니다.\n"
                                                 msg += f"▫️ 매도 가능 잔량이 0이 될 때까지 매 1분마다 지속 덤핑합니다! (현재 <b>{actual_sweep_qty}주</b> 매수호가 폭격) 🏆"
                                                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
-                                                vwap_cache[f"REV_{t}_sweep_msg_sent"] = True
+                                            vwap_cache[f"REV_{t}_sweep_msg_sent"] = True
                                             
                                             ccld_qty = 0
                                             for _ in range(4):
@@ -589,13 +590,13 @@ async def scheduled_vwap_trade(context):
                                 msg += f"▫️ 기관급 자금 쏠림으로 인해 위험한 1분 단위 타임 슬라이싱(VWAP)을 전면 중단합니다.\n"
                                 msg += f"▫️ <b>잔여 할당량 전량을 양방향 LOC 방어선으로 전환 배치 완료!</b>\n"
                                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML', disable_notification=True)
-                                
+                        
                                 for o in rev_plan.get('orders', []):
                                     if o['qty'] > 0:
                                         await asyncio.to_thread(broker.send_order, t, o['side'], o['qty'], o['price'], "LOC")
                                         await asyncio.sleep(0.2)
                                 continue
-                                 
+                                
                             target_orders = rev_plan.get('orders', [])
 
                     elif version == "V14":
@@ -657,12 +658,14 @@ async def scheduled_vwap_trade(context):
                         ask_price = float(await asyncio.to_thread(broker.get_ask_price, t) or 0.0)
                         bid_price = float(await asyncio.to_thread(broker.get_bid_price, t) or 0.0)
                         exec_price = ask_price if side == "BUY" else bid_price
-                        if exec_price <= 0: exec_price = curr_p
+                        # MODIFIED: [V44.79 팩트 교정] 잔차 환불 인플레이션 맹점 및 미체결 늪 원천 차단
+                        if exec_price <= 0: exec_price = round(curr_p * 1.002, 2) if side == "BUY" else max(0.01, round(curr_p * 0.998, 2))
                         
                         # NEW: [VWAP 잔차 증발 방어를 위한 비동기 환불(Refund) 래퍼 이식]
+                        # MODIFIED: [V44.79 팩트 교정] 잔차 환불 인플레이션 맹점 및 미체결 늪 원천 차단
                         async def _process_refund(unfilled_q):
                             if not bucket: return
-                            r_val = unfilled_q * target_price if side == "BUY" else unfilled_q
+                            r_val = unfilled_q * curr_p if side == "BUY" else unfilled_q
                             if version == "V_REV" and strategy_rev:
                                 await asyncio.to_thread(strategy_rev.refund_residual, t, bucket, r_val)
                                 logging.info(f"🔄 [{t}] VWAP {side} 잔차 환불 완료: 버킷({bucket}) +{r_val:.2f}")
@@ -708,7 +711,7 @@ async def scheduled_vwap_trade(context):
                         unfilled_qty = slice_qty - ccld_qty
                         if unfilled_qty > 0:
                             await _process_refund(unfilled_qty)
-                                
+                                 
                         if ccld_qty > 0:
                             if version == "V_REV":
                                 await asyncio.to_thread(strategy_rev.record_execution, t, side, ccld_qty, exec_price)
