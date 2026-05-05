@@ -8,6 +8,7 @@
 # MODIFIED: [V44.48 런타임 즉사 방어] SHUTDOWN 분기문 들여쓰기(Indentation) 붕괴 교정 및 SyntaxError 영구 소각.
 # NEW: [V44.51 파일 I/O 스레드 블로킹 철거] tracking_cache 날짜 변경 시 격발되는 파일 삭제 로직 비동기 래핑 및 백신 주석 하드코딩.
 # MODIFIED: [V44.69 타임 드리프트 및 콜드스타트 엣지 케이스 방어막 이식]
+# 🚨 MODIFIED: [V46.03 예산 침범 패러독스 방어] KIS 증거금 룰에 의해 AVWAP이 본대 예산을 침범하는 것을 막기 위해 1.05배 하드 마진 락온 이식
 # ==========================================================
 import logging
 import datetime
@@ -101,7 +102,7 @@ async def scheduled_sniper_monitor(context):
                     except OSError:
                         pass
             except Exception as e:
-                logging.debug(f"스나이퍼 캐시 청소 중 에러: {e}")
+                 logging.debug(f"스나이퍼 캐시 청소 중 에러: {e}")
                 
         await asyncio.to_thread(_clean_sniper_caches)
              
@@ -123,6 +124,7 @@ async def scheduled_sniper_monitor(context):
                     _logical_date = _now_est
                 _logical_date_str = _logical_date.strftime('%Y-%m-%d')
                 
+                # 🚨 MODIFIED: [V46.03 예산 침범 패러독스 방어] KIS 증거금 룰에 의해 AVWAP이 본대 예산을 침범하는 것을 막기 위해 1.05배 하드 마진 락온
                 for tk in await asyncio.to_thread(cfg.get_active_tickers):
                     if await asyncio.to_thread(cfg.get_version, tk) == "V_REV":
                         rev_daily_budget = float(await asyncio.to_thread(cfg.get_seed, tk) or 0.0) * 0.15
@@ -140,13 +142,14 @@ async def scheduled_sniper_monitor(context):
                         
                         spent = await asyncio.to_thread(_read_v_state)
                         if _now_est.time() < datetime.time(15, 27):
-                            virtual_locked_budget += max(0.0, rev_daily_budget - spent)
+                            virtual_locked_budget += max(0.0, rev_daily_budget - spent) * 1.05
+                            
                     elif await asyncio.to_thread(cfg.get_version, tk) == "V14":
                         _, dynamic_budget, _ = await asyncio.to_thread(cfg.calculate_v14_state, tk)
-                        virtual_locked_budget += dynamic_budget
+                        virtual_locked_budget += (dynamic_budget * 1.05)
             except Exception as e:
                 logging.error(f"🚨 가상 에스크로 예산 산출 중 에러: {e}")
-                 
+                
             avwap_free_cash = max(0.0, float(cash) - virtual_locked_budget)
             
             for t in await asyncio.to_thread(cfg.get_active_tickers):
@@ -310,7 +313,7 @@ async def scheduled_sniper_monitor(context):
                                         else:
                                             ccld_qty = qty
                                             break
-                                   
+                                    
                                     if ccld_qty < qty:
                                         try:
                                             await asyncio.to_thread(broker.cancel_order, current_target, odno)
@@ -390,7 +393,7 @@ async def scheduled_sniper_monitor(context):
                                         else:
                                             ccld_qty = qty
                                             break
-                                 
+                                    
                                     if ccld_qty < qty:
                                         try:
                                             await asyncio.to_thread(broker.cancel_order, current_target, odno)
@@ -400,7 +403,7 @@ async def scheduled_sniper_monitor(context):
                                             
                                     if ccld_qty > 0:
                                         msg = f"⚔️ <b>[AVWAP] 암살자 덤핑 타격!</b>\n▫️ 타겟: {current_target}\n▫️ 타점: ${exec_price}\n▫️ 팩트 체결수량: {ccld_qty}주 (목표 {qty}주)\n▫️ 사유: {reason}"
-                                     
+                                      
                                         old_qty = tracking_cache.get(f"AVWAP_QTY_{current_target}", 0)
                                         new_qty = max(0, old_qty - ccld_qty)
                                         
@@ -595,7 +598,7 @@ async def scheduled_sniper_monitor(context):
                             ):
                                 has_unfilled = True
                                 break
-                            await asyncio.sleep(2.0)
+                        await asyncio.sleep(2.0)
                         
                         if has_unfilled:
                             continue
@@ -616,7 +619,7 @@ async def scheduled_sniper_monitor(context):
                                 else:
                                     ccld_qty = qty
                                     break
-                            
+                             
                             if ccld_qty < qty:
                                 try:
                                     await asyncio.to_thread(broker.cancel_order, t, odno)
@@ -644,11 +647,11 @@ async def scheduled_sniper_monitor(context):
                                     
                                 actual_exec_price = get_actual_execution_price(exec_history, "01", odno)
                                 display_price = actual_exec_price if actual_exec_price > 0 else limit_p
-                                    
+                                     
                                 msg = f"🦇 <b>[{t}] 스나이퍼 상방 기습({action}) 명중!</b>\n▫️ 타겟가: ${limit_p}\n▫️ 팩트 단가: ${display_price}\n▫️ 체결수량: {ccld_qty}주 (요청: {qty}주)\n▫️ 사유: {reason}\n▫️ 상방 감시망이 잠깁니다 (하방 독립 유지)."
                                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
 
     try:
         await asyncio.wait_for(_do_sniper(), timeout=45.0)
     except Exception as e:
-        logging.error(f"🚨 스나이퍼 타임아웃 에러: {e}", exc_info=True)
+         logging.error(f"🚨 스나이퍼 타임아웃 에러: {e}", exc_info=True)

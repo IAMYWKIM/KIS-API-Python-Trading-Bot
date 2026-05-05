@@ -320,7 +320,11 @@ class ReversionStrategy:
 
         is_strong_up = vwap_status.get('is_strong_up', False)
         is_strong_down = vwap_status.get('is_strong_down', False)
-        trigger_loc = is_strong_up or is_strong_down 
+        
+        # 🚨 MODIFIED: [V46.03 V-REV & AVWAP 듀얼 런타임 붕괴 및 예산 탈취(Stealing) 패러독스 완벽 수술]
+        # 🚨 [AI 에이전트 절대 주의 - 환각 방어막]
+        # 0주 새출발 시에는 강한 추세장(60% 지배력)이더라도 일괄 덤핑(trigger_loc)으로 빠지지 않고 무조건 1분 타임 슬라이싱(VWAP U-Curve)을 강제하여 베이스캠프를 분할 확보해야 함.
+        trigger_loc = (is_strong_up or is_strong_down) and not is_zero_start_session
 
         orders = []
 
