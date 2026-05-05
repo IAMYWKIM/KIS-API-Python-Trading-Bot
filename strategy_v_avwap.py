@@ -23,6 +23,7 @@
 # NEW: [V45.00 동적 킬 스위치(Kill Switch) 락온] 정규장 동안 전일 종가(Zero-Line)를 위아래로 모두 관통하여 횡보장(Sideways)으로 판별 시, 빈손 대기 중인 암살자의 신규 진입을 100% 차단하고 당일 셧다운을 격발하는 절대 방어막 이식 완료.
 # NEW: [V46 단판 승부 락온] 다중출장 모드를 무시하고 10:00 EST 단 1회 스캔 및 1회 익절 후 조기퇴근(영구동결) 엔진 이식 완료.
 # 🚨 MODIFIED: [V46.06 단판 승부 조건1 기초지수 락온 수술] 실행 티커 오염 및 패러독스 맹점 원천 수술
+# 🚨 MODIFIED: [V46.07 런타임 즉사 방어] IndentationError 들여쓰기 팩트 100% 교정
 # ==========================================================
 import logging
 import datetime
@@ -68,7 +69,7 @@ class VAvwapHybridPlugin:
         try:
             dir_name = os.path.dirname(file_path)
             if dir_name and not os.path.exists(dir_name):
-                 os.makedirs(dir_name, exist_ok=True)
+                os.makedirs(dir_name, exist_ok=True)
              
             fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
@@ -93,7 +94,7 @@ class VAvwapHybridPlugin:
             if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 5):
                 today_est = (now_est - datetime.timedelta(days=1)).date()
             else:
-                 today_est = now_est.date()
+                today_est = now_est.date()
 
             if not df_1m.empty:
                 if df_1m.index.tz is None:
@@ -134,7 +135,8 @@ class VAvwapHybridPlugin:
                 first_30m = df_30m[df_30m.index.time == datetime.time(9, 30)]
                 past_first_30m = first_30m[first_30m.index.date < today_est]
                 
-                 if len(past_first_30m) >= 20:
+                # 🚨 MODIFIED: [V46.07 런타임 즉사 방어] IndentationError 팩트 교정
+                if len(past_first_30m) >= 20:
                     avg_vol_20 = float(past_first_30m['Volume'].tail(20).mean())
                 elif len(past_first_30m) > 0:
                     avg_vol_20 = float(past_first_30m['Volume'].mean())
@@ -168,7 +170,8 @@ class VAvwapHybridPlugin:
         
         target_mode = kwargs.get('target_mode', 'AUTO')
         
-         atr5 = kwargs.get('atr5', 0.0)
+        # 🚨 MODIFIED: [V46.07 런타임 즉사 방어] IndentationError 팩트 교정
+        atr5 = kwargs.get('atr5', 0.0)
         # 🚨 [AI 에이전트 절대 주의 - 환각 방어막] day_high kwargs 수신 방어막
         day_high = kwargs.get('day_high', 0.0)
         day_low = kwargs.get('day_low', 0.0)
