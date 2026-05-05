@@ -8,6 +8,7 @@
 # NEW: [2단계 수술] process_auto_sync 내부의 MANUAL_SYNC 및 MANUAL_BUY 직후 hasattr 데드코드 전면 소각.
 # 🚨 MODIFIED: [V46.02 엣지 케이스 핫픽스: AVWAP 물량 납치 패러독스 완벽 해체] job_data 의존성 전면 소각 및 bot_data 다이렉트 락온.
 # 🚨 MODIFIED: [V47.00 AVWAP 오버나이트 홀딩 락온] KIS 체결 원장 스캔 시 AVWAP 당일 체결량 수학적 디커플링 이식 완료
+# 🚨 MODIFIED: [V47.01 런타임 즉사 방어] _sync_escrow_cash 내부 IndentationError 팩트 100% 교정
 # ==========================================================
 import logging
 import datetime
@@ -45,7 +46,8 @@ class TelegramSyncEngine:
         target_recs = []
         for r in reversed(ledger):
             if r.get('ticker') == ticker:
-                 if r.get('is_reverse', False):
+                # 🚨 MODIFIED: [V47.01 런타임 즉사 방어] 들여쓰기 팩트 100% 교정 완료
+                if r.get('is_reverse', False):
                     target_recs.append(r)
                 else:
                     break
