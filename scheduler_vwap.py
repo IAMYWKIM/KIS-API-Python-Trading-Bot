@@ -11,6 +11,7 @@
 # MODIFIED: [V44.79 팩트 교정] 잔차 환불 인플레이션 맹점 및 미체결 늪 원천 차단
 # 🚨 MODIFIED: [V46.04 KIS 리젝 텔레메트리 이식] 거절 사유 로깅 추가
 # 🚨 MODIFIED: [V46.05 이벤트 루프 교착 방어] Lock Starvation 대비 호흡 연장
+# 🚨 MODIFIED: [V47.02 런타임 붕괴 방어] target_sweep_qty UnboundLocalError 스코프 전진 배치로 영구 소각 완료
 # ==========================================================
 import logging
 import datetime
@@ -141,7 +142,7 @@ async def scheduled_vwap_init_and_cancel(context):
                         except Exception as e:
                             logging.error(f"🚨 자가 치유 Nuke 실패: {e}", exc_info=True)
                             vwap_cache[f"REV_{t}_nuked"] = False 
-             
+              
     try:
         await asyncio.wait_for(_do_init(), timeout=45.0)
     except Exception as e:
@@ -284,7 +285,7 @@ async def scheduled_vwap_trade(context):
                                 msg = f"🌅 <b>[{t}] 가상 에스크로 해제 및 엔진 기상 (자가 치유 가동)</b>\n"
                                 msg += f"▫️ 장 마감 33분 전 진입을 확인하여 가상 에스크로를 해제했습니다.\n"
                                 msg += f"▫️ 스케줄러 누락을 완벽히 극복하고 1분 단위 정밀 타격을 즉각 개시합니다. ⚔️"
-                                
+                            
                             vwap_cache[f"REV_{t}_nuked"] = True
                             await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML', disable_notification=True)
                             await asyncio.sleep(1.0)
@@ -389,10 +390,11 @@ async def scheduled_vwap_trade(context):
                                 layer_1_price = sum(item.get('qty', 0) * item.get('price', 0.0) for item in lots_for_date) / layer_1_qty
                                 layer_1_trigger = round(layer_1_price * 1.006, 2)
                         
+                        # 🚨 MODIFIED: [V47.02 런타임 붕괴 방어] target_sweep_qty 스코프 전진 배치로 UnboundLocalError 영구 소각
+                        target_sweep_qty = 0
+                        sweep_type = ""
+
                         if not is_zero_start and minutes_to_close <= 3:
-                            target_sweep_qty = 0
-                            sweep_type = ""
-                            
                             if total_q > 0 and curr_p >= jackpot_trigger:
                                 target_sweep_qty = total_q
                                 sweep_type = "잭팟 전량"
@@ -491,7 +493,7 @@ async def scheduled_vwap_trade(context):
                                             msg = f"⚠️ <b>[{t}] 스윕 피니셔 덤핑 생략 (MOC 락다운 감지)</b>\n▫️ 조건이 달성되었으나, 대상 물량이 수동 긴급 수혈(MOC) 등 취소 불가 상태로 미국 거래소에 묶여 있어 스윕 덤핑을 자동 스킵합니다."
                                             await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
                                             vwap_cache[f"REV_{t}_sweep_skip_msg"] = True
-                                        
+                                            
                         # MODIFIED: [V44.45 잭팟 데드존 방어] 과잉 방어막 도려내기.
                             if target_sweep_qty > 0:
                                 continue 
@@ -596,7 +598,7 @@ async def scheduled_vwap_trade(context):
                                 for o in rev_plan.get('orders', []):
                                     if o['qty'] > 0:
                                         await asyncio.to_thread(broker.send_order, t, o['side'], o['qty'], o['price'], "LOC")
-                                        await asyncio.sleep(0.2)
+                                await asyncio.sleep(0.2)
                                 continue
                                 
                             target_orders = rev_plan.get('orders', [])
@@ -733,3 +735,4 @@ async def scheduled_vwap_trade(context):
             await asyncio.wait_for(_do_vwap(), timeout=90.0)
         except Exception as e:
             logging.error(f"🚨 VWAP 스케줄러 에러: {e}", exc_info=True)
+
