@@ -13,6 +13,7 @@
 # 🚨 MODIFIED: [V44.75 팩트 교정] 봇 재가동(업데이트) 시 메모리 증발로 인한 AVWAP 정보 유실(0주 표출) 시각적 맹점 원천 차단. 관제탑 자체 Self-Healing 로드 엔진 이식
 # NEW: [V45.00 동적 킬 스위치 상태 렌더링] 기초자산 정규장 순수 진폭(High/Low)을 추출하여 Zero-Line 관통 여부(횡보 감시) 및 SHUTDOWN 상태를 직관적으로 렌더링.
 # NEW: [V46 단판 승부 락온] 단판 승부 3대 조건 검증 및 관제탑 UI 렌더링 팩트 교정 완료.
+# 🚨 MODIFIED: [V46.06 관제탑 조건1 렌더링 기초지수 락온] 렌더링 시각적 디커플링 및 패러독스 교정
 # ==========================================================
 import logging
 import datetime
@@ -75,7 +76,7 @@ class AvwapConsolePlugin:
             
             if avwap_ctx:
                 base_prev_vwap = float(avwap_ctx.get('prev_vwap', 0.0))
-                
+            
             df_1m = await asyncio.wait_for(
                 asyncio.to_thread(self.broker.get_1min_candles_df, base_tkr), timeout=4.0
             )
@@ -209,12 +210,14 @@ class AvwapConsolePlugin:
             cond1_met, cond2_met, cond3_met = False, False, False
             rem_5_pct_console = 0.0
 
-            if prev_c > 0 and day_high > 0 and day_low > 0:
+            # 🚨 MODIFIED: [V46.06 관제탑 조건1 렌더링 기초지수 락온]
+            if base_prev_c > 0 and base_day_high > 0 and base_day_low > 0:
                 if t == "SOXS":
-                    cond1_met = (day_high < prev_c) and (day_low < prev_c)
+                    cond1_met = (base_day_high < base_prev_c) and (base_day_low < base_prev_c)
                 else:
-                    cond1_met = (day_high > prev_c) and (day_low > prev_c)
+                    cond1_met = (base_day_high > base_prev_c) and (base_day_low > base_prev_c)
                     
+            if prev_c > 0 and day_high > 0 and day_low > 0:
                 actual_gap_dollar = day_high - day_low
                 actual_gap_pct = (actual_gap_dollar / prev_c) * 100.0
                 if atr5 > 0:
@@ -365,7 +368,9 @@ class AvwapConsolePlugin:
                         prev_close=prev_c,
                         day_high=day_high,
                         day_low=day_low,
-                        atr5=atr5
+                        atr5=atr5,
+                        base_day_high=base_day_high, # 🚨 MODIFIED: V46.06 추가
+                        base_day_low=base_day_low    # 🚨 MODIFIED: V46.06 추가
                     )
 
                     action = decision.get('action')

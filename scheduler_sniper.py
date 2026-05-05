@@ -11,6 +11,7 @@
 # 🚨 MODIFIED: [V46.03 예산 침범 패러독스 방어] KIS 증거금 룰에 의해 AVWAP이 본대 예산을 침범하는 것을 막기 위해 1.05배 하드 마진 락온 이식
 # 🚨 MODIFIED: [V46.04 AVWAP 증거금 침식 방어] 15:27 해제 조건 소각 및 마진 1.20배 상향 락온
 # 🚨 MODIFIED: [V46.05 YF API 무한 호출 병목 소각 및 타임아웃 연장] Lock Starvation 방어
+# 🚨 MODIFIED: [V46.06 기초자산 고/저가 스캔 배선 팩트 개통] 단판 승부 파라미터 누수 수술
 # ==========================================================
 import logging
 import datetime
@@ -245,14 +246,16 @@ async def scheduled_sniper_monitor(context):
                         try: df_1min_base = await asyncio.to_thread(broker.get_1min_candles_df, target_base)
                         except: pass
                         
-                        prev_c, day_high, day_low, atr5 = 0.0, 0.0, 0.0, 0.0
+                        # 🚨 MODIFIED: [V46.06 기초자산 고/저가 스캔 배선 팩트 개통]
+                        prev_c, day_high, day_low, atr5, base_day_high, base_day_low = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
                         try:
                             prev_c_task = asyncio.to_thread(broker.get_previous_close, current_target)
                             high_low_task = asyncio.to_thread(broker.get_day_high_low, current_target)
                             atr_task = asyncio.to_thread(broker.get_atr_data, current_target)
+                            base_hl_task = asyncio.to_thread(broker.get_day_high_low, target_base)
                              
-                            res_prev, res_hl, res_atr = await asyncio.wait_for(
-                                asyncio.gather(prev_c_task, high_low_task, atr_task, return_exceptions=True),
+                            res_prev, res_hl, res_atr, res_base_hl = await asyncio.wait_for(
+                                asyncio.gather(prev_c_task, high_low_task, atr_task, base_hl_task, return_exceptions=True),
                                 timeout=4.0
                             )
                             prev_c = float(res_prev) if not isinstance(res_prev, Exception) and res_prev else 0.0
@@ -262,6 +265,9 @@ async def scheduled_sniper_monitor(context):
                             day_low = float(res_hl[1]) if not isinstance(res_hl, Exception) and res_hl else 0.0
                             
                             atr5 = float(res_atr[0]) if not isinstance(res_atr, Exception) and res_atr else 0.0
+                            
+                            base_day_high = float(res_base_hl[0]) if not isinstance(res_base_hl, Exception) and res_base_hl else 0.0
+                            base_day_low = float(res_base_hl[1]) if not isinstance(res_base_hl, Exception) and res_base_hl else 0.0
                         except Exception as e:
                             logging.debug(f"AVWAP 파라미터 병렬 스캔 실패: {e}")
                             
@@ -276,7 +282,8 @@ async def scheduled_sniper_monitor(context):
                             exec_curr_p=exec_curr_p, base_day_open=base_day_open, avg_price=avwap_avg,
                             qty=avwap_qty, alloc_cash=avwap_free_cash, context_data=ctx_data,
                             df_1min_base=df_1min_base, now_est=now_est, avwap_state=avwap_state_dict,
-                            regime_data=None, prev_close=prev_c, day_high=day_high, day_low=day_low, atr5=atr5
+                            regime_data=None, prev_close=prev_c, day_high=day_high, day_low=day_low, atr5=atr5,
+                            base_day_high=base_day_high, base_day_low=base_day_low # 🚨 MODIFIED: V46.06 추가
                         )
                         
                         action = decision.get("action")
