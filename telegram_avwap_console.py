@@ -12,6 +12,7 @@
 # 🚨 MODIFIED: [V44.74 팩트 교정] AVWAP 관제탑 딥매수 완료 후 현재가 증발 맹점 완벽 수술
 # 🚨 MODIFIED: [V44.75 팩트 교정] 봇 재가동(업데이트) 시 메모리 증발로 인한 AVWAP 정보 유실(0주 표출) 시각적 맹점 원천 차단. 관제탑 자체 Self-Healing 로드 엔진 이식
 # NEW: [V45.00 동적 킬 스위치 상태 렌더링] 기초자산 정규장 순수 진폭(High/Low)을 추출하여 Zero-Line 관통 여부(횡보 감시) 및 SHUTDOWN 상태를 직관적으로 렌더링.
+# NEW: [V46 단판 승부 락온] 단판 승부 3대 조건 검증 및 관제탑 UI 렌더링 팩트 교정 완료.
 # ==========================================================
 import logging
 import datetime
@@ -200,34 +201,60 @@ class AvwapConsolePlugin:
             label = "롱" if t == "SOXL" else "숏"
             msg += f"\n🎯 <b>[ {t} ({label}) 작전반 - {active_str} ]</b>\n"
 
+            # NEW: [V46 단판 승부 락온]
             momentum_met = False
-            trend_str = "🔴 <b>조건 미달 (대기)</b>"
+            trend_str = "🔴 <b>조건 미달 (단판 승부 대기)</b>"
             
+            # 잔여 체력 선제 연산
+            cond1_met, cond2_met, cond3_met = False, False, False
+            rem_5_pct_console = 0.0
+
+            if prev_c > 0 and day_high > 0 and day_low > 0:
+                if t == "SOXS":
+                    cond1_met = (day_high < prev_c) and (day_low < prev_c)
+                else:
+                    cond1_met = (day_high > prev_c) and (day_low > prev_c)
+                    
+                actual_gap_dollar = day_high - day_low
+                actual_gap_pct = (actual_gap_dollar / prev_c) * 100.0
+                if atr5 > 0:
+                    rem_5_pct_console = atr5 - actual_gap_pct
+                    cond3_met = (rem_5_pct_console >= 1.0)
+            
+            if base_prev_vwap > 0 and base_curr_vwap > 0 and avg_vwap_5m > 0:
+                gap1 = base_curr_vwap - base_prev_vwap
+                gap2 = avg_vwap_5m - base_curr_vwap
+                if t == "SOXS":
+                    cond2_met = (gap1 < 0) and (gap2 < 0)
+                else:
+                    cond2_met = (gap1 > 0) and (gap2 > 0)
+            
+            c1_str = "🟢" if cond1_met else "🔴"
+            c2_str = "🟢" if cond2_met else "🔴"
+            c3_str = "🟢" if cond3_met else "🔴"
+
             if t == "SOXS":
-                criteria = "당일VWAP &lt; 전일VWAP &amp; 5분평균 &lt; 당일VWAP"
-                if base_prev_vwap > 0 and base_curr_vwap > 0 and avg_vwap_5m > 0:
-                    if base_curr_vwap < base_prev_vwap and avg_vwap_5m < base_curr_vwap:
-                        momentum_met = True
-                        trend_str = "🟢 <b>조건 충족 (숏 타격 허용)</b>"
-                    else:
-                        trend_str = "🔴 <b>조건 미달 (진입 차단)</b>"
-                else:
-                    trend_str = "⚠️ 데이터 수집 대기 중"
+                criteria = "H/L방향(-) &amp; VWAP(-) &amp; 체력(&gt;=1%)"
             else:
-                criteria = "당일VWAP &gt; 전일VWAP &amp; 5분평균 &gt; 당일VWAP"
-                if base_prev_vwap > 0 and base_curr_vwap > 0 and avg_vwap_5m > 0:
-                    if base_curr_vwap > base_prev_vwap and avg_vwap_5m > base_curr_vwap:
-                        momentum_met = True
-                        trend_str = "🟢 <b>조건 충족 (롱 타격 허용)</b>"
-                    else:
-                        trend_str = "🔴 <b>조건 미달 (진입 차단)</b>"
+                criteria = "H/L방향(+) &amp; VWAP(+) &amp; 체력(&gt;=1%)"
+
+            if base_prev_vwap > 0 and base_curr_vwap > 0 and avg_vwap_5m > 0 and prev_c > 0 and atr5 > 0:
+                if cond1_met and cond2_met and cond3_met:
+                    momentum_met = True
+                    trend_str = "🟢 <b>조건 충족 (10:00 단판 격발 대기)</b>"
                 else:
-                    trend_str = "⚠️ 데이터 수집 대기 중"
+                    trend_str = "🔴 <b>조건 미달 (조건 부적합)</b>"
+            else:
+                trend_str = "⚠️ 데이터 수집 대기 중"
 
             msg += f"▫️ 판별 기준: <code>{criteria}</code>\n"
-            msg += f"▫️ 모멘텀 상태: {trend_str}\n"
+            msg += f"▫️ <b>[10:00 EST 단판 승부 조건]</b>\n"
+            msg += f"   {c1_str} 고저가 방향 원웨이 일치\n"
+            msg += f"   {c2_str} VWAP 갭 모멘텀 일치\n"
+            msg += f"   {c3_str} 잔여 체력 1% 이상 (현재: {rem_5_pct_console:.1f}%)\n"
+            msg += f"▫️ 타격 상태: {trend_str}\n"
 
-            strike_icon_txt = "💼 무제한 출장" if is_multi else "🏠 조기퇴근(1회)"
+            strike_icon_txt = "단판 승부 (1회 조기퇴근 락온)"
             if strikes > 0:
                 msg += f"▫️ 모드: <b>{strike_icon_txt} ({strikes}회차 교전 완료)</b>\n"
             else:
@@ -340,7 +367,7 @@ class AvwapConsolePlugin:
                         day_low=day_low,
                         atr5=atr5
                     )
-                    
+
                     action = decision.get('action')
                     reason = decision.get('reason', '')
                     
