@@ -7,7 +7,7 @@
 # MODIFIED: [V44.36 큐 장부 vs 브로커 실잔고 불일치 팩트 스캔] 페일세이프 스냅샷 복원 시 KIS 순수 본대 수량과 큐 장부 이월 수량 간의 팩트 불일치가 발생할 경우 명시적으로 경고를 타전하여 CALIB 보정을 유도하도록 감시망(EC-3) 이식 완료.
 # MODIFIED: [V44.48 런타임 붕괴 방어] 들여쓰기 붕괴(IndentationError) 완벽 교정.
 # NEW: [VWAP 잔차 증발 방어 롤백 엔진] 주문 거절/미체결 시 삭감된 예산을 버킷 식별자 기반으로 원상 복구(Refund)하는 환불 파이프라인 개통 완료.
-# NEW: [V44.80 팩트 교정] 소형 시드 1주 타격 영구 동결(Data Starvation) 및 분할 교착 맹점 원천 차단
+# NEW: [V46.01 팩트 교정] 소형 시드 1주 타격 영구 동결(Data Starvation) 및 분할 교착 맹점 원천 차단
 import math
 import os
 import json
@@ -165,7 +165,7 @@ class ReversionStrategy:
         if pure_qty != legacy_q:
             logging.warning(f"⚠️ [{ticker}] V-REV 페일세이프 경고: KIS 순수 본대 수량({pure_qty}주)과 이월 큐 장부 수량({legacy_q}주) 불일치 감지. CALIB 비파괴 보정 또는 수동 동기화 요망.")
             
-        logging.warning(f"🚨 [{ticker}] V_REV 스냅샷 증발 감지! 페일세이프 긴급 복 복원 가동 (KIS총잔고:{total_kis_qty} - 암살자:{avwap_qty} = 본대:{pure_qty}주 | 이월 큐 장부:{legacy_q}주)")
+        logging.warning(f"🚨 [{ticker}] V_REV 스냅샷 증발 감지! 페일세이프 긴급 복원 가동 (KIS총잔고:{total_kis_qty} - 암살자:{avwap_qty} = 본대:{pure_qty}주 | 이월 큐 장부:{legacy_q}주)")
         
         return self.get_dynamic_plan(
             ticker=ticker,
@@ -414,19 +414,29 @@ class ReversionStrategy:
             b2_budget_slice = min(b2_bucket, safe_cap)
             
             total_slice = b1_budget_slice + b2_budget_slice
-            if total_slice > rem_budget and total_slice > 0:
-                # MODIFIED: [V44.80 팩트 교정] 소형 시드 1주 타격 영구 동결(Data Starvation) 및 분할 교착 맹점 원천 차단
-                if curr_p > 0 and rem_budget >= curr_p and (b1_budget_slice / total_slice * rem_budget) < curr_p and (b2_budget_slice / total_slice * rem_budget) < curr_p:
-                    if b1_budget_slice >= b2_budget_slice:
-                        b1_budget_slice = rem_budget
-                        b2_budget_slice = 0.0
-                    else:
-                        b1_budget_slice = 0.0
-                        b2_budget_slice = rem_budget
-                else:
+            # MODIFIED: [V46.01 팩트 교정] 소형 시드 1주 타격 영구 동결(Data Starvation) 및 분할 교착 맹점 원천 수술
+            if total_slice > 0:
+                # 1. 예산 초과 시 비율 삭감
+                if total_slice > rem_budget:
                     ratio = rem_budget / total_slice
                     b1_budget_slice *= ratio
                     b2_budget_slice *= ratio
+                    
+                # 2. 분할 교착 방어: 1주를 살 돈(rem_budget)은 있으나 버킷이 쪼개져 못 살 경우 하나로 병합
+                if curr_p > 0 and rem_budget >= curr_p and b1_budget_slice < curr_p and b2_budget_slice < curr_p:
+                    if (b1_budget_slice + b2_budget_slice) >= curr_p:
+                        if b1_budget_slice >= b2_budget_slice:
+                            b1_budget_slice += b2_budget_slice
+                            b2_budget_slice = 0.0
+                        else:
+                            b2_budget_slice += b1_budget_slice
+                            b1_budget_slice = 0.0
+                    # 장 마감 직전(min_idx >= 28)에는 잔여 예산이 1주 이상 남았다면 마이너스 가불을 허용하여 강제 스윕 타격
+                    elif min_idx >= 28:
+                        if b1_budget_slice >= b2_budget_slice:
+                            b1_budget_slice = curr_p
+                        else:
+                            b2_budget_slice = curr_p
 
             if curr_p > 0:
                 # MODIFIED: [NameError 런타임 붕괴 수술] 선언되지 않은 환각 변수(buy_star_price) 참조 전면 소각 및 0.5회분 무조건 매수 팩트 락온
@@ -443,7 +453,7 @@ class ReversionStrategy:
                     alloc_q2 = int(math.floor(b2_budget_slice / curr_p))
                     self.residual["BUY2"][ticker] = b2_bucket - (alloc_q2 * curr_p)
                     if alloc_q2 > 0:
-                        # MODIFIED: [잔차 증발 방어] 버킷 식별자 주입
+                         # MODIFIED: [잔차 증발 방어] 버킷 식별자 주입
                         orders.append({"side": "BUY", "qty": alloc_q2, "price": p2_trigger, "bucket": "BUY2"})
                 else:
                     self.residual["BUY2"][ticker] = b2_bucket
