@@ -9,6 +9,8 @@
 # NEW: [V44.51 파일 I/O 스레드 블로킹 철거] tracking_cache 날짜 변경 시 격발되는 파일 삭제 로직 비동기 래핑 및 백신 주석 하드코딩.
 # MODIFIED: [V44.69 타임 드리프트 및 콜드스타트 엣지 케이스 방어막 이식]
 # 🚨 MODIFIED: [V46.03 예산 침범 패러독스 방어] KIS 증거금 룰에 의해 AVWAP이 본대 예산을 침범하는 것을 막기 위해 1.05배 하드 마진 락온 이식
+# 🚨 MODIFIED: [V46.04 AVWAP 증거금 침식 방어] 15:27 해제 조건 소각 및 마진 1.20배 상향 락온
+# 🚨 MODIFIED: [V46.05 YF API 무한 호출 병목 소각 및 타임아웃 연장] Lock Starvation 방어
 # ==========================================================
 import logging
 import datetime
@@ -124,7 +126,7 @@ async def scheduled_sniper_monitor(context):
                     _logical_date = _now_est
                 _logical_date_str = _logical_date.strftime('%Y-%m-%d')
                 
-                # 🚨 MODIFIED: [V46.03 예산 침범 패러독스 방어] KIS 증거금 룰에 의해 AVWAP이 본대 예산을 침범하는 것을 막기 위해 1.05배 하드 마진 락온
+                # 🚨 MODIFIED: [V46.03 예산 침범 패러독스 방어] KIS 증거금 룰에 의해 AVWAP이 본대 예산을 침범하는 것을 막기 위해 하드 마진 락온
                 for tk in await asyncio.to_thread(cfg.get_active_tickers):
                     if await asyncio.to_thread(cfg.get_version, tk) == "V_REV":
                         rev_daily_budget = float(await asyncio.to_thread(cfg.get_seed, tk) or 0.0) * 0.15
@@ -141,12 +143,13 @@ async def scheduled_sniper_monitor(context):
                             return 0.0
                         
                         spent = await asyncio.to_thread(_read_v_state)
-                        if _now_est.time() < datetime.time(15, 27):
-                            virtual_locked_budget += max(0.0, rev_daily_budget - spent) * 1.05
+                        # MODIFIED: [V46.04 AVWAP 증거금 침식 방어] 15:27 해제 조건 소각 및 마진 1.20배 락온
+                        virtual_locked_budget += max(0.0, rev_daily_budget - spent) * 1.20
                             
                     elif await asyncio.to_thread(cfg.get_version, tk) == "V14":
                         _, dynamic_budget, _ = await asyncio.to_thread(cfg.calculate_v14_state, tk)
-                        virtual_locked_budget += (dynamic_budget * 1.05)
+                        # MODIFIED: [V46.04 AVWAP 증거금 침식 방어] 마진 1.20배 락온
+                        virtual_locked_budget += (dynamic_budget * 1.20)
             except Exception as e:
                 logging.error(f"🚨 가상 에스크로 예산 산출 중 에러: {e}")
                 
@@ -213,7 +216,7 @@ async def scheduled_sniper_monitor(context):
                         
                         if not ctx_data:
                             continue 
-                        
+            
                         avwap_qty = tracking_cache.get(f"AVWAP_QTY_{current_target}", 0)
                         avwap_avg = tracking_cache.get(f"AVWAP_AVG_{current_target}", 0.0)
                         
@@ -223,17 +226,20 @@ async def scheduled_sniper_monitor(context):
                         base_curr_p = float(await asyncio.to_thread(broker.get_current_price, target_base) or 0.0)
                         if base_curr_p <= 0: continue
                         
-                        def _fetch_open(tkr):
-                            try:
-                                st = yf.Ticker(tkr)
-                                h = st.history(period="1d", interval="1m", prepost=False, timeout=5)
-                                if not h.empty: return float(h['Open'].dropna().iloc[0])
-                            except: pass
-                            return 0.0
-                        
-                        base_day_open = float(await asyncio.to_thread(_fetch_open, target_base) or 0.0)
-                        if base_day_open <= 0:
-                            continue 
+                        # 🚨 MODIFIED: [V46.05 YF API 무한 호출 병목 소각] 시가(Open) 당일 1회 스캔 및 메모리 락온
+                        if not tracking_cache.get(f"AVWAP_DAY_OPEN_{target_base}"):
+                            def _fetch_open(tkr):
+                                try:
+                                    st = yf.Ticker(tkr)
+                                    h = st.history(period="1d", interval="1m", prepost=False, timeout=5)
+                                    if not h.empty: return float(h['Open'].dropna().iloc[0])
+                                except: pass
+                                return 0.0
+                            fetched_open = float(await asyncio.to_thread(_fetch_open, target_base) or 0.0)
+                            if fetched_open > 0:
+                                tracking_cache[f"AVWAP_DAY_OPEN_{target_base}"] = fetched_open
+                                
+                        base_day_open = tracking_cache.get(f"AVWAP_DAY_OPEN_{target_base}", 0.0)
                         
                         df_1min_base = None
                         try: df_1min_base = await asyncio.to_thread(broker.get_1min_candles_df, target_base)
@@ -306,7 +312,7 @@ async def scheduled_sniper_monitor(context):
                                         await asyncio.sleep(2.0)
                                         unfilled_check = await asyncio.to_thread(broker.get_unfilled_orders_detail, current_target)
                                         safe_unfilled = unfilled_check if isinstance(unfilled_check, list) else []
-                                         
+                                        
                                         my_order = next((ox for ox in safe_unfilled if ox.get('odno') == odno), None)
                                         if my_order:
                                             ccld_qty = int(float(my_order.get('tot_ccld_qty') or 0))
@@ -371,7 +377,7 @@ async def scheduled_sniper_monitor(context):
                                         has_unfilled = True
                                         break
                                     await asyncio.sleep(2.0)
-                             
+                     
                                 if has_unfilled:
                                     await asyncio.to_thread(broker.cancel_targeted_orders, current_target, "01", "00")
                                     await asyncio.sleep(1.0)
@@ -529,7 +535,7 @@ async def scheduled_sniper_monitor(context):
                                 else:
                                     ccld_qty = qty
                                     break
-                
+
                             if ccld_qty < qty:
                                 try:
                                     await asyncio.to_thread(broker.cancel_order, t, odno)
@@ -557,7 +563,7 @@ async def scheduled_sniper_monitor(context):
                                     
                                 actual_exec_price = get_actual_execution_price(exec_history, "02", odno)
                                 display_price = actual_exec_price if actual_exec_price > 0 else limit_p
-                                
+                            
                                 msg = f"🚨 <b>[{t}] 스나이퍼 딥-매수(Intercept) 명중!</b>\n▫️ 타겟가: ${limit_p}\n▫️ 팩트 단가: ${display_price}\n▫️ 체결수량: {ccld_qty}주 (요청: {qty}주)\n▫️ 사유: {reason}\n▫️ 하방 방어망이 잠깁니다 (상방 독립 유지)."
                                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
              
@@ -644,7 +650,7 @@ async def scheduled_sniper_monitor(context):
                                         p = float(ex.get('ft_ccld_unpr3', '0'))
                                         if p > 0: return p
                                     return 0.0
-                                    
+                            
                                 actual_exec_price = get_actual_execution_price(exec_history, "01", odno)
                                 display_price = actual_exec_price if actual_exec_price > 0 else limit_p
                                      
@@ -652,6 +658,7 @@ async def scheduled_sniper_monitor(context):
                                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
 
     try:
-        await asyncio.wait_for(_do_sniper(), timeout=45.0)
+        # 🚨 MODIFIED: [V46.05 이벤트 루프 교착 방어] Lock Starvation 대비 호흡 연장
+        await asyncio.wait_for(_do_sniper(), timeout=90.0)
     except Exception as e:
          logging.error(f"🚨 스나이퍼 타임아웃 에러: {e}", exc_info=True)
