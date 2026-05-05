@@ -8,6 +8,8 @@
 # MODIFIED: [V44.48 런타임 붕괴 방어] 들여쓰기 붕괴(IndentationError) 완벽 교정.
 # NEW: [VWAP 잔차 증발 방어 롤백 엔진] 주문 거절/미체결 시 삭감된 예산을 버킷 식별자 기반으로 원상 복구(Refund)하는 환불 파이프라인 개통 완료.
 # NEW: [V46.01 팩트 교정] 소형 시드 1주 타격 영구 동결(Data Starvation) 및 분할 교착 맹점 원천 차단
+# 🚨 MODIFIED: [V46.02 엣지 케이스 핫픽스: 잔차 파탄 완벽 해체] 소형 시드 분할 교착 방어 시 기저 버킷(bucket) 동기화 및 초기화 로직 100% 추가.
+# ==========================================================
 import math
 import os
 import json
@@ -428,9 +430,15 @@ class ReversionStrategy:
                         if b1_budget_slice >= b2_budget_slice:
                             b1_budget_slice += b2_budget_slice
                             b2_budget_slice = 0.0
+                            # 🚨 MODIFIED: [V46.02 엣지 케이스 핫픽스] 기저 버킷 동시 병합 및 초기화
+                            b1_bucket += b2_bucket
+                            b2_bucket = 0.0
                         else:
                             b2_budget_slice += b1_budget_slice
                             b1_budget_slice = 0.0
+                            # 🚨 MODIFIED: [V46.02 엣지 케이스 핫픽스] 기저 버킷 동시 병합 및 초기화
+                            b2_bucket += b1_bucket
+                            b1_bucket = 0.0
                     # 장 마감 직전(min_idx >= 28)에는 잔여 예산이 1주 이상 남았다면 마이너스 가불을 허용하여 강제 스윕 타격
                     elif min_idx >= 28:
                         if b1_budget_slice >= b2_budget_slice:

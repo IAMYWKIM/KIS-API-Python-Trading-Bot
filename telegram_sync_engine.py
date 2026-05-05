@@ -6,6 +6,7 @@
 # MODIFIED: [V44.47 이벤트 루프 데드락 영구 소각] 동기식 블로킹 호출(장부 I/O, JSON 파싱) 전면 비동기 래핑 및 Atomic Write 적용 완료.
 # MODIFIED: [V44.48 데드코드 소각] 클래스 내부에 잔존하는 _verify_and_update_queue 메서드 전체 100% 영구 소각.
 # NEW: [2단계 수술] process_auto_sync 내부의 MANUAL_SYNC 및 MANUAL_BUY 직후 hasattr 데드코드 전면 소각.
+# 🚨 MODIFIED: [V46.02 엣지 케이스 핫픽스: AVWAP 물량 납치 패러독스 완벽 해체] job_data 의존성 전면 소각 및 bot_data 다이렉트 락온.
 # ==========================================================
 import logging
 import datetime
@@ -67,7 +68,6 @@ class TelegramSyncEngine:
             
         async with self.sync_locks[ticker]:
             async with self.tx_lock:
-                
                 last_split_date = await asyncio.to_thread(self.cfg.get_last_split_date, ticker)
                 
                 try:
@@ -144,7 +144,7 @@ class TelegramSyncEngine:
                         if not ord_dt: continue
                         ord_tmd = ex.get('ord_tmd')
                         if not ord_tmd or len(str(ord_tmd)) != 6: 
-                             ord_tmd = '000000'
+                            ord_tmd = '000000'
                         try:
                             k_dt = datetime.datetime.strptime(f"{ord_dt}{ord_tmd}", "%Y%m%d%H%M%S").replace(tzinfo=kst)
                             e_dt = k_dt.astimezone(est)
@@ -295,11 +295,11 @@ class TelegramSyncEngine:
                         new_target_records.append(calib_item)
                         
                     if new_target_records:
-                        if actual_qty > 0:
+                         if actual_qty > 0:
                             for r in new_target_records:
                                 r['avg_price'] = actual_avg
                     elif temp_recs: 
-                        if actual_qty > 0:
+                         if actual_qty > 0:
                             temp_recs[-1]['avg_price'] = actual_avg
                         
                     await asyncio.to_thread(self.cfg.overwrite_incremental_ledger, ticker, temp_recs, new_target_records)
@@ -321,18 +321,19 @@ class TelegramSyncEngine:
                     avwap_qty_global = 0
                     tracking_cache_global = None
                     try:
-                        jobs = context.job_queue.jobs() if context.job_queue else []
-                        job_data = jobs[0].data if jobs and len(jobs) > 0 and jobs[0].data is not None else {}
-                        tracking_cache_global = job_data.get('sniper_tracking', {})
+                        # 🚨 MODIFIED: [V46.02 엣지 케이스 핫픽스: AVWAP 물량 납치 패러독스 완벽 해체]
+                        # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막]
+                        # job_data 의존성을 100% 소각하고 bot_data 다이렉트 락온 및 self.strategy를 강제 참조합니다.
+                        app_data = context.bot_data.get('app_data', {})
+                        tracking_cache_global = app_data.get('sniper_tracking', {})
                         avwap_qty_global = tracking_cache_global.get(f"AVWAP_QTY_{ticker}", 0)
-                        
+
                         if avwap_qty_global == 0:
-                            strategy = job_data.get('strategy')
-                            if strategy and hasattr(strategy, 'v_avwap_plugin'):
-                                avwap_state = await asyncio.to_thread(strategy.v_avwap_plugin.load_state, ticker, now_est)
+                            if hasattr(self.strategy, 'v_avwap_plugin'):
+                                avwap_state = await asyncio.to_thread(self.strategy.v_avwap_plugin.load_state, ticker, now_est)
                                 avwap_qty_global = int(avwap_state.get('qty', 0))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logging.error(f"🚨 AVWAP 글로벌 캐시 팩트 스캔 에러: {e}")
                     
                     adjusted_actual_qty = max(0, actual_qty - avwap_qty_global)
                     
@@ -345,9 +346,9 @@ class TelegramSyncEngine:
                                     tracking_cache_global[f"AVWAP_AVG_{ticker}"] = 0.0
                                     tracking_cache_global[f"AVWAP_BOUGHT_{ticker}"] = False
                                     tracking_cache_global[f"AVWAP_SHUTDOWN_{ticker}"] = True
-                                
-                                strategy = job_data.get('strategy')
-                                if strategy and hasattr(strategy, 'v_avwap_plugin'):
+
+                                # 🚨 MODIFIED: [V46.02 엣지 케이스 핫픽스] job_data.get('strategy') 소각, self.strategy 직접 참조
+                                if hasattr(self.strategy, 'v_avwap_plugin'):
                                     state_data = {
                                         'bought': False,
                                         'shutdown': True,
@@ -355,7 +356,7 @@ class TelegramSyncEngine:
                                         'avg_price': 0.0,
                                         'strikes': tracking_cache_global.get(f"AVWAP_STRIKES_{ticker}", 0) if tracking_cache_global is not None else 0
                                     }
-                                    await asyncio.to_thread(strategy.v_avwap_plugin.save_state, ticker, now_est, state_data)
+                                    await asyncio.to_thread(self.strategy.v_avwap_plugin.save_state, ticker, now_est, state_data)
                             except Exception as e:
                                 logging.error(f"🚨 [{ticker}] AVWAP 환각 소각 중 예외 발생: {e}")
 
@@ -564,7 +565,7 @@ class TelegramSyncEngine:
                                                 _vf_out.flush()
                                                 os.fsync(_vf_out.fileno())
                                             os.replace(tmp_path, f_path)
-                                                
+                                            
                                         await asyncio.to_thread(_write_v_state, v_state, vwap_state_file)
                                         logging.info(f"🔧 [{ticker}] VWAP 잔차 수학적 보정 완료: {old_sell_qty} -> {v_state['executed']['SELL_QTY']}")
                                 except Exception as e:
@@ -780,3 +781,4 @@ class TelegramSyncEngine:
             await message_obj.edit_text(msg, reply_markup=markup, parse_mode='HTML')
         else:
             await context.bot.send_message(chat_id, msg, reply_markup=markup, parse_mode='HTML')
+
