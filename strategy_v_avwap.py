@@ -1,7 +1,7 @@
 # ==========================================================
 # FILE: strategy_v_avwap.py
 # ==========================================================
-# [strategy_v_avwap.py] - 🌟 V45.00 앱솔루트 팩트 교정 🌟
+# [strategy_v_avwap.py] - 🌟 V47.00 앱솔루트 팩트 교정 🌟
 # 💡 V-REV 하이브리드 전용 차세대 AVWAP 스나이퍼 플러그인 (Dual-Referencing)
 # ⚠️ 초공격형 당일 청산 암살자 (V-REV 잉여 현금 100% 몰빵 & -8% 하드스탑)
 # 🚨 [V29.03 팩트 수술] 기억상실(Amnesia) 엣지 케이스 방어막 (Persistence 엔진 탑재)
@@ -24,6 +24,7 @@
 # NEW: [V46 단판 승부 락온] 다중출장 모드를 무시하고 10:00 EST 단 1회 스캔 및 1회 익절 후 조기퇴근(영구동결) 엔진 이식 완료.
 # 🚨 MODIFIED: [V46.06 단판 승부 조건1 기초지수 락온 수술] 실행 티커 오염 및 패러독스 맹점 원천 수술
 # 🚨 MODIFIED: [V46.07 런타임 즉사 방어] IndentationError 들여쓰기 팩트 100% 교정
+# 🚨 MODIFIED: [V47.00 AVWAP 오버나이트 홀딩 락온] 하드스탑 및 타임스탑 강제 청산 방어막 영구 소각, 스마트 롤오버 엔진 이식
 # ==========================================================
 import logging
 import datetime
@@ -51,21 +52,52 @@ class VAvwapHybridPlugin:
         return target_date.strftime('%Y%m%d')
 
     def _get_state_file(self, ticker, now_est):
-        today_str = self._get_logical_date_str(now_est)
-        return f"data/avwap_state_{today_str}_{ticker}.json"
+        # 🚨 MODIFIED: [V47.00 AVWAP 오버나이트 홀딩 락온] 파일명에서 날짜 변수 적출 후 영구 락온
+        return f"data/avwap_state_persistent_{ticker}.json"
 
     def load_state(self, ticker, now_est):
         file_path = self._get_state_file(ticker, now_est)
+        today_str = self._get_logical_date_str(now_est)
+        
+        # 🚨 [AI 에이전트 절대 주의 - 스마트 롤오버 환각 방어막]
         if os.path.exists(file_path):
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    
+                    # 🚨 MODIFIED: [V47.00 AVWAP 오버나이트 홀딩 락온] 스마트 롤오버 엔진 가동
+                    if data.get('date') != today_str:
+                        qty = data.get('qty', 0)
+                        if qty > 0:
+                            data['first_scan_done'] = True
+                            data['first_scan_passed'] = True
+                            data['bought'] = True
+                            data['shutdown'] = False
+                        else:
+                            data['qty'] = 0
+                            data['avg_price'] = 0.0
+                            data['first_scan_done'] = False
+                            data['first_scan_passed'] = False
+                            data['shutdown'] = False
+                            data['strikes'] = 0
+                            data['bought'] = False
+                            data['daily_bought_qty'] = 0
+                            data['daily_sold_qty'] = 0
+                            
+                        data['date'] = today_str
+                        self.save_state(ticker, now_est, data)
+                        
+                    return data
             except Exception:
                 pass
-        return {"executed_buy": False, "shutdown": False, "strikes": 0}
+        return {"executed_buy": False, "shutdown": False, "strikes": 0, "qty": 0, "avg_price": 0.0, "daily_bought_qty": 0, "daily_sold_qty": 0}
 
     def save_state(self, ticker, now_est, state_data):
         file_path = self._get_state_file(ticker, now_est)
+        
+        # 🚨 MODIFIED: [V47.00 AVWAP 오버나이트 홀딩 락온] JSON 데이터 내부에 날짜 락온 보장
+        state_data['date'] = self._get_logical_date_str(now_est)
+        
         try:
             dir_name = os.path.dirname(file_path)
             if dir_name and not os.path.exists(dir_name):
@@ -109,7 +141,7 @@ class VAvwapHybridPlugin:
                     df_prev_day = df_past_1m[df_past_1m.index.date == last_date].copy()
                      
                     df_prev_day = df_prev_day.between_time('09:30', '15:59')
-                     
+                    
                     if not df_prev_day.empty:
                         prev_close = float(df_prev_day['Close'].iloc[-1])
                           
@@ -266,11 +298,9 @@ class VAvwapHybridPlugin:
             exec_return = (exec_curr_p - safe_avg) / safe_avg
             base_equivalent_return = exec_return / self.leverage
             
+            # 🚨 MODIFIED: [V47.00 AVWAP 오버나이트 홀딩 락온] 하드스탑 방어막 소각
             if base_equivalent_return <= -self.base_stop_loss_pct:
-                avwap_state["shutdown"] = True
-                self.save_state(exec_ticker, now_est, avwap_state)
-                reason = f'HARD_STOP_손절(-8.0%)_당일영구동결'
-                return _build_res('SELL', reason, qty=safe_qty, target_price=0.0)
+                return _build_res('HOLD', '오버나이트_홀딩_대기(하드스탑/타임스탑_소각)')
             
             final_target_pct = user_target_pct
             
@@ -294,10 +324,9 @@ class VAvwapHybridPlugin:
                 reason = f'단판승부_익절(+{final_target_pct:.1f}%)_당일영구동결'
                 return _build_res('SELL', reason, qty=safe_qty, target_price=0.0)
 
+            # 🚨 MODIFIED: [V47.00 AVWAP 오버나이트 홀딩 락온] 타임스탑 소각
             if curr_time >= time_1555:
-                avwap_state["shutdown"] = True
-                self.save_state(exec_ticker, now_est, avwap_state)
-                return _build_res('SELL', 'TIME_STOP_오버나이트동결', qty=safe_qty, target_price=0.0)
+                return _build_res('HOLD', '오버나이트_홀딩_대기(하드스탑/타임스탑_소각)')
                 
             return _build_res('HOLD', '보유중_관망')
 
