@@ -1,9 +1,6 @@
 # ==================================================
 # FILE: broker.py
-# ==================================================
-
 # ==========================================================
-# [broker.py] - 🌟 100% 통합 무결점 완성본 (Full Version) 🌟
 # MODIFIED: [V28.15 장부 2배 뻥튀기(Double Counting) 원천 차단]
 # KIS API(TTTS3012R)가 동일 종목을 다중 거래소(NASD, AMEX 등) 응답으로 
 # 중복 반환할 때 발생하던 누적 합산(21+21=42) 맹점 전면 수술. 
@@ -30,6 +27,7 @@
 # MODIFIED: [V40.XX 옴니 매트릭스] 거래소 동적 탐색 실패 시 SOXS 티커 AMEX Fallback 이식 및 타겟 인덱스 방어막 락온
 # NEW: [V40.XX 옴니 매트릭스] 전일 팩트 VWAP 및 당일 실시간 VWAP 듀얼 파싱 엔진(get_daily_vwap_info) 탑재
 # 🚨 MODIFIED: [V44.76 팩트 교정] 당일 고가/저가 스캔 시 프리마켓 진폭 100% 합산 롤백 (보수적 체력 방어막 복원)
+# 🚨 MODIFIED: [V47.00 하이킨아시 파서 open 컬럼 강제 수혈 락온]
 # ==========================================================
 
 import requests
@@ -149,7 +147,7 @@ class KoreaInvestmentBroker:
                     res = requests.post(url, headers=headers, data=json.dumps(data) if data else None, timeout=10)
                     
                 resp_json = res.json()
-                
+         
                 if resp_json.get('rt_cd') != '0':
                     msg1_lower = resp_json.get('msg1', '').lower()
                     msg_cd = resp_json.get('msg_cd', '').lower()
@@ -539,9 +537,10 @@ class KoreaInvestmentBroker:
             if df.index.tz is None: df.index = df.index.tz_localize('UTC').tz_convert(est)
             else: df.index = df.index.tz_convert(est)
                 
-            df = df.rename(columns={'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'})
+            # MODIFIED: [V47.00 하이킨아시 파서 open 컬럼 강제 수혈 락온]
+            df = df.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'})
             df['time_est'] = df.index.strftime('%H%M00')
-            return df[['high', 'low', 'close', 'volume', 'time_est']]
+            return df[['open', 'high', 'low', 'close', 'volume', 'time_est']]
         except Exception as e:
             return None
 
@@ -650,12 +649,12 @@ class KoreaInvestmentBroker:
                             break 
                     except (TypeError, ValueError):
                         pass
-                        
+                  
                 for tp in target_prices:
                     if o_price > 0 and abs(o_price - tp) < 0.005: 
                         target_orders.append(o)
                         break
-                        
+             
         for o in target_orders:
             self.cancel_order(ticker, o.get('odno'))
             time.sleep(0.3)
@@ -754,17 +753,17 @@ class KoreaInvestmentBroker:
                                     "item": dict(item),
                                     "total_qty": item_qty,
                                     "total_amt": item_qty * item_price
-                                }
+                                 }
                             elif odno not in odno_map:
                                 odno_map[odno] = {
-                                    "item": dict(item),
+                                     "item": dict(item),
                                     "total_qty": item_qty,
                                     "total_amt": item_qty * item_price
                                  }
-                            else:
+                             else:
                                 odno_map[odno]["total_qty"] += item_qty
                                 odno_map[odno]["total_amt"] += (item_qty * item_price)
-                                
+                             
                     except (TypeError, ValueError) as e:
                         continue
                         
@@ -812,7 +811,7 @@ class KoreaInvestmentBroker:
             date_str = target_date.strftime('%Y%m%d')
             
             if limit_date_str and date_str < limit_date_str: break 
-                
+             
             execs = self.get_execution_history(ticker, date_str, date_str)
             
             if execs:
@@ -823,7 +822,7 @@ class KoreaInvestmentBroker:
                         exec_qty = int(float(ex.get('ft_ccld_qty') or '0'))
                         exec_price = float(ex.get('ft_ccld_unpr3') or '0')
                     except (TypeError, ValueError) as e:
-                        continue
+                         continue
                         
                     record_qty = exec_qty
                     
@@ -837,7 +836,7 @@ class KoreaInvestmentBroker:
                     
                     ledger_records.append({
                         'date': f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}",
-                        'side': "BUY" if side_cd == "02" else "SELL",
+                         'side': "BUY" if side_cd == "02" else "SELL",
                         'qty': record_qty, 'price': exec_price
                     })
                     if genesis_reached: break
@@ -881,7 +880,7 @@ class KoreaInvestmentBroker:
             target_index = index_ticker
             
         try:
-            class TargetFloat(float): pass
+             class TargetFloat(float): pass
             
             if target_index == "SOXX":
                 hv_val, weight, target_drop, base_amp = ve.get_soxl_target_drop_full()
@@ -928,7 +927,7 @@ class KoreaInvestmentBroker:
 
     def get_atr_data(self, ticker):
         try:
-            stock = yf.Ticker(ticker)
+             stock = yf.Ticker(ticker)
             hist = stock.history(period="30d", timeout=5)
             if hist.empty or len(hist) < 15: return 0.0, 0.0
                 
@@ -950,7 +949,7 @@ class KoreaInvestmentBroker:
             if last_close > 0:
                 atr5_val  = last_row['ATR5']
                 atr14_val = last_row['ATR14']
-                
+                 
                 if pd.isna(atr5_val) or pd.isna(atr14_val):
                     return 0.0, 0.0
                 
