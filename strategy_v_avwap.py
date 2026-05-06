@@ -8,6 +8,7 @@
 # - 하이킨아시 5min 리샘플링 기반 3대 진입 조건(원웨이, 모멘텀, 체력) 락온
 # - 15:00 EST 오버나이트 존버(Hold) 모드 이식 및 투트랙 엑시트 전면 개조
 # - 10:00 EST 단판 승부 및 조기퇴근(단일 출장) 셧다운 로직 영구 소각 (무한 스캔 개방)
+# 🚨 MODIFIED: [1일 한정 실전 테스트] 제1조건(고저가 원웨이) 강제 바이패스 락온
 # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
 # 제1헌법: 동기 I/O 100% 비동기 격리.
 # 제3헌법: 타임존 단일 소스 락온 (EST 100%).
@@ -353,6 +354,9 @@ class VAvwapHybridPlugin:
             else:
                 cond1_met = (base_day_high < base_prev_c) and (base_day_low < base_prev_c)
 
+        # 🚨 MODIFIED: [1일 한정 실전 테스트] 제1조건(고저가 원웨이) 강제 바이패스 락온
+        cond1_met = True 
+
         # 2. 하이킨아시 모멘텀
         cond2_met = False
         if not is_inverse:
@@ -373,7 +377,7 @@ class VAvwapHybridPlugin:
                 safe_budget = avwap_alloc_cash * 0.95
                 buy_qty = int(math.floor(safe_budget / exec_curr_p))
                 if buy_qty > 0:
-                    return _build_res('BUY', '하이킨아시_3대조건_100%_충족_타격개시', qty=buy_qty, target_price=exec_curr_p)
+                    return _build_res('BUY', '하이킨아시_조건충족_1일테스트_타격개시', qty=buy_qty, target_price=exec_curr_p)
             return _build_res('WAIT', '가용예산부족_대기')
         else:
             fail_reasons = []
@@ -381,3 +385,4 @@ class VAvwapHybridPlugin:
             if not cond2_met: fail_reasons.append("HA모멘텀미달")
             if not cond3_met: fail_reasons.append(f"체력({rem_5_pct:.1f}%)미달")
             return _build_res('WAIT', f'진입조건대기({",".join(fail_reasons)})')
+
