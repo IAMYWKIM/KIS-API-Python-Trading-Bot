@@ -10,6 +10,7 @@
 # NEW: [V46.01 팩트 교정] 소형 시드 1주 타격 영구 동결(Data Starvation) 및 분할 교착 맹점 원천 차단
 # 🚨 MODIFIED: [V46.02 엣지 케이스 핫픽스: 잔차 파탄 완벽 해체] 소형 시드 분할 교착 방어 시 기저 버킷(bucket) 동기화 및 초기화 로직 100% 추가.
 # 🚨 MODIFIED: [V48.00 단일 바구니(Single Bucket) 롤백] Buy1과 Buy2 예산 스틸링(Stealing)을 허용하여 체결 우위 극대화 및 데이터 기아 원천 차단.
+# 🚨 MODIFIED: [V50.02 30분 압축 락온] 타임 윈도우 스캔 범위를 range(27, 60)에서 range(27, 57)로 정밀 교정하여 15:56 타격 종료 완벽 동기화.
 # ==========================================================
 import math
 import os
@@ -248,7 +249,8 @@ class ReversionStrategy:
             logging.error(f"🚨 [{ticker}] VWAP 프로파일 로드 실패: {e}")
             profile = {}
             
-        target_keys = [f"15:{str(m).zfill(2)}" for m in range(27, 60)]
+        # 🚨 MODIFIED: [V50.02] 스캔 윈도우 30분 압축 락온 완료 (27~57)
+        target_keys = [f"15:{str(m).zfill(2)}" for m in range(27, 57)]
         total_target_vol = sum(profile.get(k, 0.0) for k in target_keys)
         
         now_est = datetime.now(ZoneInfo('America/New_York'))
