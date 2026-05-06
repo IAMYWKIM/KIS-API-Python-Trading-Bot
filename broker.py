@@ -109,11 +109,12 @@ class KoreaInvestmentBroker:
                 fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
                 
                 try:
-                     with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    # MODIFIED: [V49.10 런타임 붕괴 방어] 들여쓰기 오염 교정 (21 -> 20칸)
+                    with os.fdopen(fd, 'w', encoding='utf-8') as f:
                         json.dump({'token': self.token, 'expire': expire_str}, f)
                         f.flush()
                         os.fsync(f.fileno())
-                     shutil.move(temp_path, self.token_file)
+                    shutil.move(temp_path, self.token_file)
                 finally:
                     if os.path.exists(temp_path):
                         try: os.remove(temp_path)
@@ -265,7 +266,8 @@ class KoreaInvestmentBroker:
                     if cash <= 0:
                         o2 = resp_json.get('output2', {})
                         if isinstance(o2, list):
-                             o2 = o2[0] if len(o2) > 0 else {}
+                            # MODIFIED: [V49.10 런타임 붕괴 방어] 들여쓰기 오염 교정 (29 -> 28칸)
+                            o2 = o2[0] if len(o2) > 0 else {}
                         new_cash = self._safe_float(o2.get('ovrs_ord_psbl_amt', 0))
                         if new_cash > cash: cash = new_cash
                     
@@ -753,14 +755,15 @@ class KoreaInvestmentBroker:
                                     "item": dict(item),
                                     "total_qty": item_qty,
                                     "total_amt": item_qty * item_price
-                                 }
+                                }
                             elif odno not in odno_map:
                                 odno_map[odno] = {
-                                     "item": dict(item),
+                                    # MODIFIED: [V49.10 런타임 붕괴 방어] 딕셔너리 내부 및 else 블록 들여쓰기 단차 교정
+                                    "item": dict(item),
                                     "total_qty": item_qty,
                                     "total_amt": item_qty * item_price
-                                 }
-                             else:
+                                }
+                            else:
                                 odno_map[odno]["total_qty"] += item_qty
                                 odno_map[odno]["total_amt"] += (item_qty * item_price)
                              
@@ -807,7 +810,7 @@ class KoreaInvestmentBroker:
         while curr_qty > 0 and not genesis_reached and loop_counter < 365:
             if target_date.weekday() < 5:
                 loop_counter += 1
-                 
+                
             date_str = target_date.strftime('%Y%m%d')
             
             if limit_date_str and date_str < limit_date_str: break 
@@ -822,7 +825,8 @@ class KoreaInvestmentBroker:
                         exec_qty = int(float(ex.get('ft_ccld_qty') or '0'))
                         exec_price = float(ex.get('ft_ccld_unpr3') or '0')
                     except (TypeError, ValueError) as e:
-                         continue
+                        # MODIFIED: [V49.10 런타임 붕괴 방어] 들여쓰기 오염 교정
+                        continue
                         
                     record_qty = exec_qty
                     
@@ -880,7 +884,8 @@ class KoreaInvestmentBroker:
             target_index = index_ticker
             
         try:
-             class TargetFloat(float): pass
+            # MODIFIED: [V49.10 런타임 붕괴 방어] 들여쓰기 오염 교정 (13 -> 12칸)
+            class TargetFloat(float): pass
             
             if target_index == "SOXX":
                 hv_val, weight, target_drop, base_amp = ve.get_soxl_target_drop_full()
@@ -927,7 +932,8 @@ class KoreaInvestmentBroker:
 
     def get_atr_data(self, ticker):
         try:
-             stock = yf.Ticker(ticker)
+            # MODIFIED: [V49.10 런타임 붕괴 방어] 들여쓰기 오염 교정 (13 -> 12칸)
+            stock = yf.Ticker(ticker)
             hist = stock.history(period="30d", timeout=5)
             if hist.empty or len(hist) < 15: return 0.0, 0.0
                 
