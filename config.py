@@ -1,6 +1,9 @@
 # ==========================================================
 # FILE: config.py
 # ==========================================================
+# MODIFIED: [V54.01] VWAP 데이터 통합 롤백 완료
+# 🚨 MODIFIED: [V54.02] IndentationError 런타임 즉사 버그 완벽 수술 (들여쓰기 팩트 교정)
+# ==========================================================
 
 import json
 import os
@@ -42,6 +45,7 @@ VWAP_PROFILES = {
         "15:52": 0.046156, "15:53": 0.050389, "15:54": 0.055626, "15:55": 0.061942, "15:56": 0.071412
     }
 }
+
 
 class ConfigManager:
     def __init__(self):
@@ -86,7 +90,6 @@ class ConfigManager:
         self._escrow_cache = {}
         self._locks_mutex = threading.Lock()
 
-    # MODIFIED: [V54.01] 내부 VWAP_PROFILES 참조로 변경 (롤백)
     def get_vwap_profile(self, ticker: str) -> dict:
         target_ticker = ticker.upper()
         if target_ticker not in VWAP_PROFILES:
@@ -154,10 +157,10 @@ class ConfigManager:
 
     def _load_file(self, filename, default=None):
         if os.path.exists(filename):
-             try:
+            try:
                 with open(filename, 'r', encoding='utf-8') as f:
                     return f.read().strip()
-             except Exception as e:
+            except Exception as e:
                 print(f"⚠️ [Config] 파일 로드 에러 ({filename}): {e}")
         return default
 
@@ -209,10 +212,10 @@ class ConfigManager:
         escrow = 0.0
         for r in reversed(ledger):
             if r.get('ticker') == ticker:
-                 if r.get('is_reverse', False):
-                     if r['side'] == 'SELL':
+                if r.get('is_reverse', False):
+                    if r['side'] == 'SELL':
                         escrow += (r['qty'] * r['price'])
-                     elif r['side'] == 'BUY':
+                    elif r['side'] == 'BUY':
                         escrow -= (r['qty'] * r['price'])
                 else:
                     break
@@ -266,7 +269,7 @@ class ConfigManager:
         est = ZoneInfo('America/New_York')
         today = datetime.datetime.now(est).strftime('%Y-%m-%d')
         def _update(locks):
-             locks[f"{today}_{ticker}_{market_type}"] = True
+            locks[f"{today}_{ticker}_{market_type}"] = True
         self._atomic_update_locks(_update)
 
     def reset_locks(self):
@@ -635,7 +638,6 @@ class ConfigManager:
         
         return new_hist, added_seed
 
-    # MODIFIED: [V44.45 맹점 1 수술] get_history 메서드 누락 팩트 복구로 명예의 전당 런타임 붕괴 영구 차단
     def get_history(self):
         return self._load_json(self.FILES["HISTORY"], [])
 
