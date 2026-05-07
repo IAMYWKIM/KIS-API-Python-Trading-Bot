@@ -2,6 +2,7 @@
 # FILE: scheduler_sniper.py
 # ==========================================================
 # MODIFIED: [V53.06 전투 사령부 외부 통신 10초 타임아웃 및 폴백 방어막 이식]
+# 🚨 MODIFIED: [V53.08 들여쓰기(Indentation) 붕괴 런타임 즉사 버그 완벽 수술]
 # [scheduler_sniper.py] - 🌟 100% 분할 캡슐화 완성본 (V47.00) 🌟
 # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
 # 제1헌법: queue_ledger.get_queue 등 모든 파일 I/O 및 락 점유 메서드는 무조건 asyncio.to_thread로 래핑하여 이벤트 루프 교착(Deadlock)을 원천 차단함.
@@ -529,9 +530,9 @@ async def scheduled_sniper_monitor(context):
                                         else:
                                             msg += f"\n⚠️ 잔량 {new_qty}주 발생 (미체결 강제 취소됨, 다음 1분봉 루프에서 재시도)"
                                             
-                                        if any(k in reason for k in ["조기퇴근", "HARD_STOP", "손절", "TIME_STOP"]):
+                                            if any(k in reason for k in ["조기퇴근", "HARD_STOP", "손절", "TIME_STOP"]):
                                                 shutdown_flag = True
-                                           # 🚨 MODIFIED: [V47.00] 무한출장 락온으로 기존 조건 셧다운 해제
+                                            # 🚨 MODIFIED: [V47.00] 무한출장 락온으로 기존 조건 셧다운 해제
                                             if any(k in reason for k in ["15:00_도달"]):
                                                 shutdown_flag = True
                                             if any(k in reason for k in ["조기퇴근", "HARD_STOP", "손절"]):
