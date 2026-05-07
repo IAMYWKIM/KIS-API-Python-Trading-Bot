@@ -5,6 +5,9 @@
 # 제1헌법: queue_ledger.get_queue 등 모든 파일 I/O 및 락 점유 메서드는 무조건 asyncio.to_thread로 래핑하여 이벤트 루프 교착(Deadlock)을 원천 차단함.
 # MODIFIED: [V44.47 이벤트 루프 데드락 영구 소각] 다이렉트 파일 I/O 및 config/ledger 접근 메서드 전면 비동기 래핑 완료.
 # MODIFIED: [V44.48 수동 조작 데드코드 영구 소각 및 런타임 무결성 확보] 큐 장부에 존재하지 않는 _load 메서드 호출 찌꺼기 100% 소각.
+# 🚨 MODIFIED: [V54.04 런타임 붕괴(Split-Brain) 근본 원인 팩트 수술]
+# 삼위일체 소각(/reset) 시 V_REV 모드라면 is_active를 False로 끄지 않고 True로 보존하여 '0주 새출발' 상태를 100% 팩트 락온.
+# 모드 스위칭(SET_VER_CONFIRM) 시에도 version과 is_active 플래그가 완벽히 동기화되도록 디커플링 배선 정밀 교정 완료.
 # ==========================================================
 import logging
 import datetime
@@ -98,7 +101,7 @@ class TelegramCallbacks:
                     q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
                 else:
                     q_data = []
-                    # 🚨 MODIFIED: 파일 I/O 비동기 래핑
+# 🚨 MODIFIED: 파일 I/O 비동기 래핑
                     def _read_q():
                         if os.path.exists("data/queue_ledger.json"):
                             with open("data/queue_ledger.json", "r", encoding='utf-8') as f:
@@ -304,7 +307,12 @@ class TelegramCallbacks:
             elif sub == "CONFIRM":
                 ticker = data[2]
                 
-                await asyncio.to_thread(self.cfg.set_reverse_state, ticker, False, 0)
+                # MODIFIED: [V54.04 런타임 붕괴(Split-Brain) 맹점 원천 수술]
+                # 리셋 격발 시 V-REV 모드일 경우 is_active를 False로 끄지 않고 True로 보존하여 '0주 새출발' 팩트 락온.
+                current_ver = await asyncio.to_thread(self.cfg.get_version, ticker)
+                is_rev_active = (current_ver == "V_REV")
+                await asyncio.to_thread(self.cfg.set_reverse_state, ticker, is_rev_active, 0)
+                
                 await asyncio.to_thread(self.cfg.clear_escrow_cash, ticker)
                 
                 # 🚨 [비동기 래핑]
@@ -447,7 +455,7 @@ class TelegramCallbacks:
                                 await context.bot.send_photo(chat_id=chat_id, photo=f_out)
                         await query.delete_message()
                     else:
-                        await query.edit_message_text("❌ 이미지 생성에 실패했습니다.", parse_mode='HTML')
+                         await query.edit_message_text("❌ 이미지 생성에 실패했습니다.", parse_mode='HTML')
                 except Exception as e:
                     logging.error(f"📸 👑 졸업 이미지 생성/발송 실패: {e}")
                     await query.edit_message_text("❌ 이미지 생성 중 오류가 발생했습니다.", parse_mode='HTML')
@@ -651,6 +659,11 @@ class TelegramCallbacks:
             
             if mode_type in ["AUTO", "MANUAL"]:
                 await asyncio.to_thread(self.cfg.set_version, ticker, "V_REV")
+                
+                # NEW: [V54.04 모드 스위칭 시 Split-Brain 방어 락온]
+                # V-REV 모드로 진입하므로 is_active 플래그를 True로 맞추어 SSOT 통일
+                await asyncio.to_thread(self.cfg.set_reverse_state, ticker, True, 0)
+                
                 await asyncio.to_thread(self.cfg.set_upward_sniper_mode, ticker, False)
                 if hasattr(self.cfg, 'set_avwap_hybrid_mode'):
                     await asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, ticker, False)
@@ -666,6 +679,11 @@ class TelegramCallbacks:
             
             elif mode_type in ["V14_LOC", "V14_VWAP"]:
                 await asyncio.to_thread(self.cfg.set_version, ticker, "V14")
+                
+                # NEW: [V54.04 모드 스위칭 시 Split-Brain 방어 락온]
+                # V14 모드로 복귀하므로 is_active 플래그를 False로 맞추어 SSOT 통일
+                await asyncio.to_thread(self.cfg.set_reverse_state, ticker, False, 0)
+                
                 await asyncio.to_thread(self.cfg.set_upward_sniper_mode, ticker, False)
                 if hasattr(self.cfg, 'set_avwap_hybrid_mode'):
                     await asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, ticker, False)
