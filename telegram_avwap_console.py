@@ -251,10 +251,12 @@ class AvwapConsolePlugin:
             rem_5_pct_console = 0.0
 
             if base_prev_c > 0 and base_day_high > 0 and base_day_low > 0:
+                # 🚨 MODIFIED: [V47 제1헌법 롱(Long) 원웨이 갭 필터 UI 팩트 교정]
+                is_neg_gap_state = (base_day_high < base_prev_c) and (base_day_low < base_prev_c)
                 if t == "SOXS":
-                    cond1_met = (base_day_high < base_prev_c) and (base_day_low < base_prev_c)
+                    cond1_met = is_neg_gap_state
                 else:
-                    cond1_met = (base_day_high > base_prev_c) and (base_day_low > base_prev_c)
+                    cond1_met = not is_neg_gap_state
                     
             if prev_c > 0 and day_high > 0 and day_low > 0:
                 actual_gap_dollar = day_high - day_low
