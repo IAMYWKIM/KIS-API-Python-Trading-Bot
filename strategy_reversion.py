@@ -4,7 +4,7 @@
 # MODIFIED: [V44.27 0주 스냅샷 환각 락온] 서버 재시작으로 인메모리 스냅샷이 소실되었을 때, VWAP이 장중 매수한 로트를 기보유 물량으로 오판하여 매도를 재개(하극상)하던 맹점 원천 차단. 큐 장부에서 당일 날짜(EST)의 로트를 100% 도려내고 오직 어제까지 이월된 순수 과거 물량만을 스캔하여 '0주 새출발' 상태를 완벽히 팩트 복구하는 타임머신 역산 엔진 이식 완료.
 # MODIFIED: [V44.25 예산 탈취(Stealing) 런타임 붕괴 방어막 이식] Buy1이 Buy2의 미사용 예산을 훔쳐와 무한 타격(34주 체결 등)하는 차원 붕괴를 영구 소각.
 # MODIFIED: [V44.25 AVWAP 디커플링] VWAP 기상 전 스냅샷 2중 교차 검증(Fail-Safe) 및 암살자 물량(AVWAP) 100% 격리(Decoupling) 파이프라인 이식 완료.
-# MODIFIED: [V44.36 큐 장부 vs 브로커 실잔고 불일치 팩트 스캔] 페일세이프 스냅샷 복 복원 시 KIS 순수 본대 수량과 큐 장부 이월 수량 간의 팩트 불일치가 발생할 경우 명시적으로 경고를 타전하여 CALIB 보정을 유도하도록 감시망(EC-3) 이식 완료.
+# MODIFIED: [V44.36 큐 장부 vs 브로커 실잔고 불일치 팩트 스캔] 페일세이프 스냅샷 복원 시 KIS 순수 본대 수량과 큐 장부 이월 수량 간의 팩트 불일치가 발생할 경우 명시적으로 경고를 타전하여 CALIB 보정을 유도하도록 감시망(EC-3) 이식 완료.
 # MODIFIED: [V44.48 런타임 붕괴 방어] 들여쓰기 붕괴(IndentationError) 완벽 교정.
 # NEW: [VWAP 잔차 증발 방어 롤백 엔진] 주문 거절/미체결 시 삭감된 예산을 버킷 식별자 기반으로 원상 복구(Refund)하는 환불 파이프라인 개통 완료.
 # NEW: [V46.01 팩트 교정] 소형 시드 1주 타격 영구 동결(Data Starvation) 및 분할 교착 맹점 원천 차단
@@ -14,6 +14,7 @@
 # 🚨 MODIFIED: [V50.03 분할 교착 및 예산 강제 축소 버그 완벽 수술] 기존 elif 구조로 인해 버려지던 가불 로직을 독립된 if문으로 분리하고, 이미 예산이 넉넉한 경우를 1주 가격(curr_p)으로 강제 축소해버리는 치명적 맹점 원천 차단.
 # 🚨 MODIFIED: [V51.00 몰빵 로직 전면 철거] 0주 진입 시에도 50:50 분할 예산 원칙을 100% 강제 락온하여 예산 효율성 복구 완료.
 # 🚨 MODIFIED: [V51.01 소형 시드 1주 영끌 타격 락온] 예산이 1주 가격보다 작더라도 장막판 가불을 통해 무조건 1주 베이스캠프 확보 보장.
+# 🚨 MODIFIED: [V53.00 무한 재진입 락온] 0주 매수 금지(Daily Buy-Lock) 족쇄 전면 폐기 및 was_holding 데드코드 100% 소각. 전량 익절 후에도 당일 타점 도달 시 100% 재매수 강제 가동.
 # ==========================================================
 import math
 import os
@@ -32,7 +33,6 @@ class ReversionStrategy:
         }
         self.executed = {"BUY_BUDGET": {}, "SELL_QTY": {}}
         self.state_loaded = {}
-        self.was_holding = {}
 
     def _get_logical_date_str(self):
         now_est = datetime.now(ZoneInfo('America/New_York'))
@@ -65,7 +65,6 @@ class ReversionStrategy:
                     for k in self.executed.keys():
                         raw_val = data.get("executed", {}).get(k, 0)
                         self.executed[k][ticker] = int(raw_val) if k == "SELL_QTY" else float(raw_val)
-                    self.was_holding[ticker] = bool(data.get("was_holding", False))
                     self.state_loaded[ticker] = today_str
                     return
             except Exception:
@@ -75,7 +74,6 @@ class ReversionStrategy:
             self.residual[k][ticker] = 0.0
         self.executed["BUY_BUDGET"][ticker] = 0.0
         self.executed["SELL_QTY"][ticker] = 0
-        self.was_holding[ticker] = False
         self.state_loaded[ticker] = today_str
 
     def _save_state(self, ticker):
@@ -87,8 +85,7 @@ class ReversionStrategy:
             "executed": {
                 "BUY_BUDGET": float(self.executed.get("BUY_BUDGET", {}).get(ticker, 0.0)),
                 "SELL_QTY": int(self.executed.get("SELL_QTY", {}).get(ticker, 0))
-            },
-            "was_holding": bool(self.was_holding.get(ticker, False))
+            }
         }
         temp_path = None
         try:
@@ -167,7 +164,7 @@ class ReversionStrategy:
         if pure_qty != legacy_q:
             logging.warning(f"⚠️ [{ticker}] V-REV 페일세이프 경고: KIS 순수 본대 수량({pure_qty}주)과 이월 큐 장부 수량({legacy_q}주) 불일치 감지. CALIB 비파괴 보정 또는 수동 동기화 요망.")
             
-        logging.warning(f"🚨 [{ticker}] V_REV 스냅샷 증발 감지! 페일세이프 긴급 복 복원 가동 (KIS총잔고:{total_kis_qty} - 암살자:{avwap_qty} = 본대:{pure_qty}주 | 이월 큐 장부:{legacy_q}주)")
+        logging.warning(f"🚨 [{ticker}] V_REV 스냅샷 증발 감지! 페일세이프 긴급 복원 가동 (KIS총잔고:{total_kis_qty} - 암살자:{avwap_qty} = 본대:{pure_qty}주 | 이월 큐 장부:{legacy_q}주)")
         
         return self.get_dynamic_plan(
             ticker=ticker,
@@ -425,7 +422,7 @@ class ReversionStrategy:
                         if b1_budget_slice >= b2_budget_slice:
                             b1_budget_slice = curr_p
                         else:
-                             b2_budget_slice = curr_p
+                            b2_budget_slice = curr_p
                             
                 # 🚨 MODIFIED: [V51.01 소형 시드 1주 영끌 타격 락온]
                 # 장 마감 직전(min_idx >= 28)까지 단 1주도 사지 못했다면,
@@ -478,7 +475,7 @@ class ReversionStrategy:
                             self.residual["SELL_L1"][ticker] = float(exact_l1 - alloc_l1)
                             if alloc_l1 > 0:
                                 orders.append({"side": "SELL", "qty": alloc_l1, "price": trigger_l1, "bucket": "SELL_L1"})
-                            rem_qty_total -= alloc_l1
+                        rem_qty_total -= alloc_l1
 
                     if upper_qty > 0 and trigger_upper > 0 and curr_p >= trigger_upper and rem_qty_total > 0:
                         exact_upper = float(rem_qty_total * slice_ratio_sell) + float(self.residual["SELL_UPPER"].get(ticker, 0.0))
