@@ -1,5 +1,5 @@
 # ==========================================================
-# FILE: config.py (수술 완료)
+# FILE: config.py
 # ==========================================================
 
 import json
@@ -23,12 +23,25 @@ try:
 except ImportError:
     VERSION_HISTORY = ["V14.x [-] 버전 기록 파일(version_history.py)을 찾을 수 없습니다."]
 
-try:
-    from vwap_data import VWAP_PROFILES
-except ImportError:
-    VWAP_PROFILES = {"SOXL": {}, "SOXS": {}}
-    print("⚠️ [경고] vwap_data.py 플러그인을 찾을 수 없습니다. (U-Curve 데이터 부재)")
-
+# MODIFIED: [V54.01] vwap_data.py 외부 파일 의존성 제거 및 내부 통합 (롤백)
+VWAP_PROFILES = {
+    "SOXL": {
+        "15:27": 0.010835, "15:28": 0.010105, "15:29": 0.010360, "15:30": 0.010940, "15:31": 0.011123,
+        "15:32": 0.011697, "15:33": 0.012039, "15:34": 0.012681, "15:35": 0.013115, "15:36": 0.013911,
+        "15:37": 0.014932, "15:38": 0.015402, "15:39": 0.016528, "15:40": 0.017321, "15:41": 0.018455,
+        "15:42": 0.020241, "15:43": 0.021198, "15:44": 0.023076, "15:45": 0.024557, "15:46": 0.026961,
+        "15:47": 0.030867, "15:48": 0.033476, "15:49": 0.037601, "15:50": 0.041495, "15:51": 0.047717,
+        "15:52": 0.055668, "15:53": 0.066270, "15:54": 0.081758, "15:55": 0.109401, "15:56": 0.180271
+    },
+    "SOXS": {
+        "15:27": 0.025265, "15:28": 0.025388, "15:29": 0.025512, "15:30": 0.025644, "15:31": 0.025767,
+        "15:32": 0.025890, "15:33": 0.026023, "15:34": 0.026146, "15:35": 0.026269, "15:36": 0.026402,
+        "15:37": 0.026525, "15:38": 0.026648, "15:39": 0.026781, "15:40": 0.026904, "15:41": 0.027027,
+        "15:42": 0.027159, "15:43": 0.027282, "15:44": 0.027406, "15:45": 0.027538, "15:46": 0.027661,
+        "15:47": 0.032680, "15:48": 0.034868, "15:49": 0.036497, "15:50": 0.039044, "15:51": 0.042150,
+        "15:52": 0.046156, "15:53": 0.050389, "15:54": 0.055626, "15:55": 0.061942, "15:56": 0.071412
+    }
+}
 
 class ConfigManager:
     def __init__(self):
@@ -36,7 +49,7 @@ class ConfigManager:
             "TOKEN": "data/token.dat",
             "CHAT_ID": "data/chat_id.dat",
             "LEDGER": "data/manual_ledger.json", 
-            "HISTORY": "data/manual_history.json",  
+            "HISTORY": "data/manual_history.json", 
             "SPLIT": "data/split_config.json",
             "TICKER": "data/active_tickers.json",
             "UPWARD_SNIPER": "data/upward_sniper.json", 
@@ -73,10 +86,11 @@ class ConfigManager:
         self._escrow_cache = {}
         self._locks_mutex = threading.Lock()
 
+    # MODIFIED: [V54.01] 내부 VWAP_PROFILES 참조로 변경 (롤백)
     def get_vwap_profile(self, ticker: str) -> dict:
         target_ticker = ticker.upper()
-        if target_ticker not in VWAP_PROFILES or not VWAP_PROFILES[target_ticker]:
-            raise ValueError(f"🚨 [치명적 런타임 오류] {target_ticker}의 U-Curve 데이터가 vwap_data.py에 존재하지 않습니다.")
+        if target_ticker not in VWAP_PROFILES:
+            return {}
         return VWAP_PROFILES[target_ticker]
 
     def _atomic_update_locks(self, update_fn):
@@ -160,7 +174,8 @@ class ConfigManager:
                 fd = None
                 f.write(str(content))
                 f.flush()
-                os.fsync(f.fileno()) 
+            
+            os.fsync(f.fileno()) 
             os.replace(temp_path, filename)
             temp_path = None
         except Exception as e:
@@ -194,7 +209,7 @@ class ConfigManager:
         escrow = 0.0
         for r in reversed(ledger):
             if r.get('ticker') == ticker:
-                if r.get('is_reverse', False):
+                 if r.get('is_reverse', False):
                      if r['side'] == 'SELL':
                         escrow += (r['qty'] * r['price'])
                      elif r['side'] == 'BUY':
@@ -539,7 +554,7 @@ class ConfigManager:
                     
         avg_price = total_invested / holdings if holdings > 0 else 0.0
         t_val = (holdings * avg_price) / base_portion if base_portion > 0 else 0.0
-             
+        
         if holdings > 0:
             safe_denom = max(1.0, split - t_val)
             current_budget = rem_cash / safe_denom
@@ -769,4 +784,3 @@ class ConfigManager:
         v = self._load_file(self.FILES["CHAT_ID"])
         return int(v) if v else None
     def set_chat_id(self, v): self._save_file(self.FILES["CHAT_ID"], v)
-
