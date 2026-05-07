@@ -14,6 +14,7 @@
 # 🚨 MODIFIED: [V47.02 런타임 붕괴 방어] target_sweep_qty UnboundLocalError 스코프 전진 배치로 영구 소각 완료
 # 🚨 MODIFIED: [V50.02 30분 압축 락온] 타임 윈도우 스캔 범위를 range(27, 60)에서 range(27, 57)로 정밀 교정하여 15:56 타격 종료 완벽 동기화.
 # 🚨 MODIFIED: [V52.00 V14 VWAP 예산 누수 영구 소각] get_dynamic_plan 호출 시 6번째 인자에 0.0이 하드코딩되어 당일 예산이 0원으로 강제 주입되던 치명적 맹점 원천 차단. v14_alloc_cash 스코프 전진 배치 및 팩트 예산 주입 파이프라인 100% 개통 완료.
+# 🚨 MODIFIED: [V53.00 무한 재진입 락온] 0주 매수 금지(Daily Buy-Lock) 족쇄 전면 폐기. 전량 익절 후에도 당일 타점 도달 시 100% 재매수 강제 가동.
 # ==========================================================
 import logging
 import datetime
@@ -143,7 +144,8 @@ async def scheduled_vwap_init_and_cancel(context):
                             await asyncio.sleep(1.0)
                         except Exception as e:
                             logging.error(f"🚨 자가 치유 Nuke 실패: {e}", exc_info=True)
-                            vwap_cache[f"REV_{t}_nuked"] = False 
+                    
+            vwap_cache[f"REV_{t}_nuked"] = False 
                
     try:
         await asyncio.wait_for(_do_init(), timeout=45.0)
@@ -294,7 +296,8 @@ async def scheduled_vwap_trade(context):
                             await asyncio.sleep(1.0)
                         except Exception as e:
                             logging.error(f"🚨 자가 치유 Nuke 실패: {e}", exc_info=True)
-                            vwap_cache[f"REV_{t}_nuked"] = False
+                            
+                        vwap_cache[f"REV_{t}_nuked"] = False
                             continue
 
                     curr_p = float(await asyncio.to_thread(broker.get_current_price, t) or 0.0)
@@ -363,18 +366,9 @@ async def scheduled_vwap_trade(context):
                             
                         is_zero_start_session = is_zero_start 
                         virtual_q_data = [] if is_zero_start else q_data
-                        
+                    
                         await asyncio.to_thread(strategy_rev._load_state_if_needed, t)
-                        held_in_cache = vwap_cache.get(f"REV_{t}_was_holding", False)
-                        held_in_file = strategy_rev.was_holding.get(t, False)
-                        if (held_in_cache or held_in_file) and total_q == 0:
-                            continue
-                            
-                        if total_q > 0:
-                            vwap_cache[f"REV_{t}_was_holding"] = True
-                            if not strategy_rev.was_holding.get(t, False):
-                                strategy_rev.was_holding[t] = True
-                            await asyncio.to_thread(strategy_rev._save_state, t)
+                        # 🚨 MODIFIED: [V53.00 무한 재진입 락온] Daily Buy-Lock (was_holding) 데드코드 영구 소각 (0주 매수 금지 철거)
                             
                         if total_q > 0:
                             avg_price = sum(item.get("qty", 0) * item.get("price", 0.0) for item in q_data) / total_q
@@ -461,7 +455,7 @@ async def scheduled_vwap_trade(context):
                                                     await asyncio.sleep(0.5)
                                                 except Exception as e_cancel:
                                                     logging.warning(f"⚠️ [{t}] 스윕 잔여 주문 취소 실패: {e_cancel}")
-                                            
+                                                    
                                             if ccld_qty > 0:
                                                 await asyncio.to_thread(strategy_rev.record_execution, t, "SELL", ccld_qty, exec_price)
                                                 q_snap_before_pop = list(q_data)
@@ -496,7 +490,7 @@ async def scheduled_vwap_trade(context):
                                             msg = f"⚠️ <b>[{t}] 스윕 피니셔 덤핑 생략 (MOC 락다운 감지)</b>\n▫️ 조건이 달성되었으나, 대상 물량이 수동 긴급 수혈(MOC) 등 취소 불가 상태로 미국 거래소에 묶여 있어 스윕 덤핑을 자동 스킵합니다."
                                             await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
                                             vwap_cache[f"REV_{t}_sweep_skip_msg"] = True
-                                            
+                                        
                         # MODIFIED: [V44.45 잭팟 데드존 방어] 과잉 방어막 도려내기.
                             if target_sweep_qty > 0:
                                 continue 
@@ -725,7 +719,7 @@ async def scheduled_vwap_trade(context):
                         unfilled_qty = slice_qty - ccld_qty
                         if unfilled_qty > 0:
                             await _process_refund(unfilled_qty)
-                                 
+                                
                         if ccld_qty > 0:
                             if version == "V_REV":
                                 await asyncio.to_thread(strategy_rev.record_execution, t, side, ccld_qty, exec_price)
