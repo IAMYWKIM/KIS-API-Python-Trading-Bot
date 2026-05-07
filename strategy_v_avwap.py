@@ -336,16 +336,17 @@ class VAvwapHybridPlugin:
             return _build_res('WAIT', '당일영구동결_상태(신규진입금지)')
 
         # 🚨 [V45.00 동적 킬 스위치] 정규장(09:30 EST~) 횡보장 스캔 락온
-        if df_1min_base is not None and not df_1min_base.empty:
-            df_reg = df_1min_base[df_1min_base['time_est'] >= '093000']
-            if not df_reg.empty:
-                base_reg_high = float(df_reg['high'].max())
-                base_reg_low = float(df_reg['low'].min())
-                base_prev_c_for_kill = float(context_data.get('prev_close', 0.0))
-                if base_prev_c_for_kill > 0 and base_reg_high > base_prev_c_for_kill and base_reg_low < base_prev_c_for_kill:
-                    avwap_state["shutdown"] = True
-                    self.save_state(exec_ticker, now_est, avwap_state)
-                    return _build_res('SHUTDOWN', '정규장_횡보장_감지(Zero-Line_관통)_신규진입_영구동결')
+        # MODIFIED: [단판승부 실전 테스트] 횡보장 킬 스위치 강제 무력화 (주석 처리 바이패스)
+        # if df_1min_base is not None and not df_1min_base.empty:
+        #     df_reg = df_1min_base[df_1min_base['time_est'] >= '093000']
+        #     if not df_reg.empty:
+        #         base_reg_high = float(df_reg['high'].max())
+        #         base_reg_low = float(df_reg['low'].min())
+        #         base_prev_c_for_kill = float(context_data.get('prev_close', 0.0))
+        #         if base_prev_c_for_kill > 0 and base_reg_high > base_prev_c_for_kill and base_reg_low < base_prev_c_for_kill:
+        #             avwap_state["shutdown"] = True
+        #             self.save_state(exec_ticker, now_est, avwap_state)
+        #             return _build_res('SHUTDOWN', '정규장_횡보장_감지(Zero-Line_관통)_신규진입_영구동결')
 
         # 🚨 MODIFIED: [V53.01] 오프닝 휩소 방어를 위한 10분 안전 마진 적용
         if curr_time < time_0410:
