@@ -4,7 +4,7 @@
 # MODIFIED: [V44.27 0주 스냅샷 환각 락온] 서버 재시작으로 인메모리 스냅샷이 소실되었을 때, VWAP이 장중 매수한 로트를 기보유 물량으로 오판하여 매도를 재개(하극상)하던 맹점 원천 차단. 큐 장부에서 당일 날짜(EST)의 로트를 100% 도려내고 오직 어제까지 이월된 순수 과거 물량만을 스캔하여 '0주 새출발' 상태를 완벽히 팩트 복구하는 타임머신 역산 엔진 이식 완료.
 # MODIFIED: [V44.25 예산 탈취(Stealing) 런타임 붕괴 방어막 이식] Buy1이 Buy2의 미사용 예산을 훔쳐와 무한 타격(34주 체결 등)하는 차원 붕괴를 영구 소각.
 # MODIFIED: [V44.25 AVWAP 디커플링] VWAP 기상 전 스냅샷 2중 교차 검증(Fail-Safe) 및 암살자 물량(AVWAP) 100% 격리(Decoupling) 파이프라인 이식 완료.
-# MODIFIED: [V44.36 큐 장부 vs 브로커 실잔고 불일치 팩트 스캔] 페일세이프 스냅샷 복원 시 KIS 순수 본대 수량과 큐 장부 이월 수량 간의 팩트 불일치가 발생할 경우 명시적으로 경고를 타전하여 CALIB 보정을 유도하도록 감시망(EC-3) 이식 완료.
+# MODIFIED: [V44.36 큐 장부 vs 브로커 실잔고 불일치 팩트 스캔] 페일세이프 스냅샷 복 복원 시 KIS 순수 본대 수량과 큐 장부 이월 수량 간의 팩트 불일치가 발생할 경우 명시적으로 경고를 타전하여 CALIB 보정을 유도하도록 감시망(EC-3) 이식 완료.
 # MODIFIED: [V44.48 런타임 붕괴 방어] 들여쓰기 붕괴(IndentationError) 완벽 교정.
 # NEW: [VWAP 잔차 증발 방어 롤백 엔진] 주문 거절/미체결 시 삭감된 예산을 버킷 식별자 기반으로 원상 복구(Refund)하는 환불 파이프라인 개통 완료.
 # NEW: [V46.01 팩트 교정] 소형 시드 1주 타격 영구 동결(Data Starvation) 및 분할 교착 맹점 원천 차단
@@ -12,7 +12,7 @@
 # 🚨 MODIFIED: [V48.00 단일 바구니(Single Bucket) 롤백] Buy1과 Buy2 예산 스틸링(Stealing)을 허용하여 체결 우위 극대화 및 데이터 기아 원천 차단.
 # 🚨 MODIFIED: [V50.02 30분 압축 락온] 타임 윈도우 스캔 범위를 range(27, 60)에서 range(27, 57)로 정밀 교정하여 15:56 타격 종료 완벽 동기화.
 # 🚨 MODIFIED: [V50.03 분할 교착 및 예산 강제 축소 버그 완벽 수술] 기존 elif 구조로 인해 버려지던 가불 로직을 독립된 if문으로 분리하고, 이미 예산이 넉넉한 경우를 1주 가격(curr_p)으로 강제 축소해버리는 치명적 맹점 원천 차단.
-# 🚨 MODIFIED: [V51.00 0주 새출발 파편화(Data Starvation) 원천 차단] 0주 진입 시 예산 50:50 분할을 소각하고 100% 영끌 디커플링 이식.
+# 🚨 MODIFIED: [V51.00 몰빵 로직 전면 철거] 0주 진입 시에도 50:50 분할 예산 원칙을 100% 강제 락온하여 예산 효율성 복구 완료.
 # 🚨 MODIFIED: [V51.01 소형 시드 1주 영끌 타격 락온] 예산이 1주 가격보다 작더라도 장막판 가불을 통해 무조건 1주 베이스캠프 확보 보장.
 # ==========================================================
 import math
@@ -167,7 +167,7 @@ class ReversionStrategy:
         if pure_qty != legacy_q:
             logging.warning(f"⚠️ [{ticker}] V-REV 페일세이프 경고: KIS 순수 본대 수량({pure_qty}주)과 이월 큐 장부 수량({legacy_q}주) 불일치 감지. CALIB 비파괴 보정 또는 수동 동기화 요망.")
             
-        logging.warning(f"🚨 [{ticker}] V_REV 스냅샷 증발 감지! 페일세이프 긴급 복원 가동 (KIS총잔고:{total_kis_qty} - 암살자:{avwap_qty} = 본대:{pure_qty}주 | 이월 큐 장부:{legacy_q}주)")
+        logging.warning(f"🚨 [{ticker}] V_REV 스냅샷 증발 감지! 페일세이프 긴급 복 복원 가동 (KIS총잔고:{total_kis_qty} - 암살자:{avwap_qty} = 본대:{pure_qty}주 | 이월 큐 장부:{legacy_q}주)")
         
         return self.get_dynamic_plan(
             ticker=ticker,
@@ -401,16 +401,10 @@ class ReversionStrategy:
             raw_slice = float(alloc_cash) * current_weight
             shared_bucket = float(self.residual["BUY_SHARED"].get(ticker, 0.0)) + raw_slice
             
-            # 🚨 MODIFIED: [V51.00 0주 새출발 파편화(Data Starvation) 원천 차단]
-            # 0주 상태에서는 1층 베이스캠프 확보가 최우선이므로 50:50 분할을 소각하고
-            # 100% 예산을 Buy1에 집중하여 소형 시드의 1주 타격 누수(Skip)를 완벽 해체합니다.
-            if is_zero_start_session:
-                b1_budget_slice = shared_bucket
-                b2_budget_slice = 0.0
-            else:
-                # 50:50 동적 분할
-                b1_budget_slice = shared_bucket * 0.5
-                b2_budget_slice = shared_bucket * 0.5
+            # 🚨 MODIFIED: [V51.00 몰빵 로직 전면 철거] 
+            # 0주 새출발 시에도 무조건 50:50 예산 분할 원칙을 100% 강제 락온.
+            b1_budget_slice = shared_bucket * 0.5
+            b2_budget_slice = shared_bucket * 0.5
             
             total_slice = b1_budget_slice + b2_budget_slice
             
@@ -431,7 +425,7 @@ class ReversionStrategy:
                         if b1_budget_slice >= b2_budget_slice:
                             b1_budget_slice = curr_p
                         else:
-                            b2_budget_slice = curr_p
+                             b2_budget_slice = curr_p
                             
                 # 🚨 MODIFIED: [V51.01 소형 시드 1주 영끌 타격 락온]
                 # 장 마감 직전(min_idx >= 28)까지 단 1주도 사지 못했다면,
@@ -498,4 +492,3 @@ class ReversionStrategy:
 
         self._save_state(ticker)
         return {"orders": orders, "trigger_loc": False, "total_q": total_q}
-

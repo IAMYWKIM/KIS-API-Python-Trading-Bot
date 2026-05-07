@@ -13,6 +13,7 @@
 # 🚨 MODIFIED: [V46.05 이벤트 루프 교착 방어] Lock Starvation 대비 호흡 연장
 # 🚨 MODIFIED: [V47.02 런타임 붕괴 방어] target_sweep_qty UnboundLocalError 스코프 전진 배치로 영구 소각 완료
 # 🚨 MODIFIED: [V50.02 30분 압축 락온] 타임 윈도우 스캔 범위를 range(27, 60)에서 range(27, 57)로 정밀 교정하여 15:56 타격 종료 완벽 동기화.
+# 🚨 MODIFIED: [V52.00 V14 VWAP 예산 누수 완벽 수술] 0.0달러 하드코딩 영구 소각 및 팩트 예산(v14_alloc_cash) 전진 배치 주입 완료.
 # ==========================================================
 import logging
 import datetime
@@ -622,6 +623,9 @@ async def scheduled_vwap_trade(context):
                         
                         v14_vwap_plugin = strategy.v14_vwap_plugin
                         
+                        # 🚨 MODIFIED: [V52.00] V14 팩트 예산 스코프 전진 배치 및 0.0달러 하드코딩 영구 소각
+                        _, v14_alloc_cash, _ = await asyncio.to_thread(cfg.calculate_v14_state, t)
+                        
                         cached_snap_v14 = await asyncio.to_thread(v14_vwap_plugin.load_daily_snapshot, t)
                         if not cached_snap_v14:
                             ledger_qty = 0
@@ -638,7 +642,6 @@ async def scheduled_vwap_trade(context):
                                 pure_qty_v14 = 0 
                             logging.warning(f"🚨 [{t}] V14_VWAP 스냅샷 증발! 메인 장부 역산 결과 0주 새출발 팩트 복원 완료.")
                             
-                            _, v14_alloc_cash, _ = await asyncio.to_thread(cfg.calculate_v14_state, t)
                             await asyncio.to_thread(
                                 v14_vwap_plugin.ensure_failsafe_snapshot,
                                 t, curr_p, actual_qty, avwap_qty_v14, actual_avg, prev_c, v14_alloc_cash
@@ -647,9 +650,10 @@ async def scheduled_vwap_trade(context):
                             is_zero_start_session = cached_snap_v14.get("is_zero_start", cached_snap_v14.get("total_q", -1) == 0)
                             
                         # 🚨 [비동기 래핑] 파일 I/O 데드락 원천 차단
+                        # 🚨 MODIFIED: [V52.00] 0.0 -> v14_alloc_cash 팩트 주입
                         plan = await asyncio.to_thread(
                             v14_vwap_plugin.get_dynamic_plan,
-                            t, curr_p, prev_c, current_weight, min_idx, 0.0, pure_qty_v14, actual_avg
+                            t, curr_p, prev_c, current_weight, min_idx, v14_alloc_cash, pure_qty_v14, actual_avg
                         )
                         target_orders = plan.get('orders', [])
 
