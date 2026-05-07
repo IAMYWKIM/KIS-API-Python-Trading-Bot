@@ -1,8 +1,8 @@
 # ==========================================================
 # FILE: strategy_v_avwap.py
 # ==========================================================
-# 🚨 MODIFIED: [V53.11 시계열 체력 듀얼 대칭 락온] 
-# 숏(SOXS) 진입 시 상승 체력(Time_Low < Time_High) 차단 필터 추가 이식 및 팩트 교정
+# 🚨 MODIFIED: [V53.12 런타임 붕괴 방어] 문자열 강제 반환 버그를 변수 할당으로 팩트 교정 완료
+# 🚨 MODIFIED: [V53.11 시계열 체력 듀얼 대칭 락온] 숏(SOXS) 상승 체력 차단 필터 추가 이식 및 팩트 교정
 # 🚨 MODIFIED: [V53.07 제13헌법 스마트 홀딩 엑시트 로직 팩트 교정 (체력 고갈 조건 적출)]
 # NEW: [스마트 홀딩(익절 한정) 덤핑 락온 이식]
 # [strategy_v_avwap.py] - 🌟 V47.00 앱솔루트 팩트 교정 🌟
@@ -377,9 +377,10 @@ class VAvwapHybridPlugin:
                     t_high = base_cache_data.get('time_high', "")
                     t_low = base_cache_data.get('time_low', "")
                     if t_high and t_low:
-                        # 시계열 비교: 고점이 저점보다 먼저 발생하면 하락 체력(BEAR)
-                        return "BEAR" if t_high < t_low else "BULL"
-            except Exception: pass
+                        # 🚨 MODIFIED: [V53.12 런타임 붕괴 방어] 문자열 강제 반환 버그를 변수 할당으로 팩트 교정 완료
+                        trend_sequence = "BEAR" if t_high < t_low else "BULL"
+            except Exception as e:
+                logging.debug(f"시계열 체력 스캔 에러: {e}")
 
         # 🚨 MODIFIED: [V53.02] 고저가 부호 일치(음수 갭 판별) 및 배타적 갭 필터 락온
         is_neg_gap_state = False
