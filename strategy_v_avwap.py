@@ -20,6 +20,7 @@
 # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
 # 제1헌법: 동기 I/O 100% 비동기 격리.
 # 제3헌법: 타임존 단일 소스 락온 (EST 100%).
+# NEW: [V47] 시계열 체력 측정 로직 및 현재가 vs 실시간 VWAP 갭차이 격발 조건 100% 통합
 # ==========================================================
 import logging
 import datetime
@@ -363,6 +364,21 @@ class VAvwapHybridPlugin:
             self.save_state(exec_ticker, now_est, avwap_state)
             return _build_res('SHUTDOWN', 'ATR5_체력고갈_감지_당일신규진입_영구동결')
 
+        # NEW: [V47 제4헌법] 시계열 체력 필터 스캔 (avwap_cache.json)
+        trend_sequence = "PENDING"
+        cache_file = "data/avwap_cache.json"
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    cache_data = json.load(f)
+                    base_cache_data = cache_data.get(base_ticker, {})
+                    t_high = base_cache_data.get('time_high', "")
+                    t_low = base_cache_data.get('time_low', "")
+                    if t_high and t_low:
+                        trend_sequence = "BEAR" if t_high < t_low else "BULL"
+            except Exception as e:
+                logging.debug(f"시계열 체력 스캔 에러: {e}")
+
         # 🚨 MODIFIED: [V53.02] 고저가 부호 일치(음수 갭 판별) 및 배타적 갭 필터 락온
         is_neg_gap_state = False
         if base_day_high > 0 and base_day_low > 0 and base_prev_c > 0:
@@ -376,28 +392,34 @@ class VAvwapHybridPlugin:
             # 롱(SOXL)은 숏 진입 조건(음수 갭)이 충족되었을 때 진입 전면 차단 (배타적 락온)
             cond1_met = not is_neg_gap_state
 
-        # 2. 하이킨아시 모멘텀
+        # NEW: [V47 제3헌법] 하이킨아시 모멘텀 격발 (현재가 vs 실시간 VWAP)
         cond2_met = False
         if not is_inverse:
-            cond2_met = (base_vwap > prev_vwap) and ha_2_bullish_no_lower
+            cond2_met = (base_curr_p > base_vwap) and ha_2_bullish_no_lower
         else:
-            cond2_met = (base_vwap < prev_vwap) and ha_2_bearish_no_upper
+            cond2_met = (base_curr_p < base_vwap) and ha_2_bearish_no_upper
 
         # 3. 잔여 체력 1% 이상
-        # 🚨 MODIFIED: [단판승부 테스트] 매수 시 체력 조건은 바이패스 락온. 체력은 위에서 영구 동결로 사전 필터링됨.
         cond3_met = True
 
-        if cond1_met and cond2_met and cond3_met:
+        # NEW: [V47 제4헌법] 시계열 체력 하락세 시 롱(SOXL) 진입 원천 차단
+        cond_seq = True
+        if not is_inverse and trend_sequence == "BEAR":
+            cond_seq = False
+
+        if cond1_met and cond2_met and cond3_met and cond_seq:
             if avwap_alloc_cash > 0:
                 # 🚨 [V47.00] 암살자 현금 50% 락온 상태에서 거절 방어용 95% 마진 체결
                 safe_budget = avwap_alloc_cash * 0.95
                 buy_qty = int(math.floor(safe_budget / exec_curr_p))
                 if buy_qty > 0:
-                    return _build_res('BUY', '하이킨아시_배타적갭필터_통과_타격개시', qty=buy_qty, target_price=exec_curr_p)
+                    return _build_res('BUY', 'V47_하이킨아시_배타적갭필터_통과_타격개시', qty=buy_qty, target_price=exec_curr_p)
             return _build_res('WAIT', '가용예산부족_대기')
         else:
             fail_reasons = []
             if not cond1_met: fail_reasons.append("원웨이/배타적갭필터미달")
             if not cond2_met: fail_reasons.append("HA모멘텀미달")
             if not cond3_met: fail_reasons.append("체력미달")
+            if not cond_seq: fail_reasons.append("시계열체력하락세")
             return _build_res('WAIT', f'진입조건대기({",".join(fail_reasons)})')
+
