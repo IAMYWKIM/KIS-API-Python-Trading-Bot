@@ -8,6 +8,10 @@
 # 🚨 MODIFIED: [V54.04 런타임 붕괴(Split-Brain) 근본 원인 팩트 수술]
 # 삼위일체 소각(/reset) 시 V_REV 모드라면 is_active를 False로 끄지 않고 True로 보존하여 '0주 새출발' 상태를 100% 팩트 락온.
 # 모드 스위칭(SET_VER_CONFIRM) 시에도 version과 is_active 플래그가 완벽히 동기화되도록 디커플링 배선 정밀 교정 완료.
+# 🚨 MODIFIED: [V55.00 오퍼레이션 SSOT - 텔레그램 다이렉트 I/O 병목 및 동시성 오염 원천 차단]
+# DEL_Q(삭제), CLEAR_Q(초기화), RESET(삼위일체 소각) 격발 시 존재하던 
+# 지저분한 다이렉트 파일 I/O(open, json, tempfile) 찌꺼기를 100% 영구 소각하고,
+# QueueLedger의 스레드 세이프(Thread-safe) 코어 메서드(delete_lot, clear_queue)로 직결(Lock-on) 완료.
 # ==========================================================
 import logging
 import datetime
@@ -49,14 +53,9 @@ class TelegramCallbacks:
             pass
 
         try:
-            q_file = "data/queue_ledger.json"
-            def _read_q_file(f):
-                if os.path.exists(f):
-                    with open(f, 'r', encoding='utf-8') as file:
-                        return json.load(file)
-                return {}
-            q_data = await asyncio.to_thread(_read_q_file, q_file)
-            vrev_qty = sum(int(float(lot.get('qty', 0))) for lot in q_data.get(ticker, []) if int(float(lot.get('qty', 0))) > 0)
+            if getattr(self, 'queue_ledger', None):
+                q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
+                vrev_qty = sum(int(float(lot.get('qty', 0))) for lot in q_data if int(float(lot.get('qty', 0))) > 0)
         except Exception:
             pass
 
@@ -101,16 +100,6 @@ class TelegramCallbacks:
                     q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
                 else:
                     q_data = []
-# 🚨 MODIFIED: 파일 I/O 비동기 래핑
-                    def _read_q():
-                        if os.path.exists("data/queue_ledger.json"):
-                            with open("data/queue_ledger.json", "r", encoding='utf-8') as f:
-                                return json.load(f).get(ticker, [])
-                        return []
-                    try:
-                        q_data = await asyncio.to_thread(_read_q)
-                    except Exception:
-                        pass
             
                 msg, markup = self.view.get_queue_management_menu(ticker, q_data)
                 await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
@@ -187,16 +176,10 @@ class TelegramCallbacks:
             ticker = sub
             target_date = ":".join(data[2:])
             
-            q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) if getattr(self, 'queue_ledger', None) else []
-            if not q_data:
-                # 🚨 MODIFIED: 파일 I/O 비동기 래핑
-                def _read_q():
-                    try:
-                        with open("data/queue_ledger.json", "r") as f:
-                            return json.load(f).get(ticker, [])
-                    except Exception:
-                        return []
-                q_data = await asyncio.to_thread(_read_q)
+            if getattr(self, 'queue_ledger', None):
+                q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
+            else:
+                q_data = []
             
             qty, price = 0, 0.0
             for item in q_data:
@@ -213,44 +196,10 @@ class TelegramCallbacks:
             target_date = ":".join(data[2:])
             
             try:
-                q_file = "data/queue_ledger.json"
-                all_q = {}
-                
-                # 🚨 MODIFIED: 파일 I/O 비동기 래핑
-                def _read_all_q():
-                    if os.path.exists(q_file):
-                        with open(q_file, 'r', encoding='utf-8') as f:
-                            return json.load(f)
-                    return {}
-                all_q = await asyncio.to_thread(_read_all_q)
-                
-                ticker_q = all_q.get(ticker, [])
-                
                 if action == "DEL_Q":
-                    new_q = [item for item in ticker_q if item.get('date') != target_date]
-                    all_q[ticker] = new_q
-                    
-                    # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
-                    # 파일 I/O 동기 블로킹 방지 및 원자적 쓰기(Atomic Write) 강제
-                    def _write_q(file_path, q_dict):
-                        dir_name = os.path.dirname(file_path) or '.'
-                        os.makedirs(dir_name, exist_ok=True)
-                        fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
-                        try:
-                            with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
-                                json.dump(q_dict, f_out, ensure_ascii=False, indent=4)
-                                f_out.flush()
-                                os.fsync(f_out.fileno())
-                            os.replace(tmp_path, file_path)
-                        except Exception as e:
-                            if os.path.exists(tmp_path):
-                                os.remove(tmp_path)
-                            raise e
-                    
-                    await asyncio.to_thread(_write_q, q_file, all_q)
-                    
-                    # MODIFIED: [V44.48 수동 조작 데드코드 영구 소각 및 런타임 무결성 확보]
-                    # (기존 hasattr(self.queue_ledger, '_load') 찌꺼기 소각)
+                    # 🚨 [V55.00 오퍼레이션 SSOT] 다이렉트 파일 I/O 영구 소각 및 코어 메서드 직결
+                    if getattr(self, 'queue_ledger', None):
+                        await asyncio.to_thread(self.queue_ledger.delete_lot, ticker, target_date)
                     
                     await query.answer("✅ 지층 삭제 완료. KIS 원장과 동기화합니다.", show_alert=False)
                     
@@ -259,7 +208,7 @@ class TelegramCallbacks:
                     if not self.sync_engine.sync_locks[ticker].locked():
                         await self.sync_engine.process_auto_sync(ticker, chat_id, context, silent_ledger=True)
                         
-                    final_q = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) if getattr(self, 'queue_ledger', None) else new_q
+                    final_q = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) if getattr(self, 'queue_ledger', None) else []
                     msg, markup = self.view.get_queue_management_menu(ticker, final_q)
                     await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
                     
@@ -338,28 +287,12 @@ class TelegramCallbacks:
                             os.replace(tmp_path, backup_file)
                         except Exception:
                             pass
-                    
-                    q_file = "data/queue_ledger.json"
-                    if os.path.exists(q_file):
-                        try:
-                            with open(q_file, 'r', encoding='utf-8') as f:
-                                q_data = json.load(f)
-                            if ticker in q_data:
-                                del q_data[ticker]
                             
-                            fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(q_file) or '.')
-                            with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
-                                json.dump(q_data, f_out, ensure_ascii=False, indent=4)
-                                f_out.flush()
-                                os.fsync(f_out.fileno())
-                            os.replace(tmp_path, q_file)
-                        except Exception:
-                            pass
-                  
                 await asyncio.to_thread(_process_reset_files)
-                    
-                # MODIFIED: [V44.48 수동 조작 데드코드 영구 소각 및 런타임 무결성 확보]
-                # (기존 hasattr(self.queue_ledger, '_load') 찌꺼기 소각)
+                
+                # 🚨 [V55.00 오퍼레이션 SSOT] 큐 장부 다이렉트 파일 I/O 찌꺼기 전면 소각 및 락온
+                if getattr(self, 'queue_ledger', None):
+                    await asyncio.to_thread(self.queue_ledger.clear_queue, ticker)
             
                 await query.edit_message_text(f"✅ <b>[{ticker}] 삼위일체 소각(Nuke) 및 초기화 완료!</b>\n▫️ 본장부, 백업장부, 큐(Queue), 에스크로의 찌꺼기 데이터가 100% 영구 삭제되었습니다.\n▫️ 다음 매수 진입 시 0주 새출발 디커플링 타점 모드로 완벽히 재시작합니다.", parse_mode='HTML')
             
