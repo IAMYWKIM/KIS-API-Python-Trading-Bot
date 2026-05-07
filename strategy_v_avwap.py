@@ -1,4 +1,4 @@
-# NEW: [체력 방어막 이식]
+# NEW: [스마트 홀딩(익절 한정) 덤핑 락온 이식]
 # ==========================================================
 # FILE: strategy_v_avwap.py
 # ==========================================================
@@ -15,6 +15,7 @@
 # 🚨 MODIFIED: [V53.01 오프닝 휩소 방어] 프리마켓 개장 직후 10분(04:10 EST까지) 진입 차단 안전 마진 이식
 # 🚨 MODIFIED: [V53.02 숏(Short) 안전장치 락온] 인버스(SOXS) 진입 시 제1조건(원웨이 하락) 100% 강제 검증 (Bypass 차단)
 # 🚨 MODIFIED: [V53.03 체력 동결 락온] 진입 시 당일 진폭이 ATR5를 초과(고갈)한 경우 신규 진입 영구 동결
+# 🚨 MODIFIED: [V53.04 스마트 홀딩 락온] 체력고갈+역추세 시 '손절'이면 15:00까지 Hold, '익절'일 때만 즉각 덤핑
 # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
 # 제1헌법: 동기 I/O 100% 비동기 격리.
 # 제3헌법: 타임존 단일 소스 락온 (EST 100%).
@@ -283,7 +284,7 @@ class VAvwapHybridPlugin:
         safe_qty = int(math.floor(float(avwap_qty)))
 
         # ---------------------------------------------------------
-        # 1. 매도 (보유 중일 때) 로직 - 15:00 무조건 덤핑 & 체력고갈 즉각덤핑
+        # 1. 매도 (보유 중일 때) 로직 - 15:00 무조건 덤핑 & 스마트 홀딩 익절 덤핑
         # ---------------------------------------------------------
         if safe_qty > 0:
             safe_avg = avwap_avg_price if avwap_avg_price > 0 else exec_curr_p
@@ -297,20 +298,27 @@ class VAvwapHybridPlugin:
                 self.save_state(exec_ticker, now_est, avwap_state)
                 return _build_res('SELL', '15:00_도달_당일교전종료_무조건덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
 
+            # 실시간 순수익 상태 연산
             exec_return = (exec_curr_p - safe_avg) / safe_avg
+            # 마찰비용(fee)을 임의로 0.07%로 잡아 순수익 여부 판별 (백테스트와 동일 로직)
+            FEE_RATE = 0.0007
+            net_mult = (exec_curr_p * (1.0 - FEE_RATE)) / (safe_avg * (1.0 + FEE_RATE))
+            is_profitable = (net_mult - 1.0) > 0
 
-            # 🚨 MODIFIED: [단판승부 테스트] 체력 고갈 판별 (SELL 조건용)
+            # 체력 고갈 판별
             actual_gap_dollar = day_high - day_low
             actual_gap_pct = (actual_gap_dollar / prev_c) * 100.0 if prev_c > 0 else 0.0
             rem_5_pct = atr5 - actual_gap_pct
             is_stamina_exhausted = (rem_5_pct < 1.0) # 1.0% 미만 시 고갈로 판단
 
-            # 🚨 MODIFIED: [단판승부 테스트] 체력 고갈 + 하이킨아시 2연속 역추세 발생 시 즉각 덤핑
+            # 🚨 NEW: [V53.04 스마트 홀딩 락온] 체력 고갈 + 역추세 발생 시 '익절 구간'일 때만 즉각 덤핑 (손절 시 15:00까지 Hold)
             if target_mode == "AUTO":
                 if not is_inverse and ha_2_bearish_no_upper and is_stamina_exhausted:
-                    return _build_res('SELL', '체력고갈_및_역추세(음봉2연속)_즉각덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
+                    if is_profitable:
+                        return _build_res('SELL', '체력고갈_및_역추세(음봉2연속)_익절구간_즉각덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
                 elif is_inverse and ha_2_bullish_no_lower and is_stamina_exhausted:
-                    return _build_res('SELL', '체력고갈_및_역추세(양봉2연속)_즉각덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
+                    if is_profitable:
+                        return _build_res('SELL', '체력고갈_및_역추세(양봉2연속)_익절구간_즉각덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
             else:
                 # MANUAL 모드 사용자 설정 목표 청산
                 if exec_return >= (user_target_pct / 100.0):
