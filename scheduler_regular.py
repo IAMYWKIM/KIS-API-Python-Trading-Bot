@@ -5,6 +5,7 @@
 # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
 # 제1헌법: queue_ledger.get_queue 등 모든 파일 I/O 및 락 점유 메서드는 무조건 asyncio.to_thread로 래핑하여 이벤트 루프 교착(Deadlock)을 원천 차단함.
 # MODIFIED: [V44.47 이벤트 루프 데드락 영구 소각] 동기식 블로킹 호출 전면 비동기 래핑.
+# 🚨 MODIFIED: [V54.02 깡통 스냅샷 붕괴 방어] V-REV 예방 덫 소각 시 생성되는 더미 스냅샷에 prev_c 및 is_zero_start 팩트 다이렉트 주입 락온
 # ==========================================================
 import logging
 import datetime
@@ -69,7 +70,6 @@ async def scheduled_regular_trade(context):
             safe_holdings = holdings if isinstance(holdings, dict) else {}
 
             # MODIFIED: [맹점 2 수술] 파이썬 인자 평가 순서 함정으로 인한 동기 블로킹 방어
-            # cfg.get_active_tickers()를 메인 루프에서 분리하여 선제적으로 비동기 스캔
             active_tickers_list = await asyncio.to_thread(cfg.get_active_tickers)
             
             # 🚨 [비동기 래핑] get_budget_allocation 내부 파일 I/O 데드락 방어
@@ -108,7 +108,7 @@ async def scheduled_regular_trade(context):
                         curr_p = 0.0
                     except Exception:
                         curr_p = 0.0
-                        
+                         
                     try:
                         prev_c_val = await asyncio.wait_for(asyncio.to_thread(broker.get_previous_close, t), timeout=10.0)
                         prev_c = float(prev_c_val or 0.0)
@@ -117,7 +117,7 @@ async def scheduled_regular_trade(context):
                         prev_c = 0.0
                     except Exception:
                         prev_c = 0.0
-                        
+                         
                     if curr_p > 0 and prev_c > 0:
                         break
                     await asyncio.sleep(2.0)
@@ -148,11 +148,18 @@ async def scheduled_regular_trade(context):
                         # 🚨 [비동기 래핑] 큐 장부 스레드 락 점유 원천 차단
                         q_data = await asyncio.to_thread(queue_ledger.get_queue, t)
                         v_rev_q_qty = sum(item.get("qty", 0) for item in q_data)
-                        
+                    
                         msgs[t] += f"🛡️ <b>[{t}] V-REV 예방적 덫 장전 기능 전면 소각</b>\n"
                         msgs[t] += "▫️ 자전거래(FDS) 의심을 회피하고 AVWAP 암살자가 자유롭게 타격하도록 예방 덫 기능을 영구 소각했습니다.\n"
                         
-                        plan_result = {"orders": [], "trigger_loc": False, "total_q": v_rev_q_qty}
+                        # 🚨 MODIFIED: [V54.02] 깡통 스냅샷 붕괴 방어. prev_c 및 is_zero_start 팩트 다이렉트 주입 락온
+                        plan_result = {
+                            "orders": [], 
+                            "trigger_loc": False, 
+                            "total_q": v_rev_q_qty,
+                            "prev_c": prev_c,
+                            "is_zero_start": (v_rev_q_qty == 0)
+                        }
                         if hasattr(strategy_rev, 'save_daily_snapshot'):
                             await asyncio.to_thread(strategy_rev.save_daily_snapshot, t, plan_result)
 
