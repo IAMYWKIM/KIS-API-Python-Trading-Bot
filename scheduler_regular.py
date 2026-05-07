@@ -1,6 +1,7 @@
 # ==========================================================
 # FILE: scheduler_regular.py
 # ==========================================================
+# MODIFIED: [V53.06 전투 사령부 외부 통신 10초 타임아웃 및 폴백 방어막 이식]
 # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
 # 제1헌법: queue_ledger.get_queue 등 모든 파일 I/O 및 락 점유 메서드는 무조건 asyncio.to_thread로 래핑하여 이벤트 루프 교착(Deadlock)을 원천 차단함.
 # MODIFIED: [V44.47 이벤트 루프 데드락 영구 소각] 동기식 블로킹 호출 전면 비동기 래핑.
@@ -54,7 +55,13 @@ async def scheduled_regular_trade(context):
         today_str_est = _now_est.strftime("%Y-%m-%d")
         
         async with tx_lock:
-            cash, holdings = await asyncio.to_thread(broker.get_account_balance)
+            try:
+                cash, holdings = await asyncio.wait_for(asyncio.to_thread(broker.get_account_balance), timeout=10.0)
+            except asyncio.TimeoutError:
+                logging.warning("⚠️ [regular_trade] 잔고 조회 타임아웃 (10초).")
+                return False, "잔고 조회 타임아웃"
+            except Exception as e:
+                return False, f"잔고 조회 오류: {e}"
             
             if holdings is None:
                 return False, "❌ 계좌 정보를 불러오지 못했습니다."
@@ -93,8 +100,24 @@ async def scheduled_regular_trade(context):
                 curr_p = 0.0
                 prev_c = 0.0
                 for _api_retry in range(3):
-                    curr_p = float(await asyncio.to_thread(broker.get_current_price, t) or 0.0)
-                    prev_c = float(await asyncio.to_thread(broker.get_previous_close, t) or 0.0)
+                    try:
+                        curr_p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_current_price, t), timeout=10.0)
+                        curr_p = float(curr_p_val or 0.0)
+                    except asyncio.TimeoutError:
+                        logging.warning(f"⚠️ [{t}] 현재가 조회 타임아웃. 0.0 폴백.")
+                        curr_p = 0.0
+                    except Exception:
+                        curr_p = 0.0
+                        
+                    try:
+                        prev_c_val = await asyncio.wait_for(asyncio.to_thread(broker.get_previous_close, t), timeout=10.0)
+                        prev_c = float(prev_c_val or 0.0)
+                    except asyncio.TimeoutError:
+                        logging.warning(f"⚠️ [{t}] 전일종가 조회 타임아웃. 0.0 폴백.")
+                        prev_c = 0.0
+                    except Exception:
+                        prev_c = 0.0
+                        
                     if curr_p > 0 and prev_c > 0:
                         break
                     await asyncio.sleep(2.0)
@@ -139,7 +162,15 @@ async def scheduled_regular_trade(context):
                         continue 
 
                     elif version == "V14":
-                        ma_5day = float(await asyncio.to_thread(broker.get_5day_ma, t) or 0.0)
+                        try:
+                            ma_5day_val = await asyncio.wait_for(asyncio.to_thread(broker.get_5day_ma, t), timeout=10.0)
+                            ma_5day = float(ma_5day_val or 0.0)
+                        except asyncio.TimeoutError:
+                            logging.warning(f"⚠️ [{t}] 5MA 스캔 타임아웃. 0.0 폴백.")
+                            ma_5day = 0.0
+                        except Exception:
+                            ma_5day = 0.0
+                            
                         v14_vwap_plugin = strategy.v14_vwap_plugin
                         
                         # 🚨 [비동기 래핑] 내부 스냅샷 저장 등 파일 I/O 방어
@@ -181,7 +212,14 @@ async def scheduled_regular_trade(context):
                     v_rev_tickers.append((t, version))
                     continue
                 
-                ma_5day = float(await asyncio.to_thread(broker.get_5day_ma, t) or 0.0)
+                try:
+                    ma_5day_val = await asyncio.wait_for(asyncio.to_thread(broker.get_5day_ma, t), timeout=10.0)
+                    ma_5day = float(ma_5day_val or 0.0)
+                except asyncio.TimeoutError:
+                    logging.warning(f"⚠️ [{t}] 5MA 스캔 타임아웃. 0.0 폴백.")
+                    ma_5day = 0.0
+                except Exception:
+                    ma_5day = 0.0
                 
                 # 🚨 [비동기 래핑] 내부 파일 I/O 및 로드 방어
                 plan = await asyncio.to_thread(

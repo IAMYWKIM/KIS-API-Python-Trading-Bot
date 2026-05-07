@@ -1,6 +1,7 @@
 # ==========================================================
 # FILE: scheduler_vwap.py
 # ==========================================================
+# MODIFIED: [V53.06 전투 사령부 외부 통신 10초 타임아웃 및 폴백 방어막 이식]
 # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
 # 제1헌법: queue_ledger.get_queue 등 모든 파일 I/O 및 락 점유 메서드는 무조건 asyncio.to_thread로 래핑하여 이벤트 루프 교착(Deadlock)을 원천 차단함.
 # 제9헌법: U_CURVE_WEIGHTS 하드코딩 배열 영구 소각. vwap_data.py에서 동적 로드하여 팩트 기반 재정규화 필수.
@@ -80,6 +81,7 @@ async def scheduled_vwap_init_and_cancel(context):
     chat_id = context.job.chat_id
     
     vwap_cache = app_data.setdefault('vwap_cache', {})
+    
     today_str = now_est.strftime('%Y%m%d')
     if vwap_cache.get('date') != today_str:
         vwap_cache.clear()
@@ -99,8 +101,24 @@ async def scheduled_vwap_init_and_cancel(context):
                 if version == "V_REV" or (version == "V14" and is_manual_vwap):
                     if not vwap_cache.get(f"REV_{t}_nuked"):
                         try:
-                            curr_p = float(await asyncio.to_thread(broker.get_current_price, t) or 0.0)
-                            prev_c = float(await asyncio.to_thread(broker.get_previous_close, t) or 0.0)
+                            # 🚨 MODIFIED: [V53.06 외부 통신 10초 타임아웃 및 폴백 방어막 이식]
+                            try:
+                                curr_p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_current_price, t), timeout=10.0)
+                                curr_p = float(curr_p_val or 0.0)
+                            except asyncio.TimeoutError:
+                                logging.warning(f"⚠️ [{t}] 현재가 스캔 타임아웃. 0.0 폴백.")
+                                curr_p = 0.0
+                            except Exception:
+                                curr_p = 0.0
+                                
+                            try:
+                                prev_c_val = await asyncio.wait_for(asyncio.to_thread(broker.get_previous_close, t), timeout=10.0)
+                                prev_c = float(prev_c_val or 0.0)
+                            except asyncio.TimeoutError:
+                                logging.warning(f"⚠️ [{t}] 전일종가 스캔 타임아웃. 0.0 폴백.")
+                                prev_c = 0.0
+                            except Exception:
+                                prev_c = 0.0
                             
                             _, holdings = await asyncio.to_thread(broker.get_account_balance)
                             safe_holdings = holdings if isinstance(holdings, dict) else {}
@@ -250,8 +268,24 @@ async def scheduled_vwap_trade(context):
                 if version == "V_REV" or (version == "V14" and is_manual_vwap):
                     if not vwap_cache.get(f"REV_{t}_nuked"):
                         try:
-                            curr_p = float(await asyncio.to_thread(broker.get_current_price, t) or 0.0)
-                            prev_c = float(await asyncio.to_thread(broker.get_previous_close, t) or 0.0)
+                            # 🚨 MODIFIED: [V53.06 외부 통신 10초 타임아웃 및 폴백 방어막 이식]
+                            try:
+                                curr_p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_current_price, t), timeout=10.0)
+                                curr_p = float(curr_p_val or 0.0)
+                            except asyncio.TimeoutError:
+                                logging.warning(f"⚠️ [{t}] 현재가 스캔 타임아웃. 0.0 폴백.")
+                                curr_p = 0.0
+                            except Exception:
+                                curr_p = 0.0
+                                
+                            try:
+                                prev_c_val = await asyncio.wait_for(asyncio.to_thread(broker.get_previous_close, t), timeout=10.0)
+                                prev_c = float(prev_c_val or 0.0)
+                            except asyncio.TimeoutError:
+                                logging.warning(f"⚠️ [{t}] 전일종가 스캔 타임아웃. 0.0 폴백.")
+                                prev_c = 0.0
+                            except Exception:
+                                prev_c = 0.0
                             
                             h = safe_holdings.get(t) or {}
                             total_kis_qty = int(float(h.get('qty', 0)))
@@ -301,10 +335,26 @@ async def scheduled_vwap_trade(context):
                             vwap_cache[f"REV_{t}_nuked"] = False
                             continue
 
-                    curr_p = float(await asyncio.to_thread(broker.get_current_price, t) or 0.0)
-                    
+                    # 🚨 MODIFIED: [V53.06 외부 통신 10초 타임아웃 및 폴백 방어막 이식]
+                    try:
+                        curr_p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_current_price, t), timeout=10.0)
+                        curr_p = float(curr_p_val or 0.0)
+                    except asyncio.TimeoutError:
+                        logging.warning(f"⚠️ [{t}] 현재가 스캔 타임아웃. 0.0 폴백.")
+                        curr_p = 0.0
+                    except Exception:
+                        curr_p = 0.0
+                        
                     if not vwap_cache.get(f"REV_{t}_anchor_prev_c"):
-                        prev_c_live = float(await asyncio.to_thread(broker.get_previous_close, t) or 0.0)
+                        try:
+                            prev_c_live_val = await asyncio.wait_for(asyncio.to_thread(broker.get_previous_close, t), timeout=10.0)
+                            prev_c_live = float(prev_c_live_val or 0.0)
+                        except asyncio.TimeoutError:
+                            logging.warning(f"⚠️ [{t}] 전일종가 스캔 타임아웃. 0.0 폴백.")
+                            prev_c_live = 0.0
+                        except Exception:
+                            prev_c_live = 0.0
+                            
                         if prev_c_live > 0:
                             vwap_cache[f"REV_{t}_anchor_prev_c"] = prev_c_live
                     prev_c = float(vwap_cache.get(f"REV_{t}_anchor_prev_c") or 0.0)
@@ -367,7 +417,7 @@ async def scheduled_vwap_trade(context):
                             
                         is_zero_start_session = is_zero_start 
                         virtual_q_data = [] if is_zero_start else q_data
-                    
+                        
                         await asyncio.to_thread(strategy_rev._load_state_if_needed, t)
                         # 🚨 MODIFIED: [V53.00 무한 재진입 락온] Daily Buy-Lock (was_holding) 데드코드 영구 소각 (0주 매수 금지 철거)
                             
@@ -420,7 +470,16 @@ async def scheduled_vwap_trade(context):
                                     actual_sweep_qty = min(target_sweep_qty, pure_sellable_qty)
                                     
                                     if actual_sweep_qty > 0:
-                                        bid_price = float(await asyncio.to_thread(broker.get_bid_price, t) or 0.0)
+                                        # 🚨 MODIFIED: [V53.06 외부 통신 10초 타임아웃 및 폴백 방어막 이식]
+                                        try:
+                                            bid_price_val = await asyncio.wait_for(asyncio.to_thread(broker.get_bid_price, t), timeout=10.0)
+                                            bid_price = float(bid_price_val or 0.0)
+                                        except asyncio.TimeoutError:
+                                            logging.warning(f"⚠️ [{t}] 매수호가 스캔 타임아웃. 0.0 폴백.")
+                                            bid_price = 0.0
+                                        except Exception:
+                                            bid_price = 0.0
+                                            
                                         exec_price = bid_price if bid_price > 0 else curr_p
 
                                         res = await asyncio.to_thread(broker.send_order, t, "SELL", actual_sweep_qty, exec_price, "LIMIT")
@@ -486,7 +545,7 @@ async def scheduled_vwap_trade(context):
                                                         await asyncio.to_thread(_save_pending_grad, pending_file, pending_data)
                                                     except Exception as pg_e:
                                                         logging.error(f"🚨 [{t}] pending_grad 마커 파일 저장 실패: {pg_e}")
-                                    else:
+                                        else:
                                         if not vwap_cache.get(f"REV_{t}_sweep_skip_msg"):
                                             msg = f"⚠️ <b>[{t}] 스윕 피니셔 덤핑 생략 (MOC 락다운 감지)</b>\n▫️ 조건이 달성되었으나, 대상 물량이 수동 긴급 수혈(MOC) 등 취소 불가 상태로 미국 거래소에 묶여 있어 스윕 덤핑을 자동 스킵합니다."
                                             await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
@@ -497,8 +556,12 @@ async def scheduled_vwap_trade(context):
                                 continue 
                         
                         try:
-                            df_1min = await asyncio.to_thread(broker.get_1min_candles_df, t)
+                            # 🚨 MODIFIED: [V53.06 외부 통신 10초 타임아웃 및 폴백 방어막 이식]
+                            df_1min = await asyncio.wait_for(asyncio.to_thread(broker.get_1min_candles_df, t), timeout=10.0)
                             vwap_status = await asyncio.to_thread(strategy.analyze_vwap_dominance, df_1min)
+                        except asyncio.TimeoutError:
+                            logging.warning(f"⚠️ [{t}] 1분봉 스캔 타임아웃. 기본값 폴백.")
+                            vwap_status = {"vwap_price": 0.0, "is_strong_up": False, "is_strong_down": False}
                         except Exception:
                             vwap_status = {"vwap_price": 0.0, "is_strong_up": False, "is_strong_down": False}
                         
@@ -538,9 +601,18 @@ async def scheduled_vwap_trade(context):
                         
                         if omni_filter["allow_buy"] and current_regime == "BUY" and not vwap_cache.get(f"REV_{t}_gap_hijack_fired"):
                             base_tkr = base_map.get(t, 'SOXX')
-                            base_curr_p = float(await asyncio.to_thread(broker.get_current_price, base_tkr) or 0.0)
                             try:
-                                df_1min_base = await asyncio.to_thread(broker.get_1min_candles_df, base_tkr)
+                                # 🚨 MODIFIED: [V53.06 외부 통신 10초 타임아웃 및 폴백 방어막 이식]
+                                base_curr_p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_current_price, base_tkr), timeout=10.0)
+                                base_curr_p = float(base_curr_p_val or 0.0)
+                            except asyncio.TimeoutError:
+                                base_curr_p = 0.0
+                            except Exception:
+                                base_curr_p = 0.0
+                                
+                            try:
+                                # 🚨 MODIFIED: [V53.06 외부 통신 10초 타임아웃 및 폴백 방어막 이식]
+                                df_1min_base = await asyncio.wait_for(asyncio.to_thread(broker.get_1min_candles_df, base_tkr), timeout=10.0)
                                 if df_1min_base is not None and not df_1min_base.empty:
                                     df_b = df_1min_base.copy()
                                     df_b['tp'] = (df_b['high'].astype(float) + df_b['low'].astype(float) + df_b['close'].astype(float)) / 3.0
@@ -556,7 +628,15 @@ async def scheduled_vwap_trade(context):
                                         total_spent = float(strategy_rev.executed["BUY_BUDGET"].get(t, 0.0))
                                         rem_budget = max(0.0, rev_daily_budget - total_spent)
                                         
-                                        ask_price = float(await asyncio.to_thread(broker.get_ask_price, t) or 0.0)
+                                        try:
+                                            # 🚨 MODIFIED: [V53.06 외부 통신 10초 타임아웃 및 폴백 방어막 이식]
+                                            ask_price_val = await asyncio.wait_for(asyncio.to_thread(broker.get_ask_price, t), timeout=10.0)
+                                            ask_price = float(ask_price_val or 0.0)
+                                        except asyncio.TimeoutError:
+                                            ask_price = 0.0
+                                        except Exception:
+                                            ask_price = 0.0
+                                            
                                         exec_price = ask_price if ask_price > 0 else curr_p
                                         
                                         buy_qty = int(math.floor(rem_budget / exec_price))
@@ -598,7 +678,7 @@ async def scheduled_vwap_trade(context):
                                         await asyncio.to_thread(broker.send_order, t, o['side'], o['qty'], o['price'], "LOC")
                                 await asyncio.sleep(0.2)
                                 continue
-                                
+                            
                             target_orders = rev_plan.get('orders', [])
 
                     elif version == "V14":
@@ -631,7 +711,7 @@ async def scheduled_vwap_trade(context):
                                 recs = [r for r in full_ledger if r['ticker'] == t and not str(r.get("date", "")).startswith(today_str_est)]
                                 ledger_qty, _, _, _ = await asyncio.to_thread(cfg.calculate_holdings, t, recs)
                             except Exception: pass
-                            
+                             
                             is_zero_start_session = (ledger_qty == 0)
                             if is_zero_start_session:
                                 pure_qty_v14 = 0 
@@ -660,8 +740,23 @@ async def scheduled_vwap_trade(context):
                         side = o['side']
                         bucket = o.get('bucket') # NEW: [VWAP 잔차 증발 방어] 버킷 식별자 스캔
 
-                        ask_price = float(await asyncio.to_thread(broker.get_ask_price, t) or 0.0)
-                        bid_price = float(await asyncio.to_thread(broker.get_bid_price, t) or 0.0)
+                        # 🚨 MODIFIED: [V53.06 외부 통신 10초 타임아웃 및 폴백 방어막 이식]
+                        try:
+                            ask_price_val = await asyncio.wait_for(asyncio.to_thread(broker.get_ask_price, t), timeout=10.0)
+                            ask_price = float(ask_price_val or 0.0)
+                        except asyncio.TimeoutError:
+                            ask_price = 0.0
+                        except Exception:
+                            ask_price = 0.0
+                            
+                        try:
+                            bid_price_val = await asyncio.wait_for(asyncio.to_thread(broker.get_bid_price, t), timeout=10.0)
+                            bid_price = float(bid_price_val or 0.0)
+                        except asyncio.TimeoutError:
+                            bid_price = 0.0
+                        except Exception:
+                            bid_price = 0.0
+                            
                         exec_price = ask_price if side == "BUY" else bid_price
                         # MODIFIED: [V44.79 팩트 교정] 잔차 환불 인플레이션 맹점 및 미체결 늪 원천 차단
                         if exec_price <= 0: exec_price = round(curr_p * 1.002, 2) if side == "BUY" else max(0.01, round(curr_p * 0.998, 2))

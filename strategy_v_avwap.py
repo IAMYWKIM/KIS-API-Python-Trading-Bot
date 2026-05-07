@@ -1,7 +1,8 @@
-# NEW: [스마트 홀딩(익절 한정) 덤핑 락온 이식]
 # ==========================================================
 # FILE: strategy_v_avwap.py
 # ==========================================================
+# 🚨 MODIFIED: [V53.07 제13헌법 스마트 홀딩 엑시트 로직 팩트 교정 (체력 고갈 조건 적출)]
+# NEW: [스마트 홀딩(익절 한정) 덤핑 락온 이식]
 # [strategy_v_avwap.py] - 🌟 V47.00 앱솔루트 팩트 교정 🌟
 # 💡 V-REV 하이브리드 전용 차세대 AVWAP 스나이퍼 플러그인 (Dual-Referencing)
 # 🚨 MODIFIED: [V47.00 하이킨아시 듀얼 모멘텀 추세 시스템 락온]
@@ -305,20 +306,20 @@ class VAvwapHybridPlugin:
             net_mult = (exec_curr_p * (1.0 - FEE_RATE)) / (safe_avg * (1.0 + FEE_RATE))
             is_profitable = (net_mult - 1.0) > 0
 
-            # 체력 고갈 판별
+            # 체력 고갈 판별 (기존의 조건 연산은 남겨두되, 익절덤핑 조건에서 제외됨)
             actual_gap_dollar = day_high - day_low
             actual_gap_pct = (actual_gap_dollar / prev_c) * 100.0 if prev_c > 0 else 0.0
             rem_5_pct = atr5 - actual_gap_pct
             is_stamina_exhausted = (rem_5_pct < 1.0) # 1.0% 미만 시 고갈로 판단
 
-            # 🚨 NEW: [V53.04 스마트 홀딩 락온] 체력 고갈 + 역추세 발생 시 '익절 구간'일 때만 즉각 덤핑 (손절 시 15:00까지 Hold)
+            # 🚨 MODIFIED: [V53.07 제13헌법 스마트 홀딩 엑시트 로직 팩트 교정 (체력 고갈 조건 적출)]
             if target_mode == "AUTO":
-                if not is_inverse and ha_2_bearish_no_upper and is_stamina_exhausted:
+                if not is_inverse and ha_2_bearish_no_upper:
                     if is_profitable:
-                        return _build_res('SELL', '체력고갈_및_역추세(음봉2연속)_익절구간_즉각덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
-                elif is_inverse and ha_2_bullish_no_lower and is_stamina_exhausted:
+                        return _build_res('SELL', '역추세(음봉2연속)_익절구간_즉각덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
+                elif is_inverse and ha_2_bullish_no_lower:
                     if is_profitable:
-                        return _build_res('SELL', '체력고갈_및_역추세(양봉2연속)_익절구간_즉각덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
+                        return _build_res('SELL', '역추세(양봉2연속)_익절구간_즉각덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
             else:
                 # MANUAL 모드 사용자 설정 목표 청산
                 if exec_return >= (user_target_pct / 100.0):
@@ -334,19 +335,6 @@ class VAvwapHybridPlugin:
 
         if avwap_state.get('shutdown', False):
             return _build_res('WAIT', '당일영구동결_상태(신규진입금지)')
-
-        # 🚨 [V45.00 동적 킬 스위치] 정규장(09:30 EST~) 횡보장 스캔 락온
-        # MODIFIED: [단판승부 실전 테스트] 횡보장 킬 스위치 강제 무력화 (주석 처리 바이패스)
-        # if df_1min_base is not None and not df_1min_base.empty:
-        #     df_reg = df_1min_base[df_1min_base['time_est'] >= '093000']
-        #     if not df_reg.empty:
-        #         base_reg_high = float(df_reg['high'].max())
-        #         base_reg_low = float(df_reg['low'].min())
-        #         base_prev_c_for_kill = float(context_data.get('prev_close', 0.0))
-        #         if base_prev_c_for_kill > 0 and base_reg_high > base_prev_c_for_kill and base_reg_low < base_prev_c_for_kill:
-        #             avwap_state["shutdown"] = True
-        #             self.save_state(exec_ticker, now_est, avwap_state)
-        #             return _build_res('SHUTDOWN', '정규장_횡보장_감지(Zero-Line_관통)_신규진입_영구동결')
 
         # 🚨 MODIFIED: [V53.01] 오프닝 휩소 방어를 위한 10분 안전 마진 적용
         if curr_time < time_0410:
