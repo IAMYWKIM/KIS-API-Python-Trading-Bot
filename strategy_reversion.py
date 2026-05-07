@@ -12,6 +12,8 @@
 # 🚨 MODIFIED: [V48.00 단일 바구니(Single Bucket) 롤백] Buy1과 Buy2 예산 스틸링(Stealing)을 허용하여 체결 우위 극대화 및 데이터 기아 원천 차단.
 # 🚨 MODIFIED: [V50.02 30분 압축 락온] 타임 윈도우 스캔 범위를 range(27, 60)에서 range(27, 57)로 정밀 교정하여 15:56 타격 종료 완벽 동기화.
 # 🚨 MODIFIED: [V50.03 분할 교착 및 예산 강제 축소 버그 완벽 수술] 기존 elif 구조로 인해 버려지던 가불 로직을 독립된 if문으로 분리하고, 이미 예산이 넉넉한 경우를 1주 가격(curr_p)으로 강제 축소해버리는 치명적 맹점 원천 차단.
+# 🚨 MODIFIED: [V51.00 0주 새출발 파편화(Data Starvation) 원천 차단] 0주 진입 시 예산 50:50 분할을 소각하고 100% 영끌 디커플링 이식.
+# 🚨 MODIFIED: [V51.01 소형 시드 1주 영끌 타격 락온] 예산이 1주 가격보다 작더라도 장막판 가불을 통해 무조건 1주 베이스캠프 확보 보장.
 # ==========================================================
 import math
 import os
@@ -22,11 +24,8 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 class ReversionStrategy:
-    # MODIFIED: [V42 U-Curve 락온 무결성 복구] config 주입 배선 100% 복구
-    # 🚨 [AI 에이전트 절대 주의 환각 방어막] V42 U-Curve 락온 무결성 유지를 위해 config 주입을 훼손하지 말 것
     def __init__(self, config):
         self.cfg = config
-        # MODIFIED: [V48.00 단일 바구니 롤백] BUY1/BUY2 분리 바구니 전면 소각 및 BUY_SHARED 공용 바구니 이식
         self.residual = {
             "BUY_SHARED": {}, 
             "SELL_L1": {}, "SELL_UPPER": {}, "SELL_JACKPOT": {}
@@ -37,7 +36,6 @@ class ReversionStrategy:
 
     def _get_logical_date_str(self):
         now_est = datetime.now(ZoneInfo('America/New_York'))
-        # MODIFIED: [04:05 EST 논리적 날짜 경계선 붕괴 방어] 04:04:59 조기 격발 오염 방지를 위해 4분으로 축소 교정
         if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 4):
             target_date = now_est - timedelta(days=1)
         else:
@@ -111,9 +109,7 @@ class ReversionStrategy:
                 except OSError:
                     pass
 
-    # NEW: [VWAP 잔차 증발 방어를 위한 롤백(환불) 엔진 이식]
     def refund_residual(self, ticker, bucket, refund_value):
-        """ 스케줄러에서 미체결/거절로 인해 스킵된 예산 또는 수량을 해당 버킷에 원상 복구합니다. """
         self._load_state_if_needed(ticker)
         if bucket in self.residual:
             self.residual[bucket][ticker] = float(self.residual[bucket].get(ticker, 0.0)) + float(refund_value)
@@ -188,7 +184,6 @@ class ReversionStrategy:
 
     def reset_residual(self, ticker):
         self._load_state_if_needed(ticker)
-        # MODIFIED: [V48.00 단일 바구니 롤백] 잔여 버킷 리셋 대상 정규화
         self.residual["BUY_SHARED"][ticker] = 0.0
         self.residual["SELL_L1"][ticker] = 0.0
         self.residual["SELL_UPPER"][ticker] = 0.0
@@ -250,7 +245,6 @@ class ReversionStrategy:
             logging.error(f"🚨 [{ticker}] VWAP 프로파일 로드 실패: {e}")
             profile = {}
             
-        # 🚨 MODIFIED: [V50.02] 스캔 윈도우 30분 압축 락온 완료 (27~57)
         target_keys = [f"15:{str(m).zfill(2)}" for m in range(27, 57)]
         total_target_vol = sum(profile.get(k, 0.0) for k in target_keys)
         
@@ -325,10 +319,6 @@ class ReversionStrategy:
 
         is_strong_up = vwap_status.get('is_strong_up', False)
         is_strong_down = vwap_status.get('is_strong_down', False)
-        
-        # 🚨 MODIFIED: [V46.03 V-REV & AVWAP 듀얼 런타임 붕괴 및 예산 탈취(Stealing) 패러독스 완벽 수술]
-        # 🚨 [AI 에이전트 절대 주의 - 환각 방어막]
-        # 0주 새출발 시에는 강한 추세장(60% 지배력)이더라도 일괄 덤핑(trigger_loc)으로 빠지지 않고 무조건 1분 타임 슬라이싱(VWAP U-Curve)을 강제하여 베이스캠프를 분할 확보해야 함.
         trigger_loc = (is_strong_up or is_strong_down) and not is_zero_start_session
 
         orders = []
@@ -408,40 +398,48 @@ class ReversionStrategy:
             if rem_budget <= 0:
                 return {"orders": [], "trigger_loc": False, "total_q": total_q}
             
-            # MODIFIED: [V48.00 단일 바구니(Single Bucket) 롤백] Buy1과 Buy2 예산 스틸링(Stealing)을 허용하여 체결 우위 극대화
             raw_slice = float(alloc_cash) * current_weight
             shared_bucket = float(self.residual["BUY_SHARED"].get(ticker, 0.0)) + raw_slice
             
-            # 50:50 동적 분할
-            b1_budget_slice = shared_bucket * 0.5
-            b2_budget_slice = shared_bucket * 0.5
+            # 🚨 MODIFIED: [V51.00 0주 새출발 파편화(Data Starvation) 원천 차단]
+            # 0주 상태에서는 1층 베이스캠프 확보가 최우선이므로 50:50 분할을 소각하고
+            # 100% 예산을 Buy1에 집중하여 소형 시드의 1주 타격 누수(Skip)를 완벽 해체합니다.
+            if is_zero_start_session:
+                b1_budget_slice = shared_bucket
+                b2_budget_slice = 0.0
+            else:
+                # 50:50 동적 분할
+                b1_budget_slice = shared_bucket * 0.5
+                b2_budget_slice = shared_bucket * 0.5
             
             total_slice = b1_budget_slice + b2_budget_slice
             
-            # MODIFIED: [V46.01 팩트 교정] 소형 시드 1주 타격 영구 동결(Data Starvation) 및 분할 교착 맹점 원천 수술
             if total_slice > 0:
-                # 1. 예산 초과 시 비율 삭감
                 if total_slice > rem_budget:
                     ratio = rem_budget / total_slice
                     b1_budget_slice *= ratio
                     b2_budget_slice *= ratio
-                    shared_bucket = rem_budget # 잔여 버킷의 폭주를 막기 위해 한계치로 강제 캡핑
+                    shared_bucket = rem_budget 
                     
-                # 2. 분할 교착 방어: 1주를 살 돈(rem_budget)은 있으나 버킷이 쪼개져 못 살 경우 하나로 병합
                 if curr_p > 0 and rem_budget >= curr_p and b1_budget_slice < curr_p and b2_budget_slice < curr_p:
                     if (b1_budget_slice + b2_budget_slice) >= curr_p:
                         b1_budget_slice += b2_budget_slice
                         b2_budget_slice = 0.0
                         
-                # 🚨 MODIFIED: [V50.03 분할 교착 및 예산 강제 축소 버그 완벽 수술] 
-                # 기존 elif 구조로 인해 버려지던 가불 로직을 독립된 if문으로 분리하고,
-                # 이미 예산이 넉넉한 경우(10주 이상 살 예산)를 1주 가격(curr_p)으로 강제 축소해버리는 치명적 맹점 원천 차단.
                 if min_idx >= 28 and curr_p > 0 and rem_budget >= curr_p:
                     if b1_budget_slice < curr_p and b2_budget_slice < curr_p:
                         if b1_budget_slice >= b2_budget_slice:
                             b1_budget_slice = curr_p
                         else:
                             b2_budget_slice = curr_p
+                            
+                # 🚨 MODIFIED: [V51.01 소형 시드 1주 영끌 타격 락온]
+                # 장 마감 직전(min_idx >= 28)까지 단 1주도 사지 못했다면,
+                # 전체 예산이 1주 가격보다 작더라도 무조건 가불을 땡겨서 1주를 강제 매수!
+                if min_idx >= 28 and curr_p > 0 and total_spent == 0.0:
+                    if b1_budget_slice < curr_p and b2_budget_slice < curr_p:
+                        b1_budget_slice = curr_p
+                        b2_budget_slice = 0.0
 
             spent_b1 = 0.0
             spent_b2 = 0.0
@@ -451,14 +449,12 @@ class ReversionStrategy:
                     alloc_q1 = int(math.floor(b1_budget_slice / curr_p))
                     spent_b1 = alloc_q1 * curr_p
                     if alloc_q1 > 0:
-                        # MODIFIED: [잔차 증발 방어] 공용 버킷 식별자 주입
                         orders.append({"side": "BUY", "qty": alloc_q1, "price": p1_trigger, "bucket": "BUY_SHARED"})
 
                 if curr_p <= p2_trigger:
                     alloc_q2 = int(math.floor(b2_budget_slice / curr_p))
                     spent_b2 = alloc_q2 * curr_p
                     if alloc_q2 > 0:
-                        # MODIFIED: [잔차 증발 방어] 공용 버킷 식별자 주입
                         orders.append({"side": "BUY", "qty": alloc_q2, "price": p2_trigger, "bucket": "BUY_SHARED"})
 
                 self.residual["BUY_SHARED"][ticker] = max(0.0, shared_bucket - spent_b1 - spent_b2)
@@ -477,7 +473,6 @@ class ReversionStrategy:
                     alloc_qs = int(min(math.floor(exact_qs), rem_qty_total))
                     self.residual["SELL_JACKPOT"][ticker] = float(exact_qs - alloc_qs)
                     if alloc_qs > 0:
-                        # MODIFIED: [잔차 증발 방어] 버킷 식별자 주입
                         orders.append({"side": "SELL", "qty": alloc_qs, "price": trigger_jackpot, "bucket": "SELL_JACKPOT"})
                 else:
                     if l1_qty > 0 and curr_p >= trigger_l1:
@@ -488,7 +483,6 @@ class ReversionStrategy:
                             alloc_l1 = int(min(math.floor(exact_l1), rem_l1_qty))
                             self.residual["SELL_L1"][ticker] = float(exact_l1 - alloc_l1)
                             if alloc_l1 > 0:
-                                # MODIFIED: [잔차 증발 방어] 버킷 식별자 주입
                                 orders.append({"side": "SELL", "qty": alloc_l1, "price": trigger_l1, "bucket": "SELL_L1"})
                             rem_qty_total -= alloc_l1
 
@@ -497,7 +491,6 @@ class ReversionStrategy:
                         alloc_upper = int(min(math.floor(exact_upper), rem_qty_total))
                         self.residual["SELL_UPPER"][ticker] = float(exact_upper - alloc_upper)
                         if alloc_upper > 0:
-                            # MODIFIED: [잔차 증발 방어] 버킷 식별자 주입
                             orders.append({"side": "SELL", "qty": alloc_upper, "price": trigger_upper, "bucket": "SELL_UPPER"})
 
         if is_zero_start_session and market_type != "AFTER":
@@ -505,3 +498,4 @@ class ReversionStrategy:
 
         self._save_state(ticker)
         return {"orders": orders, "trigger_loc": False, "total_q": total_q}
+
