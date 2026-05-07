@@ -15,6 +15,7 @@
 # 🚨 MODIFIED: [V50.02 30분 압축 락온] 타임 윈도우 스캔 범위를 range(27, 60)에서 range(27, 57)로 정밀 교정하여 15:56 타격 종료 완벽 동기화.
 # 🚨 MODIFIED: [V52.00 V14 VWAP 예산 누수 영구 소각] get_dynamic_plan 호출 시 6번째 인자에 0.0이 하드코딩되어 당일 예산이 0원으로 강제 주입되던 치명적 맹점 원천 차단. v14_alloc_cash 스코프 전진 배치 및 팩트 예산 주입 파이프라인 100% 개통 완료.
 # 🚨 MODIFIED: [V53.00 무한 재진입 락온] 0주 매수 금지(Daily Buy-Lock) 족쇄 전면 폐기. 전량 익절 후에도 당일 타점 도달 시 100% 재매수 강제 가동.
+# 🚨 MODIFIED: [V44.48 런타임 붕괴 방어] 들여쓰기 붕괴(IndentationError) 완벽 교정 및 팩트 종속 완료.
 # ==========================================================
 import logging
 import datetime
@@ -144,8 +145,8 @@ async def scheduled_vwap_init_and_cancel(context):
                             await asyncio.sleep(1.0)
                         except Exception as e:
                             logging.error(f"🚨 자가 치유 Nuke 실패: {e}", exc_info=True)
-                    
-            vwap_cache[f"REV_{t}_nuked"] = False 
+                            # MODIFIED: [V44.48 런타임 붕괴 방어] 들여쓰기 붕괴(IndentationError) 완벽 교정
+                            vwap_cache[f"REV_{t}_nuked"] = False 
                
     try:
         await asyncio.wait_for(_do_init(), timeout=45.0)
@@ -296,8 +297,8 @@ async def scheduled_vwap_trade(context):
                             await asyncio.sleep(1.0)
                         except Exception as e:
                             logging.error(f"🚨 자가 치유 Nuke 실패: {e}", exc_info=True)
-                            
-                        vwap_cache[f"REV_{t}_nuked"] = False
+                            # MODIFIED: [V44.48 런타임 붕괴 방어] 들여쓰기 붕괴(IndentationError) 완벽 교정 (except 블록 내부로 종속)
+                            vwap_cache[f"REV_{t}_nuked"] = False
                             continue
 
                     curr_p = float(await asyncio.to_thread(broker.get_current_price, t) or 0.0)
