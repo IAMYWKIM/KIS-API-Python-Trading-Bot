@@ -1,3 +1,4 @@
+# NEW: [체력 방어막 이식]
 # ==========================================================
 # FILE: strategy_v_avwap.py
 # ==========================================================
@@ -13,6 +14,7 @@
 # 🚨 MODIFIED: [단판승부 실전 테스트] 15:00 EST 수익/손실 불문 무조건 전량 덤핑 (존버 소각)
 # 🚨 MODIFIED: [V53.01 오프닝 휩소 방어] 프리마켓 개장 직후 10분(04:10 EST까지) 진입 차단 안전 마진 이식
 # 🚨 MODIFIED: [V53.02 숏(Short) 안전장치 락온] 인버스(SOXS) 진입 시 제1조건(원웨이 하락) 100% 강제 검증 (Bypass 차단)
+# 🚨 MODIFIED: [V53.03 체력 동결 락온] 진입 시 당일 진폭이 ATR5를 초과(고갈)한 경우 신규 진입 영구 동결
 # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
 # 제1헌법: 동기 I/O 100% 비동기 격리.
 # 제3헌법: 타임존 단일 소스 락온 (EST 100%).
@@ -354,6 +356,15 @@ class VAvwapHybridPlugin:
 
         if prev_c <= 0 or atr5 <= 0 or day_high <= 0 or day_low <= 0 or exec_curr_p <= 0 or base_vwap <= 0 or prev_vwap <= 0:
             return _build_res('WAIT', '진입_평가용_필수데이터_결측_대기')
+            
+        # 🚨 NEW: [V53.03] 체력 고갈 시 신규 진입 100% 영구 동결 (Daily Buy-Lock) 락온
+        actual_gap_dollar = day_high - day_low
+        actual_gap_pct = (actual_gap_dollar / prev_c) * 100.0 if prev_c > 0 else 0.0
+        rem_5_pct = atr5 - actual_gap_pct
+        if rem_5_pct < 1.0: # 1.0% 미만 시 고갈로 판단
+            avwap_state["shutdown"] = True
+            self.save_state(exec_ticker, now_est, avwap_state)
+            return _build_res('SHUTDOWN', 'ATR5_체력고갈_감지_당일신규진입_영구동결')
 
         # 🚨 MODIFIED: [V53.02] 고저가 부호 일치(음수 갭 판별) 및 배타적 갭 필터 락온
         is_neg_gap_state = False
@@ -376,7 +387,7 @@ class VAvwapHybridPlugin:
             cond2_met = (base_vwap < prev_vwap) and ha_2_bearish_no_upper
 
         # 3. 잔여 체력 1% 이상
-        # 🚨 MODIFIED: [단판승부 테스트] 매수 시 체력 조건은 바이패스 락온. 체력은 매도 조건으로 이관됨.
+        # 🚨 MODIFIED: [단판승부 테스트] 매수 시 체력 조건은 바이패스 락온. 체력은 위에서 영구 동결로 사전 필터링됨.
         cond3_met = True
 
         if cond1_met and cond2_met and cond3_met:
