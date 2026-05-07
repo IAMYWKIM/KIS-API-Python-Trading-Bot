@@ -1,6 +1,7 @@
 # ==========================================================
 # FILE: telegram_avwap_console.py
 # ==========================================================
+# 🚨 MODIFIED: [V53.09 관제탑 UI 횡보장 킬 스위치 시각적 렌더링 강제 바이패스]
 # MODIFIED: [V47.00 하이킨아시 듀얼 모멘텀 추세 시스템 락온]
 # - 04:00 EST 프리마켓 1분봉 파서 스캔 확장 및 데이터 기아 해체
 # - 하이킨아시 5min 리샘플링 기반 3대 진입 조건(원웨이, 모멘텀, 체력) 락온
@@ -170,12 +171,14 @@ class AvwapConsolePlugin:
             msg += f"▫️ 당일 고가(프리포함): <b>${base_day_high:.2f}</b> ({b_high_pct:+.2f}%)\n"
             msg += f"▫️ 당일 저가(프리포함): <b>${base_day_low:.2f}</b> ({b_low_pct:+.2f}%)\n"
             
-        if base_prev_c > 0 and base_reg_high > 0 and base_reg_low > 0:
-            if base_reg_high > base_prev_c and base_reg_low < base_prev_c:
-                zero_line_status = "🔴 관통 (추세 붕괴 / 횡보장 셧다운)"
-            else:
-                zero_line_status = "🟢 방어 (추세 유지 / 원웨이)"
-            msg += f"▫️ 횡보 감시: <b>{zero_line_status}</b>\n"
+        # 🚨 MODIFIED: [V53.09 관제탑 UI 횡보장 킬 스위치 시각적 렌더링 강제 바이패스]
+        # 코어 엔진에서 횡보장 킬 스위치가 무력화되었으므로 시각적 디커플링(환각)을 막기 위해 렌더링 전면 소각
+        # if base_prev_c > 0 and base_reg_high > 0 and base_reg_low > 0:
+        #     if base_reg_high > base_prev_c and base_reg_low < base_prev_c:
+        #         zero_line_status = "🔴 관통 (추세 붕괴 / 횡보장 셧다운)"
+        #     else:
+        #         zero_line_status = "🟢 방어 (추세 유지 / 원웨이)"
+        #     msg += f"▫️ 횡보 감시: <b>{zero_line_status}</b>\n"
         
         if base_prev_vwap > 0:
             msg += f"▫️ 전일 VWAP: <b>${base_prev_vwap:,.2f}</b>\n"
