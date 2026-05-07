@@ -2,6 +2,7 @@
 # FILE: scheduler_vwap.py
 # ==========================================================
 # MODIFIED: [V53.06 전투 사령부 외부 통신 10초 타임아웃 및 폴백 방어막 이식]
+# 🚨 MODIFIED: [V53.08 들여쓰기(Indentation) 붕괴 런타임 즉사 버그 완벽 수술]
 # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
 # 제1헌법: queue_ledger.get_queue 등 모든 파일 I/O 및 락 점유 메서드는 무조건 asyncio.to_thread로 래핑하여 이벤트 루프 교착(Deadlock)을 원천 차단함.
 # 제9헌법: U_CURVE_WEIGHTS 하드코딩 배열 영구 소각. vwap_data.py에서 동적 로드하여 팩트 기반 재정규화 필수.
@@ -163,7 +164,7 @@ async def scheduled_vwap_init_and_cancel(context):
                             await asyncio.sleep(1.0)
                         except Exception as e:
                             logging.error(f"🚨 자가 치유 Nuke 실패: {e}", exc_info=True)
-                            # MODIFIED: [V44.48 런타임 붕괴 방어] 들여쓰기 붕괴(IndentationError) 완벽 교정
+                            # MODIFIED: [V44.48 런타임 붕괴 방어] 들여쓰기 붕괴(IndentationError) 완벽 교정 (except 블록 내부로 종속)
                             vwap_cache[f"REV_{t}_nuked"] = False 
                
     try:
@@ -545,7 +546,7 @@ async def scheduled_vwap_trade(context):
                                                         await asyncio.to_thread(_save_pending_grad, pending_file, pending_data)
                                                     except Exception as pg_e:
                                                         logging.error(f"🚨 [{t}] pending_grad 마커 파일 저장 실패: {pg_e}")
-                                        else:
+                                    else:
                                         if not vwap_cache.get(f"REV_{t}_sweep_skip_msg"):
                                             msg = f"⚠️ <b>[{t}] 스윕 피니셔 덤핑 생략 (MOC 락다운 감지)</b>\n▫️ 조건이 달성되었으나, 대상 물량이 수동 긴급 수혈(MOC) 등 취소 불가 상태로 미국 거래소에 묶여 있어 스윕 덤핑을 자동 스킵합니다."
                                             await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
