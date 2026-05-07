@@ -1,6 +1,8 @@
 # ==========================================================
 # FILE: strategy_v_avwap.py
 # ==========================================================
+# 🚨 MODIFIED: [V53.11 시계열 체력 듀얼 대칭 락온] 
+# 숏(SOXS) 진입 시 상승 체력(Time_Low < Time_High) 차단 필터 추가 이식 및 팩트 교정
 # 🚨 MODIFIED: [V53.07 제13헌법 스마트 홀딩 엑시트 로직 팩트 교정 (체력 고갈 조건 적출)]
 # NEW: [스마트 홀딩(익절 한정) 덤핑 락온 이식]
 # [strategy_v_avwap.py] - 🌟 V47.00 앱솔루트 팩트 교정 🌟
@@ -375,9 +377,9 @@ class VAvwapHybridPlugin:
                     t_high = base_cache_data.get('time_high', "")
                     t_low = base_cache_data.get('time_low', "")
                     if t_high and t_low:
-                        trend_sequence = "BEAR" if t_high < t_low else "BULL"
-            except Exception as e:
-                logging.debug(f"시계열 체력 스캔 에러: {e}")
+                        # 시계열 비교: 고점이 저점보다 먼저 발생하면 하락 체력(BEAR)
+                        return "BEAR" if t_high < t_low else "BULL"
+            except Exception: pass
 
         # 🚨 MODIFIED: [V53.02] 고저가 부호 일치(음수 갭 판별) 및 배타적 갭 필터 락온
         is_neg_gap_state = False
@@ -402,10 +404,14 @@ class VAvwapHybridPlugin:
         # 3. 잔여 체력 1% 이상
         cond3_met = True
 
-        # NEW: [V47 제4헌법] 시계열 체력 하락세 시 롱(SOXL) 진입 원천 차단
+        # 🚨 MODIFIED: [V53.11 시계열 체력 듀얼 대칭 락온] 롱/숏 대칭 구조
         cond_seq = True
-        if not is_inverse and trend_sequence == "BEAR":
-            cond_seq = False
+        if not is_inverse:
+            if trend_sequence == "BEAR":
+                cond_seq = False
+        else:
+            if trend_sequence == "BULL":
+                cond_seq = False
 
         if cond1_met and cond2_met and cond3_met and cond_seq:
             if avwap_alloc_cash > 0:
@@ -420,6 +426,7 @@ class VAvwapHybridPlugin:
             if not cond1_met: fail_reasons.append("원웨이/배타적갭필터미달")
             if not cond2_met: fail_reasons.append("HA모멘텀미달")
             if not cond3_met: fail_reasons.append("체력미달")
-            if not cond_seq: fail_reasons.append("시계열체력하락세")
+            if not cond_seq: 
+                fail_reasons.append("시계열체력하락세" if not is_inverse else "시계열체력상승세")
             return _build_res('WAIT', f'진입조건대기({",".join(fail_reasons)})')
 

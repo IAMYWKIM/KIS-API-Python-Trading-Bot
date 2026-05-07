@@ -1,6 +1,8 @@
 # ==========================================================
 # FILE: telegram_avwap_console.py
 # ==========================================================
+# 🚨 MODIFIED: [V53.11 시계열 체력 듀얼 대칭 락온] 
+# 숏(SOXS) 진입 시 상승 체력 차단 필터 UI 팩트 교정 및 판별 기준 텍스트 대칭화
 # 🚨 MODIFIED: [V53.09 관제탑 UI 횡보장 킬 스위치 시각적 렌더링 강제 바이패스]
 # MODIFIED: [V47.00 하이킨아시 듀얼 모멘텀 추세 시스템 락온]
 # - 04:00 EST 프리마켓 1분봉 파서 스캔 확장 및 데이터 기아 해체
@@ -185,14 +187,6 @@ class AvwapConsolePlugin:
             msg += f"▫️ 현재가(1T 종가): <b>${base_curr_p:.2f}</b>\n"
             
         # 🚨 MODIFIED: [V53.09 관제탑 UI 횡보장 킬 스위치 시각적 렌더링 강제 바이패스]
-        # 코어 엔진에서 횡보장 킬 스위치가 무력화되었으므로 시각적 디커플링(환각)을 막기 위해 렌더링 전면 소각
-        # if base_prev_c > 0 and base_reg_high > 0 and base_reg_low > 0:
-        #     if base_reg_high > base_prev_c and base_reg_low < base_prev_c:
-        #         zero_line_status = "🔴 관통 (추세 붕괴 / 횡보장 셧다운)"
-        #     else:
-        #         zero_line_status = "🟢 방어 (추세 유지 / 원웨이)"
-        #     msg += f"▫️ 횡보 감시: <b>{zero_line_status}</b>\n"
-        
         if base_prev_vwap > 0:
             msg += f"▫️ 전일 VWAP: <b>${base_prev_vwap:,.2f}</b>\n"
             rt_gap = ((base_curr_vwap - base_prev_vwap) / base_prev_vwap) * 100
@@ -221,7 +215,13 @@ class AvwapConsolePlugin:
             t_high = base_cache_info.get('time_high', "")
             t_low = base_cache_info.get('time_low', "")
             if t_high and t_low:
-                trend_sequence = "BEAR" if t_high < t_low else "BULL"
+                # 🚨 [V53.11 듀얼 대칭 락온] 시계열 비교 팩트 정밀 교정
+                if t_high < t_low:
+                    trend_sequence = "BEAR"
+                elif t_low < t_high:
+                    trend_sequence = "BULL"
+                else:
+                    trend_sequence = "PENDING"
         except Exception as e:
             logging.debug(f"시계열 체력 스캔 렌더링 에러: {e}")
 
@@ -282,11 +282,13 @@ class AvwapConsolePlugin:
             cond_seq = True
             rem_5_pct_console = 0.0
 
+            # 🚨 [V53.11] 듀얼 체력 대칭 락온 (롱/숏 거울 구조 시각화)
             if t == "SOXL" and trend_sequence == "BEAR":
+                cond_seq = False
+            elif t == "SOXS" and trend_sequence == "BULL":
                 cond_seq = False
 
             if base_prev_c > 0 and base_day_high > 0 and base_day_low > 0:
-                # 🚨 MODIFIED: [V47 제1헌법 롱(Long) 원웨이 갭 필터 UI 팩트 교정]
                 is_neg_gap_state = (base_day_high < base_prev_c) and (base_day_low < base_prev_c)
                 if t == "SOXS":
                     cond1_met = is_neg_gap_state
@@ -300,7 +302,6 @@ class AvwapConsolePlugin:
                     rem_5_pct_console = atr5 - actual_gap_pct
                     cond3_met = (rem_5_pct_console >= 1.0)
                     
-            # 🚨 MODIFIED: [V47] 현재가 vs 실시간 VWAP 갭 조건으로 교체 (base_curr_vwap -> base_curr_p)
             if base_curr_p > 0 and base_curr_vwap > 0:
                 if t == "SOXS":
                     cond2_met = (base_curr_p < base_curr_vwap) and ha_2_bearish_no_upper
@@ -314,7 +315,7 @@ class AvwapConsolePlugin:
 
             # HTML Entity escape 적용 (런타임 에러 방어)
             if t == "SOXS":
-                criteria = "H/L방향(-) &amp; HA모멘텀(현재가&lt;VWAP) &amp; 체력(&gt;=1%)"
+                criteria = "H/L방향(-) &amp; 시계열하락 &amp; HA모멘텀(현재가&lt;VWAP) &amp; 체력(&gt;=1%)"
             else:
                 criteria = "H/L방향(+) &amp; 시계열상승 &amp; HA모멘텀(현재가&gt;VWAP) &amp; 체력(&gt;=1%)"
 
@@ -331,15 +332,17 @@ class AvwapConsolePlugin:
             msg += f"▫️ <b>[ 하이킨아시 듀얼 모멘텀 조건 ]</b>\n"
             msg += f"   {c1_str} 고저가 방향 원웨이 일치\n"
             
+            # 🚨 [V53.11] 롱/숏 대칭 시계열 텍스트 분기
             if t == "SOXL":
                 seq_text = "상승/대기" if cond_seq else "하락세(Time_High&lt;Time_Low)"
-                msg += f"   {c_seq_str} 시계열 체력 통과 ({seq_text})\n"
+            else:
+                seq_text = "하락/대기" if cond_seq else "상승세(Time_Low&lt;Time_High)"
+            msg += f"   {c_seq_str} 시계열 체력 통과 ({seq_text})\n"
                 
             msg += f"   {c2_str} HA 모멘텀 일치 (현재 5T: {ha_status_text})\n"
             msg += f"   {c3_str} 잔여 체력 1% 이상 (현재: {rem_5_pct_console:.1f}%)\n"
             msg += f"▫️ 타격 상태: {trend_str}\n"
 
-            # 🚨 [V47.00] 다중 출장 개방 무한 타격 텍스트 교체
             strike_icon_txt = "무한 출장 (실시간 추세 돌파 락온)"
             if strikes > 0:
                 msg += f"▫️ 모드: <b>{strike_icon_txt} ({strikes}회차 교전 완료)</b>\n"
