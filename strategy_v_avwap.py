@@ -8,7 +8,9 @@
 # - 하이킨아시 5min 리샘플링 기반 3대 진입 조건(원웨이, 모멘텀, 체력) 락온
 # - 15:00 EST 오버나이트 존버(Hold) 모드 이식 및 투트랙 엑시트 전면 개조
 # - 10:00 EST 단판 승부 및 조기퇴근(단일 출장) 셧다운 로직 영구 소각 (무한 스캔 개방)
-# 🚨 MODIFIED: [1일 한정 실전 테스트] 제1조건(고저가 원웨이) 강제 바이패스 락온
+# 🚨 MODIFIED: [단판승부 실전 테스트] 제1조건/제3조건 강제 바이패스 및 매수/매도 1회 락온
+# 🚨 MODIFIED: [단판승부 실전 테스트] 체력 고갈 시점에 하이킨아시 역추세(음봉) 결합 시 덤핑
+# 🚨 MODIFIED: [단판승부 실전 테스트] 15:00 EST 수익/손실 불문 무조건 전량 덤핑 (존버 소각)
 # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
 # 제1헌법: 동기 I/O 100% 비동기 격리.
 # 제3헌법: 타임존 단일 소스 락온 (EST 100%).
@@ -26,7 +28,7 @@ import tempfile
 class VAvwapHybridPlugin:
     def __init__(self):
         self.plugin_name = "AVWAP_HYBRID_DUAL"
-        self.leverage = 3.0             
+        self.leverage = 3.0      
 
     def _get_logical_date_str(self, now_est):
         if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 4):
@@ -276,40 +278,43 @@ class VAvwapHybridPlugin:
         safe_qty = int(math.floor(float(avwap_qty)))
 
         # ---------------------------------------------------------
-        # 1. 매도 (보유 중일 때) 로직 - 투트랙 엑시트 & 15:00 존버
+        # 1. 매도 (보유 중일 때) 로직 - 15:00 무조건 덤핑 & 체력고갈 즉각덤핑
         # ---------------------------------------------------------
         if safe_qty > 0:
             safe_avg = avwap_avg_price if avwap_avg_price > 0 else exec_curr_p
 
             if safe_avg <= 0:
-                return _build_res('SELL', 'CORRUPT_PRICE_EMERGENCY_DUMP', qty=safe_qty, target_price=exec_curr_p)
+                return _build_res('SELL', 'CORRUPT_PRICE_EMERGENCY_DUMP(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
 
-            # 🚨 [V47.00] 15:00 EST 타임스탑 존버 모드 투트랙
+            # 🚨 MODIFIED: [단판승부 테스트] 15:00 EST 도달 시 수익/손실 불문 무조건 전량 팩트 덤핑 (오버나이트 소각)
             if curr_time >= time_1500:
-                if exec_curr_p > safe_avg:
-                    return _build_res('SELL', '15:00_도달_수익중_전량팩트덤핑', qty=safe_qty, target_price=exec_curr_p)
-                else:
-                    avwap_state["shutdown"] = True
-                    self.save_state(exec_ticker, now_est, avwap_state)
-                    return _build_res('HOLD', '15:00_도달_손실중_오버나이트_존버(절대손절금지)')
+                avwap_state["shutdown"] = True
+                self.save_state(exec_ticker, now_est, avwap_state)
+                return _build_res('SELL', '15:00_도달_당일교전종료_무조건덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
 
             exec_return = (exec_curr_p - safe_avg) / safe_avg
 
-            # AUTO 모드 하이킨아시 2연속 역추세 청산
+            # 🚨 MODIFIED: [단판승부 테스트] 체력 고갈 판별 (SELL 조건용)
+            actual_gap_dollar = day_high - day_low
+            actual_gap_pct = (actual_gap_dollar / prev_c) * 100.0 if prev_c > 0 else 0.0
+            rem_5_pct = atr5 - actual_gap_pct
+            is_stamina_exhausted = (rem_5_pct < 1.0) # 1.0% 미만 시 고갈로 판단
+
+            # 🚨 MODIFIED: [단판승부 테스트] 체력 고갈 + 하이킨아시 2연속 역추세 발생 시 즉각 덤핑
             if target_mode == "AUTO":
-                if not is_inverse and ha_2_bearish_no_upper:
-                    return _build_res('SELL', 'AUTO_하이킨아시_역추세(음봉2연속)_즉각덤핑', qty=safe_qty, target_price=exec_curr_p)
-                elif is_inverse and ha_2_bullish_no_lower:
-                    return _build_res('SELL', 'AUTO_하이킨아시_역추세(양봉2연속)_즉각덤핑', qty=safe_qty, target_price=exec_curr_p)
+                if not is_inverse and ha_2_bearish_no_upper and is_stamina_exhausted:
+                    return _build_res('SELL', '체력고갈_및_역추세(음봉2연속)_즉각덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
+                elif is_inverse and ha_2_bullish_no_lower and is_stamina_exhausted:
+                    return _build_res('SELL', '체력고갈_및_역추세(양봉2연속)_즉각덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
             else:
                 # MANUAL 모드 사용자 설정 목표 청산
                 if exec_return >= (user_target_pct / 100.0):
-                    return _build_res('SELL', f'MANUAL_목표달성(+{user_target_pct:.1f}%)_지정가익절', qty=safe_qty, target_price=exec_curr_p)
+                    return _build_res('SELL', f'MANUAL_목표달성(+{user_target_pct:.1f}%)_지정가익절(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
 
             return _build_res('HOLD', '보유중_관망')
 
         # ---------------------------------------------------------
-        # 2. 매수 (포지션 0주 일 때) 로직 - 하이킨아시 3대 조건 팩트 스캔
+        # 2. 매수 (포지션 0주 일 때) 로직 - 꼬리없는 양봉 2회 단일 조건 스캔
         # ---------------------------------------------------------
         if not context_data:
             return _build_res('WAIT', '매크로_데이터_수집대기')
@@ -347,14 +352,7 @@ class VAvwapHybridPlugin:
             return _build_res('WAIT', '진입_평가용_필수데이터_결측_대기')
 
         # 1. 고저가 부호 일치 (원웨이 방향 판별)
-        cond1_met = False
-        if base_day_high > 0 and base_day_low > 0 and base_prev_c > 0:
-            if not is_inverse:
-                cond1_met = (base_day_high > base_prev_c) and (base_day_low > base_prev_c)
-            else:
-                cond1_met = (base_day_high < base_prev_c) and (base_day_low < base_prev_c)
-
-        # 🚨 MODIFIED: [1일 한정 실전 테스트] 제1조건(고저가 원웨이) 강제 바이패스 락온
+        # 🚨 MODIFIED: [단판승부 테스트] 제1조건(고저가 원웨이) 강제 바이패스 락온
         cond1_met = True 
 
         # 2. 하이킨아시 모멘텀
@@ -365,11 +363,8 @@ class VAvwapHybridPlugin:
             cond2_met = (base_vwap < prev_vwap) and ha_2_bearish_no_upper
 
         # 3. 잔여 체력 1% 이상
-        cond3_met = False
-        actual_gap_dollar = day_high - day_low
-        actual_gap_pct = (actual_gap_dollar / prev_c) * 100.0
-        rem_5_pct = atr5 - actual_gap_pct
-        cond3_met = (rem_5_pct >= 1.0)
+        # 🚨 MODIFIED: [단판승부 테스트] 매수 시 체력 조건은 바이패스 락온. 체력은 매도 조건으로 이관됨.
+        cond3_met = True
 
         if cond1_met and cond2_met and cond3_met:
             if avwap_alloc_cash > 0:
@@ -383,6 +378,6 @@ class VAvwapHybridPlugin:
             fail_reasons = []
             if not cond1_met: fail_reasons.append("원웨이미달")
             if not cond2_met: fail_reasons.append("HA모멘텀미달")
-            if not cond3_met: fail_reasons.append(f"체력({rem_5_pct:.1f}%)미달")
+            if not cond3_met: fail_reasons.append("체력미달")
             return _build_res('WAIT', f'진입조건대기({",".join(fail_reasons)})')
 
