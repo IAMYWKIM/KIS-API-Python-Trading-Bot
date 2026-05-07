@@ -8,9 +8,11 @@
 # - 하이킨아시 5min 리샘플링 기반 3대 진입 조건(원웨이, 모멘텀, 체력) 락온
 # - 15:00 EST 오버나이트 존버(Hold) 모드 이식 및 투트랙 엑시트 전면 개조
 # - 10:00 EST 단판 승부 및 조기퇴근(단일 출장) 셧다운 로직 영구 소각 (무한 스캔 개방)
-# 🚨 MODIFIED: [단판승부 실전 테스트] 제1조건/제3조건 강제 바이패스 및 매수/매도 1회 락온
+# 🚨 MODIFIED: [단판승부 실전 테스트] 롱(Long) 한정 제1조건/제3조건 강제 바이패스 및 매수/매도 1회 락온
 # 🚨 MODIFIED: [단판승부 실전 테스트] 체력 고갈 시점에 하이킨아시 역추세(음봉) 결합 시 덤핑
 # 🚨 MODIFIED: [단판승부 실전 테스트] 15:00 EST 수익/손실 불문 무조건 전량 덤핑 (존버 소각)
+# 🚨 MODIFIED: [V53.01 오프닝 휩소 방어] 프리마켓 개장 직후 10분(04:10 EST까지) 진입 차단 안전 마진 이식
+# 🚨 MODIFIED: [V53.02 숏(Short) 안전장치 락온] 인버스(SOXS) 진입 시 제1조건(원웨이 하락) 100% 강제 검증 (Bypass 차단)
 # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
 # 제1헌법: 동기 I/O 100% 비동기 격리.
 # 제3헌법: 타임존 단일 소스 락온 (EST 100%).
@@ -191,7 +193,8 @@ class VAvwapHybridPlugin:
         avwap_state = avwap_state or {}
         curr_time = now_est.time()
 
-        time_0400 = datetime.time(4, 0)
+        # 🚨 MODIFIED: [V53.01] 오프닝 휩소 방어를 위한 10분 안전 마진 락온
+        time_0410 = datetime.time(4, 10)
         time_1500 = datetime.time(15, 0)
 
         base_vwap = base_curr_p
@@ -334,8 +337,9 @@ class VAvwapHybridPlugin:
                     self.save_state(exec_ticker, now_est, avwap_state)
                     return _build_res('SHUTDOWN', '정규장_횡보장_감지(Zero-Line_관통)_신규진입_영구동결')
 
-        if curr_time < time_0400:
-            return _build_res('WAIT', '04:00_이전_프리마켓_대기')
+        # 🚨 MODIFIED: [V53.01] 오프닝 휩소 방어를 위한 10분 안전 마진 적용
+        if curr_time < time_0410:
+            return _build_res('WAIT', '04:10_이전_오프닝_휩소_방어(10분_안전마진_대기)')
 
         if curr_time >= time_1500:
             avwap_state["shutdown"] = True
@@ -352,8 +356,16 @@ class VAvwapHybridPlugin:
             return _build_res('WAIT', '진입_평가용_필수데이터_결측_대기')
 
         # 1. 고저가 부호 일치 (원웨이 방향 판별)
-        # 🚨 MODIFIED: [단판승부 테스트] 제1조건(고저가 원웨이) 강제 바이패스 락온
-        cond1_met = True 
+        cond1_met = False
+        if base_day_high > 0 and base_day_low > 0 and base_prev_c > 0:
+            if not is_inverse:
+                cond1_met = (base_day_high > base_prev_c) and (base_day_low > base_prev_c)
+            else:
+                cond1_met = (base_day_high < base_prev_c) and (base_day_low < base_prev_c)
+
+        # 🚨 MODIFIED: [단판승부 테스트] 숏(SOXS) 안전장치 탑재! 롱(SOXL)은 바이패스하되, 숏은 반드시 제1조건(원웨이 하락)을 충족해야만 진입 허용.
+        if not is_inverse:
+            cond1_met = True 
 
         # 2. 하이킨아시 모멘텀
         cond2_met = False
@@ -380,4 +392,3 @@ class VAvwapHybridPlugin:
             if not cond2_met: fail_reasons.append("HA모멘텀미달")
             if not cond3_met: fail_reasons.append("체력미달")
             return _build_res('WAIT', f'진입조건대기({",".join(fail_reasons)})')
-
