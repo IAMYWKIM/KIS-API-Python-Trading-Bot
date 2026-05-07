@@ -317,7 +317,7 @@ class VAvwapHybridPlugin:
             return _build_res('HOLD', '보유중_관망')
 
         # ---------------------------------------------------------
-        # 2. 매수 (포지션 0주 일 때) 로직 - 꼬리없는 양봉 2회 단일 조건 스캔
+        # 2. 매수 (포지션 0주 일 때) 로직 - 배타적 갭 필터 및 모멘텀 스캔
         # ---------------------------------------------------------
         if not context_data:
             return _build_res('WAIT', '매크로_데이터_수집대기')
@@ -355,17 +355,18 @@ class VAvwapHybridPlugin:
         if prev_c <= 0 or atr5 <= 0 or day_high <= 0 or day_low <= 0 or exec_curr_p <= 0 or base_vwap <= 0 or prev_vwap <= 0:
             return _build_res('WAIT', '진입_평가용_필수데이터_결측_대기')
 
-        # 1. 고저가 부호 일치 (원웨이 방향 판별)
-        cond1_met = False
+        # 🚨 MODIFIED: [V53.02] 고저가 부호 일치(음수 갭 판별) 및 배타적 갭 필터 락온
+        is_neg_gap_state = False
         if base_day_high > 0 and base_day_low > 0 and base_prev_c > 0:
-            if not is_inverse:
-                cond1_met = (base_day_high > base_prev_c) and (base_day_low > base_prev_c)
-            else:
-                cond1_met = (base_day_high < base_prev_c) and (base_day_low < base_prev_c)
+            is_neg_gap_state = (base_day_high < base_prev_c) and (base_day_low < base_prev_c)
 
-        # 🚨 MODIFIED: [단판승부 테스트] 숏(SOXS) 안전장치 탑재! 롱(SOXL)은 바이패스하되, 숏은 반드시 제1조건(원웨이 하락)을 충족해야만 진입 허용.
-        if not is_inverse:
-            cond1_met = True 
+        cond1_met = False
+        if is_inverse:
+            # 숏(SOXS)은 반드시 제1조건(원웨이 하락 = 음수 갭)을 충족해야만 진입 허용
+            cond1_met = is_neg_gap_state
+        else:
+            # 롱(SOXL)은 숏 진입 조건(음수 갭)이 충족되었을 때 진입 전면 차단 (배타적 락온)
+            cond1_met = not is_neg_gap_state
 
         # 2. 하이킨아시 모멘텀
         cond2_met = False
@@ -384,11 +385,11 @@ class VAvwapHybridPlugin:
                 safe_budget = avwap_alloc_cash * 0.95
                 buy_qty = int(math.floor(safe_budget / exec_curr_p))
                 if buy_qty > 0:
-                    return _build_res('BUY', '하이킨아시_조건충족_1일테스트_타격개시', qty=buy_qty, target_price=exec_curr_p)
+                    return _build_res('BUY', '하이킨아시_배타적갭필터_통과_타격개시', qty=buy_qty, target_price=exec_curr_p)
             return _build_res('WAIT', '가용예산부족_대기')
         else:
             fail_reasons = []
-            if not cond1_met: fail_reasons.append("원웨이미달")
+            if not cond1_met: fail_reasons.append("원웨이/배타적갭필터미달")
             if not cond2_met: fail_reasons.append("HA모멘텀미달")
             if not cond3_met: fail_reasons.append("체력미달")
             return _build_res('WAIT', f'진입조건대기({",".join(fail_reasons)})')
