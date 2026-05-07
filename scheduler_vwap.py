@@ -13,7 +13,7 @@
 # 🚨 MODIFIED: [V46.05 이벤트 루프 교착 방어] Lock Starvation 대비 호흡 연장
 # 🚨 MODIFIED: [V47.02 런타임 붕괴 방어] target_sweep_qty UnboundLocalError 스코프 전진 배치로 영구 소각 완료
 # 🚨 MODIFIED: [V50.02 30분 압축 락온] 타임 윈도우 스캔 범위를 range(27, 60)에서 range(27, 57)로 정밀 교정하여 15:56 타격 종료 완벽 동기화.
-# 🚨 MODIFIED: [V52.00 V14 VWAP 예산 누수 완벽 수술] 0.0달러 하드코딩 영구 소각 및 팩트 예산(v14_alloc_cash) 전진 배치 주입 완료.
+# 🚨 MODIFIED: [V52.00 V14 VWAP 예산 누수 영구 소각] get_dynamic_plan 호출 시 6번째 인자에 0.0이 하드코딩되어 당일 예산이 0원으로 강제 주입되던 치명적 맹점 원천 차단. v14_alloc_cash 스코프 전진 배치 및 팩트 예산 주입 파이프라인 100% 개통 완료.
 # ==========================================================
 import logging
 import datetime
@@ -623,9 +623,9 @@ async def scheduled_vwap_trade(context):
                         
                         v14_vwap_plugin = strategy.v14_vwap_plugin
                         
-                        # 🚨 MODIFIED: [V52.00] V14 팩트 예산 스코프 전진 배치 및 0.0달러 하드코딩 영구 소각
+                        # 🚨 MODIFIED: [V52.00 V14 VWAP 예산 누수 영구 소각] 스냅샷 락온 유무와 상관없이 무조건 팩트 가용 예산을 최상단에서 추출하도록 스코프 전진 배치 완료.
                         _, v14_alloc_cash, _ = await asyncio.to_thread(cfg.calculate_v14_state, t)
-                        
+
                         cached_snap_v14 = await asyncio.to_thread(v14_vwap_plugin.load_daily_snapshot, t)
                         if not cached_snap_v14:
                             ledger_qty = 0
@@ -650,7 +650,7 @@ async def scheduled_vwap_trade(context):
                             is_zero_start_session = cached_snap_v14.get("is_zero_start", cached_snap_v14.get("total_q", -1) == 0)
                             
                         # 🚨 [비동기 래핑] 파일 I/O 데드락 원천 차단
-                        # 🚨 MODIFIED: [V52.00] 0.0 -> v14_alloc_cash 팩트 주입
+                        # 🚨 MODIFIED: [V52.00 V14 VWAP 예산 누수 영구 소각] 0.0 달러가 하드코딩되어 매수 주문이 원천 기각되던 깡통 변수를 전면 도려내고 팩트 예산(v14_alloc_cash) 다이렉트 주입 완료.
                         plan = await asyncio.to_thread(
                             v14_vwap_plugin.get_dynamic_plan,
                             t, curr_p, prev_c, current_weight, min_idx, v14_alloc_cash, pure_qty_v14, actual_avg
