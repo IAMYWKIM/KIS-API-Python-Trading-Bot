@@ -13,6 +13,8 @@
 # NEW: [V47] 시계열 체력 필터 및 현재가 vs 실시간 VWAP 갭 조건 관제탑 렌더링 100% 통합
 # 🚨 MODIFIED: [관제탑 듀얼 세션 디커플링 (Time-Split Radar)] 
 # 프리마켓(04:00~09:29)과 정규장(09:30~16:00) 데이터를 100% 팩트 분리하여, 정규장 개장 시 프리장 노이즈를 완벽히 소각하고 0점 세팅 락온.
+# 🚨 MODIFIED: [V56.00 상태 기억형(Stateful Latching) 모멘텀 락온 엔진 UI 디커플링 수술]
+# 현재 캔들이 조건에 맞지 않더라도 영구 락온 상태라면 모멘텀 🟢 점등 유지 및 "음봉이지만 시계열 락온 유지" 직관적 텍스트 렌더링 동기화 완료.
 # ==========================================================
 import logging
 import datetime
@@ -231,7 +233,9 @@ class AvwapConsolePlugin:
                         tracking_cache[f"AVWAP_QTY_{t}"] = saved_state.get('qty', 0)
                         tracking_cache[f"AVWAP_AVG_{t}"] = saved_state.get('avg_price', 0.0)
                         tracking_cache[f"AVWAP_STRIKES_{t}"] = saved_state.get('strikes', 0)
-                    tracking_cache[f"AVWAP_INIT_{t}"] = True
+                        tracking_cache[f"HA_LATCHED_BULL_{t}"] = saved_state.get('HA_LATCHED_BULL', False)
+                        tracking_cache[f"HA_LATCHED_BEAR_{t}"] = saved_state.get('HA_LATCHED_BEAR', False)
+                        tracking_cache[f"AVWAP_INIT_{t}"] = True
                 except Exception as e:
                     logging.error(f"🚨 AVWAP 관제탑 상태 자가 복구 실패 ({t}): {e}")
 
@@ -304,11 +308,28 @@ class AvwapConsolePlugin:
                     rem_5_pct_console = atr5 - actual_gap_pct
                     cond3_met = (rem_5_pct_console >= 1.0)
                     
+            # 🚨 MODIFIED: [V56.00 상태 기억(Latching) 메모리 연산 및 디커플링 렌더링]
+            ha_latched_bull = tracking_cache.get(f"HA_LATCHED_BULL_{t}", False)
+            ha_latched_bear = tracking_cache.get(f"HA_LATCHED_BEAR_{t}", False)
+
+            if ha_2_bullish_no_lower: ha_latched_bull = True
+            if trend_sequence == "BEAR" or rem_5_pct_console < 1.0: ha_latched_bull = False
+
+            if ha_2_bearish_no_upper: ha_latched_bear = True
+            if trend_sequence == "BULL" or rem_5_pct_console < 1.0: ha_latched_bear = False
+
+            tracking_cache[f"HA_LATCHED_BULL_{t}"] = ha_latched_bull
+            tracking_cache[f"HA_LATCHED_BEAR_{t}"] = ha_latched_bear
+
             if base_curr_p > 0 and base_curr_vwap > 0:
                 if t == "SOXS":
-                    cond2_met = (base_curr_p < base_curr_vwap) and ha_2_bearish_no_upper
+                    cond2_met = (base_curr_p < base_curr_vwap) and ha_latched_bear
+                    if cond2_met and not ha_2_bearish_no_upper:
+                        ha_status_text = f"{ha_status_text}이지만 시계열 락온 유지"
                 else:
-                    cond2_met = (base_curr_p > base_curr_vwap) and ha_2_bullish_no_lower
+                    cond2_met = (base_curr_p > base_curr_vwap) and ha_latched_bull
+                    if cond2_met and not ha_2_bullish_no_lower:
+                        ha_status_text = f"{ha_status_text}이지만 시계열 락온 유지"
             
             c1_str = "🟢" if cond1_met else "🔴"
             c2_str = "🟢" if cond2_met else "🔴"

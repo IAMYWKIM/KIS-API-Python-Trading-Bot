@@ -24,6 +24,8 @@
 # 제3헌법: 타임존 단일 소스 락온 (EST 100%).
 # 🚨 MODIFIED: [관제탑 듀얼 세션 디커플링 (Time-Split Radar)] 
 # 프리마켓(04:00~09:29)과 정규장(09:30~16:00) 데이터를 100% 팩트 분리하여, 정규장 개장 시 프리장 노이즈를 완벽히 소각하고 0점 세팅 락온. 낡은 avwap_cache.json 의존성 전면 적출.
+# 🚨 MODIFIED: [V56.00 상태 기억형(Stateful Latching) 모멘텀 락온 엔진 이식]
+# 한 번 점등된 하이킨아시 2연속 양봉/음봉 모멘텀을 메모리에 영구 락온(Lock-on)하여 일시적 잔파도(휩소)에 의한 타격 중단을 원천 차단. 시계열 추세 반전 및 체력 고갈 시에만 리셋(소각)되도록 방탄 아키텍처 대수술 완료.
 # ==========================================================
 import logging
 import datetime
@@ -73,13 +75,17 @@ class VAvwapHybridPlugin:
                             data['daily_bought_qty'] = 0
                             data['daily_sold_qty'] = 0
 
+                        # NEW: [V56.00 상태 기억 초기화]
+                        data['HA_LATCHED_BULL'] = False
+                        data['HA_LATCHED_BEAR'] = False
+
                         data['date'] = today_str
                         self.save_state(ticker, now_est, data)
 
                     return data
             except Exception:
                 pass
-        return {"executed_buy": False, "shutdown": False, "strikes": 0, "qty": 0, "avg_price": 0.0, "daily_bought_qty": 0, "daily_sold_qty": 0}
+        return {"executed_buy": False, "shutdown": False, "strikes": 0, "qty": 0, "avg_price": 0.0, "daily_bought_qty": 0, "daily_sold_qty": 0, "HA_LATCHED_BULL": False, "HA_LATCHED_BEAR": False}
 
     def save_state(self, ticker, now_est, state_data):
         file_path = self._get_state_file(ticker, now_est)
@@ -187,7 +193,6 @@ class VAvwapHybridPlugin:
         target_mode = kwargs.get('target_mode', 'AUTO')
 
         atr5 = kwargs.get('atr5', 0.0)
-        # 기본 kwargs 값 수신 (이후 디커플링 연산으로 덮어씌움)
         day_high = kwargs.get('day_high', 0.0)
         day_low = kwargs.get('day_low', 0.0)
         prev_c = kwargs.get('prev_close', 0.0)
@@ -400,12 +405,41 @@ class VAvwapHybridPlugin:
         else:
             cond1_met = not is_neg_gap_state
 
+        # 🚨 MODIFIED: [V56.00 상태 기억(Latching) 락온 엔진 이식]
+        persistent_state = self.load_state(exec_ticker, now_est)
+        ha_latched_bull = persistent_state.get('HA_LATCHED_BULL', False)
+        ha_latched_bear = persistent_state.get('HA_LATCHED_BEAR', False)
+        latch_changed = False
+
+        if ha_2_bullish_no_lower:
+            if not ha_latched_bull:
+                ha_latched_bull = True
+                latch_changed = True
+        if trend_sequence == "BEAR" or rem_5_pct < 1.0:
+            if ha_latched_bull:
+                ha_latched_bull = False
+                latch_changed = True
+
+        if ha_2_bearish_no_upper:
+            if not ha_latched_bear:
+                ha_latched_bear = True
+                latch_changed = True
+        if trend_sequence == "BULL" or rem_5_pct < 1.0:
+            if ha_latched_bear:
+                ha_latched_bear = False
+                latch_changed = True
+
+        if latch_changed:
+            persistent_state['HA_LATCHED_BULL'] = ha_latched_bull
+            persistent_state['HA_LATCHED_BEAR'] = ha_latched_bear
+            self.save_state(exec_ticker, now_est, persistent_state)
+
         # NEW: [V47 제3헌법] 하이킨아시 모멘텀 격발 (현재가 vs 실시간 VWAP)
         cond2_met = False
         if not is_inverse:
-            cond2_met = (base_curr_p > base_vwap) and ha_2_bullish_no_lower
+            cond2_met = (base_curr_p > base_vwap) and ha_latched_bull
         else:
-            cond2_met = (base_curr_p < base_vwap) and ha_2_bearish_no_upper
+            cond2_met = (base_curr_p < base_vwap) and ha_latched_bear
 
         # 3. 잔여 체력 1% 이상
         cond3_met = True
@@ -435,3 +469,4 @@ class VAvwapHybridPlugin:
             if not cond_seq: 
                 fail_reasons.append("시계열체력하락세" if not is_inverse else "시계열체력상승세")
             return _build_res('WAIT', f'진입조건대기({",".join(fail_reasons)})')
+
