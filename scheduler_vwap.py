@@ -24,6 +24,7 @@
 # 🚨 MODIFIED: [V44.48 런타임 붕괴 방어] 들여쓰기 붕괴(IndentationError) 완벽 교정 및 팩트 종속 완료.
 # 🚨 MODIFIED: [V54.01 VWAP 데이터 통합 롤백] vwap_data.py 외부 파일 임포트 소각 및 ConfigManager 수혈 락온
 # 🚨 MODIFIED: [V54.02 깡통 스냅샷 붕괴 방어] prev_c 다이렉트 추출 파이프라인 이식으로 데이터 기아(Data Starvation) 원천 차단
+# 🚨 NEW: [달력 API 결측 연쇄 기절 방어] 장마감시간 빈 값 반환 시 평일 16:00 EST 강제 폴백 락온 이식 완료.
 # ==========================================================
 import logging
 import datetime
@@ -63,13 +64,27 @@ async def scheduled_vwap_init_and_cancel(context):
 
     try:
         schedule = await asyncio.wait_for(asyncio.to_thread(_get_market_close), timeout=10.0)
-        if schedule.empty: return
-        market_close = schedule.iloc[0]['market_close'].astimezone(est)
+        # MODIFIED: [달력 API 결측 연쇄 기절 방어] schedule.empty == True 여도 평일이면 무조건 Fail-Open(강제 마감 16:00) 락온
+        if schedule.empty:
+            logging.warning("⚠️ [vwap_init] 달력 API 빈 값 반환. 평일 강제 마감시간(16:00 EST) 폴백 가동.")
+            if now_est.weekday() < 5:
+                market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
+            else:
+                return
+        else:
+            market_close = schedule.iloc[0]['market_close'].astimezone(est)
     except asyncio.TimeoutError:
-        logging.error("⚠️ 장마감시간 달력 API 타임아웃. 16:00 강제 세팅.")
-        market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
-    except Exception:
-        market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
+        logging.error("⚠️ 장마감시간 달력 API 타임아웃. 평일 강제 마감시간(16:00 EST) 세팅.")
+        if now_est.weekday() < 5:
+            market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
+        else:
+            return
+    except Exception as e:
+        logging.error(f"⚠️ 장마감시간 달력 API 에러({e}). 평일 강제 마감시간(16:00 EST) 세팅.")
+        if now_est.weekday() < 5:
+            market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
+        else:
+            return
         
     vwap_start_time = market_close - datetime.timedelta(minutes=33, seconds=15)
     vwap_end_time = market_close 
@@ -225,13 +240,27 @@ async def scheduled_vwap_trade(context):
 
     try:
         schedule = await asyncio.wait_for(asyncio.to_thread(_get_market_close), timeout=10.0)
-        if schedule.empty: return
-        market_close = schedule.iloc[0]['market_close'].astimezone(est)
+        # MODIFIED: [달력 API 결측 연쇄 기절 방어] schedule.empty == True 여도 평일이면 무조건 Fail-Open(강제 마감 16:00) 락온
+        if schedule.empty:
+            logging.warning("⚠️ [vwap_trade] 달력 API 빈 값 반환. 평일 강제 마감시간(16:00 EST) 폴백 가동.")
+            if now_est.weekday() < 5:
+                market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
+            else:
+                return
+        else:
+            market_close = schedule.iloc[0]['market_close'].astimezone(est)
     except asyncio.TimeoutError:
-        logging.error("⚠️ 장마감시간 달력 API 타임아웃. 16:00 강제 세팅.")
-        market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
-    except Exception:
-        market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
+        logging.error("⚠️ 장마감시간 달력 API 타임아웃. 평일 강제 마감시간(16:00 EST) 세팅.")
+        if now_est.weekday() < 5:
+            market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
+        else:
+            return
+    except Exception as e:
+        logging.error(f"⚠️ 장마감시간 달력 API 에러({e}). 평일 강제 마감시간(16:00 EST) 세팅.")
+        if now_est.weekday() < 5:
+            market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
+        else:
+            return
         
     vwap_start_time = market_close - datetime.timedelta(minutes=33, seconds=15)
     vwap_end_time = market_close 
@@ -586,7 +615,7 @@ async def scheduled_vwap_trade(context):
                                                     await asyncio.sleep(0.5)
                                                 except Exception as e_cancel:
                                                     logging.warning(f"⚠️ [{t}] 스윕 잔여 주문 취소 실패: {e_cancel}")
-                                                
+                                            
                                             if ccld_qty > 0:
                                                 await asyncio.to_thread(strategy_rev.record_execution, t, "SELL", ccld_qty, exec_price)
                                                 q_snap_before_pop = list(q_data)
@@ -610,7 +639,7 @@ async def scheduled_vwap_trade(context):
                                                                 _pf.flush()
                                                                 os.fsync(_pf.fileno())
                                                             os.replace(tmp_path, f_path)
-                                                        
+                                                            
                                                         await asyncio.to_thread(_save_pending_grad, pending_file, pending_data)
                                                     except Exception as pg_e:
                                                         logging.error(f"🚨 [{t}] pending_grad 마커 파일 저장 실패: {pg_e}")
