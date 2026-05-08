@@ -27,6 +27,7 @@
 # 프리마켓(04:00~09:29)과 정규장(09:30~16:00) 데이터를 100% 팩트 분리하여, 정규장 개장 시 프리장 노이즈를 완벽히 소각하고 0점 세팅 락온. 낡은 avwap_cache.json 의존성 전면 적출.
 # 🚨 MODIFIED: [V56.00 상태 기억형(Stateful Latching) 모멘텀 락온 엔진 이식]
 # 한 번 점등된 하이킨아시 2연속 양봉/음봉 모멘텀을 메모리에 영구 락온(Lock-on)하여 일시적 잔파도(휩소)에 의한 타격 중단을 원천 차단. 시계열 추세 반전 및 체력 고갈 시에만 리셋(소각)되도록 방탄 아키텍처 대수술 완료.
+# 🚨 MODIFIED: [V59.00 AVWAP 암살자 예산 100% 수혈 및 15:25 전량 덤핑 팩트 교정]
 # ==========================================================
 import logging
 import datetime
@@ -211,7 +212,8 @@ class VAvwapHybridPlugin:
         # 🚨 [Time-Split Radar] 듀얼 세션 스위치 락온
         time_0410 = datetime.time(4, 10)
         time_0930 = datetime.time(9, 30)
-        time_1500 = datetime.time(15, 0)
+        # 🚨 MODIFIED: [V59.00 AVWAP 15:25 전량 덤핑 락온] 타임 쉴드 전진 배치
+        time_1525 = datetime.time(15, 25)
 
         is_regular_session = curr_time >= time_0930
 
@@ -320,7 +322,7 @@ class VAvwapHybridPlugin:
         safe_qty = int(math.floor(float(avwap_qty)))
 
         # ---------------------------------------------------------
-        # 1. 매도 (보유 중일 때) 로직 - 15:00 무조건 덤핑 & 스마트 홀딩 익절 덤핑
+        # 1. 매도 (보유 중일 때) 로직 - 15:25 무조건 덤핑 & 스마트 홀딩 익절 덤핑
         # ---------------------------------------------------------
         if safe_qty > 0:
             safe_avg = avwap_avg_price if avwap_avg_price > 0 else exec_curr_p
@@ -328,11 +330,11 @@ class VAvwapHybridPlugin:
             if safe_avg <= 0:
                 return _build_res('SELL', 'CORRUPT_PRICE_EMERGENCY_DUMP(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
 
-            # 🚨 MODIFIED: [단판승부 테스트] 15:00 EST 도달 시 수익/손실 불문 무조건 전량 팩트 덤핑 (오버나이트 소각)
-            if curr_time >= time_1500:
+            # 🚨 MODIFIED: [V59.00 AVWAP 15:25 전량 덤핑 락온] 15:25 EST 도달 시 수익/손실 불문 무조건 전량 팩트 덤핑
+            if curr_time >= time_1525:
                 avwap_state["shutdown"] = True
                 self.save_state(exec_ticker, now_est, avwap_state)
-                return _build_res('SELL', '15:00_도달_당일교전종료_무조건덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
+                return _build_res('SELL', '15:25_도달_당일교전종료_무조건덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
 
             # 실시간 순수익 상태 연산
             exec_return = (exec_curr_p - safe_avg) / safe_avg
@@ -374,10 +376,11 @@ class VAvwapHybridPlugin:
         if curr_time < time_0410:
             return _build_res('WAIT', '04:10_이전_오프닝_휩소_방어(10분_안전마진_대기)')
 
-        if curr_time >= time_1500:
+        # 🚨 MODIFIED: [V59.00 AVWAP 15:25 전량 덤핑 락온] 타임 쉴드 전진 배치 적용
+        if curr_time >= time_1525:
             avwap_state["shutdown"] = True
             self.save_state(exec_ticker, now_est, avwap_state)
-            return _build_res('SHUTDOWN', '15:00_도달_신규진입_영구동결')
+            return _build_res('SHUTDOWN', '15:25_도달_신규진입_영구동결')
 
         # 필수 데이터 결측 검증
         base_prev_c = float(context_data.get('prev_close', 0.0))
@@ -456,7 +459,7 @@ class VAvwapHybridPlugin:
 
         if cond1_met and cond2_met and cond3_met and cond_seq:
             if avwap_alloc_cash > 0:
-                # 🚨 [V47.00] 암살자 현금 50% 락온 상태에서 거절 방어용 95% 마진 체결
+                # 🚨 [V47.00] 95% 예산 하드 마진 락온 (거절 방어용)
                 safe_budget = avwap_alloc_cash * 0.95
                 buy_qty = int(math.floor(safe_budget / exec_curr_p))
                 if buy_qty > 0:

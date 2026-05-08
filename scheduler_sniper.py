@@ -18,6 +18,7 @@
 # 🚨 MODIFIED: [V47.00 하이킨아시 듀얼 모멘텀] 본대 예산 보호막 무력화 0.0 및 암살자 예산 50% 강제 락온
 # 🚨 MODIFIED: [V47.00 하이킨아시 듀얼 모멘텀] 옴니 매트릭스 락다운 블록 바이패스 처리(04:00 EST 개방)
 # 🚨 NEW: [달력 API 결측 연쇄 기절 방어] 장운영시간 빈 값 반환 시 평일 09:30~16:00 EST 강제 폴백 락온 이식 완료.
+# 🚨 MODIFIED: [V59.00 AVWAP 암살자 예산 100% 수혈 및 15:25 전량 덤핑 팩트 교정]
 # ==========================================================
 import logging
 import datetime
@@ -176,9 +177,9 @@ async def scheduled_sniper_monitor(context):
                 
             avwap_free_cash = max(0.0, float(cash) - virtual_locked_budget)
 
-            # 🚨 MODIFIED: [V47.00] 본대 예산 보호막 무력화 및 가용 현금 50% 강제 락온
+            # 🚨 MODIFIED: [V59.00] 본대 예산 보호막 무력화 및 가용 현금 100% 수혈 락온 (AVWAP 95% 타격)
             virtual_locked_budget = 0.0
-            avwap_free_cash = max(0.0, float(cash) * 0.5)
+            avwap_free_cash = max(0.0, float(cash))
             
             for t in await asyncio.to_thread(cfg.get_active_tickers):
                 version = await asyncio.to_thread(cfg.get_version, t)
@@ -231,7 +232,7 @@ async def scheduled_sniper_monitor(context):
                             except Exception as e:
                                 logging.error(f"AVWAP 상태 복구 실패: {e}")
                             tracking_cache[f"AVWAP_INIT_{current_target}"] = True
-                            
+                        
                         if tracking_cache.get(f"AVWAP_SHUTDOWN_{current_target}"): continue
                         
                         target_base = base_map.get(t, t) 
@@ -314,7 +315,7 @@ async def scheduled_sniper_monitor(context):
                                 asyncio.gather(prev_c_task, high_low_task, atr_task, base_hl_task, return_exceptions=True),
                                 timeout=10.0
                             )
-                            
+                             
                             prev_c = float(res_prev) if not isinstance(res_prev, Exception) and res_prev else 0.0
                             
                             # 🚨 [AI 에이전트 절대 주의 - 환각 방어막] 당일 고가(day_high) 팩트 스캔 및 주입
@@ -474,7 +475,7 @@ async def scheduled_sniper_monitor(context):
                                         has_unfilled = True
                                         break
                                     await asyncio.sleep(2.0)
-                     
+                    
                                 if has_unfilled:
                                     await asyncio.to_thread(broker.cancel_targeted_orders, current_target, "01", "00")
                                     await asyncio.sleep(1.0)
@@ -516,9 +517,9 @@ async def scheduled_sniper_monitor(context):
                                             strikes = tracking_cache.get(f"AVWAP_STRIKES_{current_target}", 0) + 1
                                             tracking_cache[f"AVWAP_STRIKES_{current_target}"] = strikes
                                             
-                                            # 🚨 MODIFIED: [V47.00] 투트랙 엑시트 로직 및 무한 출장 개방
-                                            if "TIME_STOP" in reason or "15:00_도달" in reason:
-                                                msg += "\n🛡️ 금일 해당 종목의 15:00 타임스탑 청산 완료, 오버나이트 갭하락 방어를 위해 단타 작전을 <b>영구 동결(Shutdown)</b>합니다."
+                                            # 🚨 MODIFIED: [V59.00 AVWAP 15:25 전량 덤핑 락온]
+                                            if "TIME_STOP" in reason or "15:25_도달" in reason:
+                                                msg += "\n🛡️ 금일 해당 종목의 15:25 타임스탑 청산 완료, 오버나이트 갭하락 방어를 위해 단타 작전을 <b>영구 동결(Shutdown)</b>합니다."
                                                 shutdown_flag = True
                                             elif "HARD_STOP" in reason or "손절" in reason:
                                                 msg += "\n🚨 손절(-8.0%) 피격 감지! 뇌동매매 방지를 위해 당일 암살자 작전을 <b>영구 동결(Shutdown)</b>합니다."
@@ -540,8 +541,8 @@ async def scheduled_sniper_monitor(context):
                                             
                                             if any(k in reason for k in ["조기퇴근", "HARD_STOP", "손절", "TIME_STOP"]):
                                                 shutdown_flag = True
-                                            # 🚨 MODIFIED: [V47.00] 무한출장 락온으로 기존 조건 셧다운 해제
-                                            if any(k in reason for k in ["15:00_도달"]):
+                                            # 🚨 MODIFIED: [V59.00 AVWAP 15:25 전량 덤핑 락온]
+                                            if any(k in reason for k in ["15:25_도달"]):
                                                 shutdown_flag = True
                                             if any(k in reason for k in ["조기퇴근", "HARD_STOP", "손절"]):
                                                 shutdown_flag = False
@@ -674,7 +675,7 @@ async def scheduled_sniper_monitor(context):
                             if ccld_qty > 0:
                                 if hasattr(cfg, 'set_sniper_buy_locked'):
                                     await asyncio.to_thread(cfg.set_sniper_buy_locked, t, True)
-                                     
+                                    
                                 exec_history = await asyncio.to_thread(broker.get_execution_history, t, today_est_str, today_est_str)
                                 
                                 def get_actual_execution_price(history, side_code, target_odno):
@@ -730,14 +731,14 @@ async def scheduled_sniper_monitor(context):
                             if isinstance(unfilled, list) and any(
                                 o.get('sll_buy_dvsn_cd') == '01' and str(o.get('ord_dvsn_cd') or o.get('ord_dvsn') or '').strip().zfill(2) == '00' 
                                 for o in unfilled
-                             ):
+                            ):
                                 has_unfilled = True
                                 break
                         await asyncio.sleep(2.0)
                         
                         if has_unfilled:
                             continue
-                            
+                             
                         order_res = await asyncio.to_thread(broker.send_order, t, "SELL", qty, limit_p, "LIMIT")
                         odno = order_res.get('odno', '') if isinstance(order_res, dict) else ''
                         

@@ -15,6 +15,8 @@
 # 프리마켓(04:00~09:29)과 정규장(09:30~16:00) 데이터를 100% 팩트 분리하여, 정규장 개장 시 프리장 노이즈를 완벽히 소각하고 0점 세팅 락온.
 # 🚨 MODIFIED: [V56.00 상태 기억형(Stateful Latching) 모멘텀 락온 엔진 UI 디커플링 수술]
 # 현재 캔들이 조건에 맞지 않더라도 영구 락온 상태라면 모멘텀 🟢 점등 유지 및 "음봉이지만 시계열 락온 유지" 직관적 텍스트 렌더링 동기화 완료.
+# 🚨 MODIFIED: [V59.00 AVWAP 암살자 예산 100% 수혈 및 15:25 전량 덤핑 팩트 교정]
+# 관제탑 렌더링 분기점을 15:00에서 15:25로 이동하여 시각적 디커플링 원천 차단
 # ==========================================================
 import logging
 import datetime
@@ -105,7 +107,7 @@ class AvwapConsolePlugin:
                         df = df[(df['time_est'] >= '093000') & (df['time_est'] <= '155900')]
                     else:
                         df = df[(df['time_est'] >= '040000') & (df['time_est'] <= '092959')]
-                
+                 
                 if not df.empty:
                     # 세션별 순수 고/저가 스캔
                     base_day_high = float(df['high'].astype(float).max())
@@ -116,7 +118,7 @@ class AvwapConsolePlugin:
                     df['tp'] = (df['high'].astype(float) + df['low'].astype(float) + df['close'].astype(float)) / 3.0
                     df['vol'] = df['volume'].astype(float)
                     df['vol_tp'] = df['tp'] * df['vol']
-                    
+                     
                     cum_vol = df['vol'].sum()
                     if cum_vol > 0:
                         base_curr_vwap = df['vol_tp'].sum() / cum_vol
@@ -167,7 +169,7 @@ class AvwapConsolePlugin:
                                 df_5m['HA_Open'] = pd.Series(ha_open, index=df_5m.index)
                                 df_5m['HA_High'] = df_5m[['high', 'HA_Open', 'HA_Close']].max(axis=1)
                                 df_5m['HA_Low'] = df_5m[['low', 'HA_Open', 'HA_Close']].min(axis=1)
-                                
+                        
                                 # 0.01$ 갭 필터링
                                 df_5m['No_Lower_Wick'] = (df_5m['HA_Open'] - df_5m['HA_Low']) <= 0.01
                                 df_5m['No_Upper_Wick'] = (df_5m['HA_High'] - df_5m['HA_Open']) <= 0.01
@@ -442,14 +444,15 @@ class AvwapConsolePlugin:
                 msg += f"▫️ 목표 익절: <b>{target_display}</b>\n"
 
             curr_time = now_est.time()
-            time_1500 = datetime.time(15, 0)
+            # 🚨 MODIFIED: [V59.00 AVWAP 15:25 전량 덤핑 락온] 타임 쉴드 전진 배치
+            time_1525 = datetime.time(15, 25)
             
             status_txt = "👀 타점 스캔중"
             if not is_avwap_active:
                 status_txt = "⚪ 모드 비활성 (레이더 관측 중)"
             elif is_shutdown: 
                 if avwap_qty > 0:
-                    if curr_time >= time_1500 and curr_p <= avwap_avg:
+                    if curr_time >= time_1525 and curr_p <= avwap_avg:
                         status_txt = "🌙 오버나이트 존버 모드 (절대손절금지)"
                     else:
                         status_txt = "🌙 오버나이트 홀딩 중 (목표가 익절 대기)"
