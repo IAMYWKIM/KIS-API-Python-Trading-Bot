@@ -22,7 +22,8 @@
 # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
 # 제1헌법: 동기 I/O 100% 비동기 격리.
 # 제3헌법: 타임존 단일 소스 락온 (EST 100%).
-# NEW: [V47] 시계열 체력 측정 로직 및 현재가 vs 실시간 VWAP 갭차이 격발 조건 100% 통합
+# 🚨 MODIFIED: [관제탑 듀얼 세션 디커플링 (Time-Split Radar)] 
+# 프리마켓(04:00~09:29)과 정규장(09:30~16:00) 데이터를 100% 팩트 분리하여, 정규장 개장 시 프리장 노이즈를 완벽히 소각하고 0점 세팅 락온. 낡은 avwap_cache.json 의존성 전면 적출.
 # ==========================================================
 import logging
 import datetime
@@ -159,7 +160,7 @@ class VAvwapHybridPlugin:
                     avg_vol_20 = float(past_first_30m['Volume'].mean())
 
             if prev_vwap == 0.0:
-                prev_vwap = prev_close
+                 prev_vwap = prev_close
 
             return {
                 "prev_close": prev_close,
@@ -186,6 +187,7 @@ class VAvwapHybridPlugin:
         target_mode = kwargs.get('target_mode', 'AUTO')
 
         atr5 = kwargs.get('atr5', 0.0)
+        # 기본 kwargs 값 수신 (이후 디커플링 연산으로 덮어씌움)
         day_high = kwargs.get('day_high', 0.0)
         day_low = kwargs.get('day_low', 0.0)
         prev_c = kwargs.get('prev_close', 0.0)
@@ -200,9 +202,12 @@ class VAvwapHybridPlugin:
         avwap_state = avwap_state or {}
         curr_time = now_est.time()
 
-        # 🚨 MODIFIED: [V53.01] 오프닝 휩소 방어를 위한 10분 안전 마진 락온
+        # 🚨 [Time-Split Radar] 듀얼 세션 스위치 락온
         time_0410 = datetime.time(4, 10)
+        time_0930 = datetime.time(9, 30)
         time_1500 = datetime.time(15, 0)
+
+        is_regular_session = curr_time >= time_0930
 
         base_vwap = base_curr_p
         vwap_success = False 
@@ -214,16 +219,24 @@ class VAvwapHybridPlugin:
 
         ha_2_bullish_no_lower = False
         ha_2_bearish_no_upper = False
+        trend_sequence = "PENDING"
 
         if df_1min_base is not None and not df_1min_base.empty:
             try:
                 df = df_1min_base.copy()
 
-                # 🚨 [V47.00] 04:00~15:59 EST 구간 강제 확장 및 프리마켓 데이터 기아 방어
+                # 🚨 [Time-Split Radar] 세션에 따른 데이터 슬라이싱 (프리장 노이즈 완벽 소각)
                 if 'time_est' in df.columns:
-                    df = df[(df['time_est'] >= '040000') & (df['time_est'] <= '155900')]
+                    if is_regular_session:
+                        df = df[(df['time_est'] >= '093000') & (df['time_est'] <= '155900')]
+                    else:
+                        df = df[(df['time_est'] >= '040000') & (df['time_est'] <= '092959')]
 
                 if not df.empty:
+                    # 세션별 순수 고/저가 스캔 및 덮어쓰기
+                    base_day_high = float(df['high'].astype(float).max())
+                    base_day_low = float(df['low'].astype(float).min())
+                    
                     df['tp'] = (df['high'].astype(float) + df['low'].astype(float) + df['close'].astype(float)) / 3.0
                     df['vol'] = df['volume'].astype(float)
                     df['vol_tp'] = df['tp'] * df['vol']
@@ -233,40 +246,53 @@ class VAvwapHybridPlugin:
                         base_vwap = df['vol_tp'].sum() / cum_vol
                         vwap_success = True
 
-                    # 하이킨아시 5min 리샘플링 구현 (오차 허용 0.01$ 락온)
-                    df['datetime'] = pd.to_datetime(df.index)
-                    df.set_index('datetime', inplace=True)
-                    df_5m = df.resample('5min', label='left', closed='left').agg({
-                        'open': 'first',
-                        'high': 'max',
-                        'low': 'min',
-                        'close': 'last',
-                        'volume': 'sum'
-                    }).dropna()
+                    # 🚨 [Time-Split Radar] 세션별 시계열 체력 즉석 판독 (avwap_cache.json 영구 적출)
+                    t_high_idx = df['high'].astype(float).idxmax()
+                    t_low_idx = df['low'].astype(float).idxmin()
+                    if t_high_idx < t_low_idx:
+                        trend_sequence = "BEAR"
+                    elif t_low_idx < t_high_idx:
+                        trend_sequence = "BULL"
 
-                    if not df_5m.empty:
-                        df_5m['HA_Close'] = (df_5m['open'].astype(float) + df_5m['high'].astype(float) + df_5m['low'].astype(float) + df_5m['close'].astype(float)) / 4.0
-                        ha_open = []
-                        for i in range(len(df_5m)):
-                            if i == 0:
-                                ha_open.append((float(df_5m['open'].iloc[i]) + float(df_5m['close'].iloc[i])) / 2.0)
-                            else:
-                                ha_open.append((ha_open[i-1] + float(df_5m['HA_Close'].iloc[i-1])) / 2.0)
+                    # 🚨 [Time-Split Radar] 하이킨아시 5min 리샘플링 및 정규장 락온(IndexError 방어막)
+                    if is_regular_session and curr_time < datetime.time(9, 35):
+                        ha_2_bullish_no_lower = False
+                        ha_2_bearish_no_upper = False
+                    else:
+                        df['datetime'] = pd.to_datetime(df.index)
+                        df.set_index('datetime', inplace=True)
+                        df_5m = df.resample('5min', label='left', closed='left').agg({
+                            'open': 'first',
+                            'high': 'max',
+                            'low': 'min',
+                            'close': 'last',
+                            'volume': 'sum'
+                        }).dropna()
 
-                        df_5m['HA_Open'] = pd.Series(ha_open, index=df_5m.index)
-                        df_5m['HA_High'] = df_5m[['high', 'HA_Open', 'HA_Close']].max(axis=1)
-                        df_5m['HA_Low'] = df_5m[['low', 'HA_Open', 'HA_Close']].min(axis=1)
+                        if not df_5m.empty:
+                            df_5m['HA_Close'] = (df_5m['open'].astype(float) + df_5m['high'].astype(float) + df_5m['low'].astype(float) + df_5m['close'].astype(float)) / 4.0
+                            
+                            ha_open = []
+                            for i in range(len(df_5m)):
+                                if i == 0:
+                                    ha_open.append((float(df_5m['open'].iloc[i]) + float(df_5m['close'].iloc[i])) / 2.0)
+                                else:
+                                    ha_open.append((ha_open[i-1] + float(df_5m['HA_Close'].iloc[i-1])) / 2.0)
 
-                        # 0.01$ 갭 필터링
-                        df_5m['No_Lower_Wick'] = (df_5m['HA_Open'] - df_5m['HA_Low']) <= 0.01
-                        df_5m['No_Upper_Wick'] = (df_5m['HA_High'] - df_5m['HA_Open']) <= 0.01
-                        df_5m['Is_Bullish'] = df_5m['HA_Close'] >= df_5m['HA_Open']
-                        df_5m['Is_Bearish'] = df_5m['HA_Close'] < df_5m['HA_Open']
+                            df_5m['HA_Open'] = pd.Series(ha_open, index=df_5m.index)
+                            df_5m['HA_High'] = df_5m[['high', 'HA_Open', 'HA_Close']].max(axis=1)
+                            df_5m['HA_Low'] = df_5m[['low', 'HA_Open', 'HA_Close']].min(axis=1)
 
-                        if len(df_5m) >= 2:
-                            last_2 = df_5m.tail(2)
-                            ha_2_bullish_no_lower = last_2['Is_Bullish'].all() and last_2['No_Lower_Wick'].all()
-                            ha_2_bearish_no_upper = last_2['Is_Bearish'].all() and last_2['No_Upper_Wick'].all()
+                            # 0.01$ 갭 필터링
+                            df_5m['No_Lower_Wick'] = (df_5m['HA_Open'] - df_5m['HA_Low']) <= 0.01
+                            df_5m['No_Upper_Wick'] = (df_5m['HA_High'] - df_5m['HA_Open']) <= 0.01
+                            df_5m['Is_Bullish'] = df_5m['HA_Close'] >= df_5m['HA_Open']
+                            df_5m['Is_Bearish'] = df_5m['HA_Close'] < df_5m['HA_Open']
+
+                            if len(df_5m) >= 2:
+                                last_2 = df_5m.tail(2)
+                                ha_2_bullish_no_lower = last_2['Is_Bullish'].all() and last_2['No_Lower_Wick'].all()
+                                ha_2_bearish_no_upper = last_2['Is_Bearish'].all() and last_2['No_Upper_Wick'].all()
 
             except Exception as e:
                 logging.error(f"🚨 [V_AVWAP] 기초자산 HA 연산 실패: {e}")
@@ -304,18 +330,17 @@ class VAvwapHybridPlugin:
 
             # 실시간 순수익 상태 연산
             exec_return = (exec_curr_p - safe_avg) / safe_avg
-            # 마찰비용(fee)을 임의로 0.07%로 잡아 순수익 여부 판별 (백테스트와 동일 로직)
             FEE_RATE = 0.0007
             net_mult = (exec_curr_p * (1.0 - FEE_RATE)) / (safe_avg * (1.0 + FEE_RATE))
             is_profitable = (net_mult - 1.0) > 0
 
-            # 체력 고갈 판별 (기존의 조건 연산은 남겨두되, 익절덤핑 조건에서 제외됨)
+            # 체력 고갈 판별 (기존 조건 유지하되, 익절덤핑에서 제외)
             actual_gap_dollar = day_high - day_low
             actual_gap_pct = (actual_gap_dollar / prev_c) * 100.0 if prev_c > 0 else 0.0
             rem_5_pct = atr5 - actual_gap_pct
-            is_stamina_exhausted = (rem_5_pct < 1.0) # 1.0% 미만 시 고갈로 판단
+            is_stamina_exhausted = (rem_5_pct < 1.0) 
 
-            # 🚨 MODIFIED: [V53.07 제13헌법 스마트 홀딩 엑시트 로직 팩트 교정 (체력 고갈 조건 적출)]
+            # 🚨 MODIFIED: [V53.07 제13헌법 스마트 홀딩 엑시트 로직 팩트 교정]
             if target_mode == "AUTO":
                 if not is_inverse and ha_2_bearish_no_upper:
                     if is_profitable:
@@ -351,8 +376,6 @@ class VAvwapHybridPlugin:
         # 필수 데이터 결측 검증
         base_prev_c = float(context_data.get('prev_close', 0.0))
         prev_vwap = float(context_data.get('prev_vwap', 0.0))
-        base_day_high = kwargs.get('base_day_high', 0.0)
-        base_day_low = kwargs.get('base_day_low', 0.0)
 
         if prev_c <= 0 or atr5 <= 0 or day_high <= 0 or day_low <= 0 or exec_curr_p <= 0 or base_vwap <= 0 or prev_vwap <= 0:
             return _build_res('WAIT', '진입_평가용_필수데이터_결측_대기')
@@ -361,26 +384,10 @@ class VAvwapHybridPlugin:
         actual_gap_dollar = day_high - day_low
         actual_gap_pct = (actual_gap_dollar / prev_c) * 100.0 if prev_c > 0 else 0.0
         rem_5_pct = atr5 - actual_gap_pct
-        if rem_5_pct < 1.0: # 1.0% 미만 시 고갈로 판단
+        if rem_5_pct < 1.0:
             avwap_state["shutdown"] = True
             self.save_state(exec_ticker, now_est, avwap_state)
             return _build_res('SHUTDOWN', 'ATR5_체력고갈_감지_당일신규진입_영구동결')
-
-        # NEW: [V47 제4헌법] 시계열 체력 필터 스캔 (avwap_cache.json)
-        trend_sequence = "PENDING"
-        cache_file = "data/avwap_cache.json"
-        if os.path.exists(cache_file):
-            try:
-                with open(cache_file, 'r', encoding='utf-8') as f:
-                    cache_data = json.load(f)
-                    base_cache_data = cache_data.get(base_ticker, {})
-                    t_high = base_cache_data.get('time_high', "")
-                    t_low = base_cache_data.get('time_low', "")
-                    if t_high and t_low:
-                        # 🚨 MODIFIED: [V53.12 런타임 붕괴 방어] 문자열 강제 반환 버그를 변수 할당으로 팩트 교정 완료
-                        trend_sequence = "BEAR" if t_high < t_low else "BULL"
-            except Exception as e:
-                logging.debug(f"시계열 체력 스캔 에러: {e}")
 
         # 🚨 MODIFIED: [V53.02] 고저가 부호 일치(음수 갭 판별) 및 배타적 갭 필터 락온
         is_neg_gap_state = False
@@ -389,10 +396,8 @@ class VAvwapHybridPlugin:
 
         cond1_met = False
         if is_inverse:
-            # 숏(SOXS)은 반드시 제1조건(원웨이 하락 = 음수 갭)을 충족해야만 진입 허용
             cond1_met = is_neg_gap_state
         else:
-            # 롱(SOXL)은 숏 진입 조건(음수 갭)이 충족되었을 때 진입 전면 차단 (배타적 락온)
             cond1_met = not is_neg_gap_state
 
         # NEW: [V47 제3헌법] 하이킨아시 모멘텀 격발 (현재가 vs 실시간 VWAP)
@@ -430,4 +435,3 @@ class VAvwapHybridPlugin:
             if not cond_seq: 
                 fail_reasons.append("시계열체력하락세" if not is_inverse else "시계열체력상승세")
             return _build_res('WAIT', f'진입조건대기({",".join(fail_reasons)})')
-

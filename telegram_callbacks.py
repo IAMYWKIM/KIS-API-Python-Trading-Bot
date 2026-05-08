@@ -3,8 +3,8 @@
 # ==========================================================
 # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
 # 제1헌법: queue_ledger.get_queue 등 모든 파일 I/O 및 락 점유 메서드는 무조건 asyncio.to_thread로 래핑하여 이벤트 루프 교착(Deadlock)을 원천 차단함.
-# MODIFIED: [V44.47 이벤트 루프 데드락 영구 소각] 다이렉트 파일 I/O 및 config/ledger 접근 메서드 전면 비동기 래핑 완료.
-# MODIFIED: [V44.48 수동 조작 데드코드 영구 소각 및 런타임 무결성 확보] 큐 장부에 존재하지 않는 _load 메서드 호출 찌꺼기 100% 소각.
+# MODIFIED: [V44.47 이벤트 루프 데드락 영구 소각] 다이렉트 파일 I/O 및 config/ledger 접근 메서 전면 비동기 래핑 완료.
+# MODIFIED: [V44.48 수동 조작 데드코드 영구 소각 및 런타임 무결성 확보] 큐 장부에 존재하지 않는 _load 메서 호출 찌꺼기 100% 소각.
 # 🚨 MODIFIED: [V54.04 런타임 붕괴(Split-Brain) 근본 원인 팩트 수술]
 # 삼위일체 소각(/reset) 시 V_REV 모드라면 is_active를 False로 끄지 않고 True로 보존하여 '0주 새출발' 상태를 100% 팩트 락온.
 # 모드 스위칭(SET_VER_CONFIRM) 시에도 version과 is_active 플래그가 완벽히 동기화되도록 디커플링 배선 정밀 교정 완료.
@@ -12,6 +12,9 @@
 # DEL_Q(삭제), CLEAR_Q(초기화), RESET(삼위일체 소각) 격발 시 존재하던 
 # 지저분한 다이렉트 파일 I/O(open, json, tempfile) 찌꺼기를 100% 영구 소각하고,
 # QueueLedger의 스레드 세이프(Thread-safe) 코어 메서드(delete_lot, clear_queue)로 직결(Lock-on) 완료.
+# 🚨 MODIFIED: [Phantom Radar 암살자 은폐 및 섀도우 관제탑 전환]
+# - AVWAP_SET (REFRESH 제외) 및 MODE (AVWAP 관련) 콜백 유입 시 런타임 실행을 100% 영구 봉인(Lock-down).
+# - 과거 UI 버튼이 눌려도 봇이 반응하지 않도록 팩트 방어막 이식 완료.
 # ==========================================================
 import logging
 import datetime
@@ -634,81 +637,11 @@ class TelegramCallbacks:
             action_type = sub
             ticker = data[2]
             
-            if 'app_data' not in context.bot_data:
-                context.bot_data['app_data'] = {}
-            render_app_data = context.bot_data['app_data']
-            
-            def set_tracking_mode(mode_value):
-                nonlocal render_app_data
-                context.bot_data['app_data'].setdefault('sniper_tracking', {})[f"AVWAP_TARGET_MODE_{ticker}"] = mode_value
-                if ticker == "SOXL":
-                    context.bot_data['app_data'].setdefault('sniper_tracking', {})["AVWAP_TARGET_MODE_SOXS"] = mode_value
+            if action_type == "REFRESH":
+                if 'app_data' not in context.bot_data:
+                    context.bot_data['app_data'] = {}
+                render_app_data = context.bot_data['app_data']
                 
-                if context.job_queue:
-                    for job in context.job_queue.jobs():
-                        if job.data is not None:
-                            job.data.setdefault('sniper_tracking', {})[f"AVWAP_TARGET_MODE_{ticker}"] = mode_value
-                            if ticker == "SOXL":
-                                job.data.setdefault('sniper_tracking', {})["AVWAP_TARGET_MODE_SOXS"] = mode_value
-                            render_app_data = job.data
-
-            display_ticker = "SOXL/SOXS 듀얼" if ticker == "SOXL" else ticker
-
-            if action_type == "TARGET_MANUAL":
-                set_tracking_mode("MANUAL")
-                controller.user_states[chat_id] = f"CONF_AVWAP_TARGET_{ticker}"
-                
-                try:
-                    await controller.cmd_settlement(update, context)
-                except Exception:
-                    pass
-
-                try:
-                    await context.bot.send_message(chat_id, f"🖐️ <b>[{display_ticker}] 수동 고정 모드 전환!</b>\n🎯 <b>목표 수익률(%)</b>을 숫자로 입력하세요.\n(예: 2.0, 3.5, 4.0)\n※ -8.0% 하드스탑 컷은 안전을 위해 고정됩니다.", parse_mode='HTML')
-                    await query.answer(f"[{display_ticker}] 채팅창에 목표 수익률을 숫자로 입력하세요!", show_alert=True)
-                except Exception as e:
-                    logging.error(f"프롬프트 발송 실패: {e}")
-                    await query.answer(f"[{display_ticker}] 채팅창에 목표 수익률을 숫자로 입력하세요!", show_alert=True)
-
-            elif action_type == "TARGET_AUTO":
-                set_tracking_mode("AUTO")
-                try:
-                    await controller.cmd_settlement(update, context)
-                    await query.answer(f"✅ [{display_ticker}] 🤖 자율주행 모드로 전환되었습니다.", show_alert=False)
-                except Exception as e:
-                    if "Message is not modified" in str(e):
-                        await query.answer(f"✅ [{display_ticker}] 이미 최신 상태(🤖자율주행)입니다.", show_alert=False)
-                    else:
-                        logging.error(f"설정 새로고침 에러: {e}")
-                        await query.answer("모드 변경 완료. /settlement를 다시 호출해주세요.", show_alert=False)
-                    
-            elif action_type == "EARLY":
-                await asyncio.to_thread(self.cfg.set_avwap_multi_strike_mode, ticker, False)
-                if ticker == "SOXL":
-                    await asyncio.to_thread(self.cfg.set_avwap_multi_strike_mode, "SOXS", False)
-                try:
-                    await controller.cmd_settlement(update, context)
-                    await query.answer("✅ 조기퇴근 모드(1회 익절)로 전환되었습니다.", show_alert=False)
-                except Exception as e:
-                    if "Message is not modified" in str(e):
-                        await query.answer("✅ 이미 최신 상태(조기퇴근)입니다.", show_alert=False)
-                    else:
-                        pass
-                
-            elif action_type == "MULTI":
-                await asyncio.to_thread(self.cfg.set_avwap_multi_strike_mode, ticker, True)
-                if ticker == "SOXL":
-                    await asyncio.to_thread(self.cfg.set_avwap_multi_strike_mode, "SOXS", True)
-                try:
-                    await controller.cmd_settlement(update, context)
-                    await query.answer("✅ 무제한 다중 출장 모드로 전환되었습니다.", show_alert=False)
-                except Exception as e:
-                    if "Message is not modified" in str(e):
-                        await query.answer("✅ 이미 최신 상태(무제한 다중출장)입니다.", show_alert=False)
-                    else:
-                        pass
-                
-            elif action_type == "REFRESH":
                 if context.job_queue:
                     for job in context.job_queue.jobs():
                         if job.data is not None:
@@ -724,6 +657,10 @@ class TelegramCallbacks:
                         await query.answer("✅ 시장 변화가 없어 최신 상태가 유지 중입니다.", show_alert=False)
                     else:
                         await query.answer(f"갱신 에러: {e}", show_alert=True)
+            else:
+                # 🚨 [Phantom Radar] 암살자 제어 메뉴 영구 봉인 (TARGET_MANUAL, TARGET_AUTO, EARLY, MULTI 등)
+                await query.answer("⚠️ [시스템 락다운] 해당 기능은 실전 모드에서 영구 봉인되었습니다.", show_alert=True)
+                return
 
         elif action == "AVWAP":
             await query.answer()
@@ -742,55 +679,15 @@ class TelegramCallbacks:
                         await query.edit_message_text(f"❌ 관제탑 호출 에러: {e}", parse_mode='HTML')
 
         elif action == "MODE":
-            await query.answer()
             mode_val = sub
             ticker = data[2] if len(data) > 2 else "SOXL"
             
-            if mode_val == "AVWAP_WARN":
-                msg, markup = self.view.get_avwap_warning_menu(ticker)
-                await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
+            # 🚨 [Phantom Radar] AVWAP 락온 방어막 (ON/OFF 및 팝업 원천 차단)
+            if mode_val in ["AVWAP_WARN", "AVWAP_ON", "AVWAP_OFF"]:
+                await query.answer("⚠️ [시스템 락다운] 해당 기능은 실전 모드에서 영구 봉인되었습니다.", show_alert=True)
                 return
-            elif mode_val == "AVWAP_ON":
-                if hasattr(self.cfg, 'set_avwap_hybrid_mode'):
-                    await asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, ticker, True)
-                await asyncio.to_thread(self.cfg.set_upward_sniper_mode, ticker, False)
-                try:
-                    await controller.cmd_settlement(update, context)
-                except Exception:
-                    pass
-                await context.bot.send_message(chat_id, f"🔥 <b>[{ticker}] 차세대 12차 AVWAP 암살자 모드가 락온(Lock-on) 되었습니다!</b>\n▫️ 남은 가용 예산 100%를 활용하여 장중 딥매수 타점을 정밀 사냥합니다.\n▫️ <code>/avwap</code> 명령어로 독립 관제탑 레이더망에 접속하세요.", parse_mode='HTML')
-                return
-            elif mode_val == "AVWAP_OFF":
-                if hasattr(self.cfg, 'set_avwap_hybrid_mode'):
-                    # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
-                    # 파일 I/O 동기 블로킹 방지를 위해 asyncio.to_thread 유지
-                    await asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, ticker, False)
-                    # 🚨 MODIFIED: [V44.45 듀얼 모멘텀 그림자 동기화] SOXL 해제 시 SOXS(그림자 티커)도 논리적 강제 해제
-                    if ticker == "SOXL":
-                        await asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, "SOXS", False)
-
-                # NEW: [V44.45 AVWAP 물리적 킬 스위치 (Kill-Switch) 이식]
-                # 논리적 OFF 시 거래소 호가창에 고아(Orphan)로 살아남은 지정가(LIMIT, "00") 딥매수 덫을 100% 팩트 스캔하여 강제 소각(Nuke)
-                nuke_msg = ""
-                try:
-                    cancelled_buys = await asyncio.to_thread(self.broker.cancel_targeted_orders, ticker, "BUY", "00")
-                    if cancelled_buys > 0:
-                        nuke_msg += f"\n🛡️ <b>물리적 킬 스위치 가동:</b> [{ticker}] 미체결 딥매수 덫 {cancelled_buys}건 강제 소각 완료."
-                    
-                    if ticker == "SOXL":
-                        cancelled_soxs = await asyncio.to_thread(self.broker.cancel_targeted_orders, "SOXS", "BUY", "00")
-                        if cancelled_soxs > 0:
-                            nuke_msg += f"\n🛡️ <b>그림자 티커 킬 스위치:</b> [SOXS] 미체결 딥매수 덫 {cancelled_soxs}건 강제 소각 완료."
-                except Exception as e:
-                    logging.error(f"🚨 AVWAP 물리적 킬 스위치 가동 중 에러: {e}")
-
-                try:
-                    await controller.cmd_settlement(update, context)
-                except Exception:
-                    pass
-                await context.bot.send_message(chat_id, f"🛑 <b>[{ticker}] 차세대 AVWAP 하이브리드 전술이 즉시 해제되었습니다.</b>{nuke_msg}", parse_mode='HTML')
-                return
-
+                
+            await query.answer()
             current_ver = await asyncio.to_thread(self.cfg.get_version, ticker)
             if current_ver == "V_REV" and mode_val == "ON":
                 await context.bot.send_message(chat_id, f"🚨 {current_ver} 모드에서는 로직 충돌 방지를 위해 상방 스나이퍼를 켤 수 없습니다!")
