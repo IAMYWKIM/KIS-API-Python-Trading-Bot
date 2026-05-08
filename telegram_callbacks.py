@@ -12,9 +12,10 @@
 # DEL_Q(삭제), CLEAR_Q(초기화), RESET(삼위일체 소각) 격발 시 존재하던 
 # 지저분한 다이렉트 파일 I/O(open, json, tempfile) 찌꺼기를 100% 영구 소각하고,
 # QueueLedger의 스레드 세이프(Thread-safe) 코어 메서드(delete_lot, clear_queue)로 직결(Lock-on) 완료.
-# 🚨 MODIFIED: [Phantom Radar 암살자 은폐 및 섀도우 관제탑 전환]
-# - AVWAP_SET (REFRESH 제외) 및 MODE (AVWAP 관련) 콜백 유입 시 런타임 실행을 100% 영구 봉인(Lock-down).
-# - 과거 UI 버튼이 눌려도 봇이 반응하지 않도록 팩트 방어막 이식 완료.
+# 🚨 MODIFIED: [V56.00 차세대 AVWAP 실전 암살자 전면 재가동 락온]
+# - Phantom Radar 암살자 제어 메뉴 영구 봉인 락다운 전면 해체.
+# - MODE 라우터 내 AVWAP_WARN, AVWAP_ON, AVWAP_OFF 팩트 제어 로직 100% 복구 완료.
+# - AVWAP_SET 라우터 내 TARGET_MANUAL, TARGET_AUTO, EARLY, MULTI 실전 타격 제어 파이프라인 무결점 복원.
 # ==========================================================
 import logging
 import datetime
@@ -382,7 +383,7 @@ class TelegramCallbacks:
                         revenue=target_hist['revenue'],
                         end_date=target_hist['end_date']
                     )
-                    
+            
                     if os.path.exists(img_path):
                         with open(img_path, 'rb') as f_out:
                             if img_path.lower().endswith('.gif'):
@@ -391,7 +392,7 @@ class TelegramCallbacks:
                                 await context.bot.send_photo(chat_id=chat_id, photo=f_out)
                         await query.delete_message()
                     else:
-                         await query.edit_message_text("❌ 이미지 생성에 실패했습니다.", parse_mode='HTML')
+                        await query.edit_message_text("❌ 이미지 생성에 실패했습니다.", parse_mode='HTML')
                 except Exception as e:
                     logging.error(f"📸 👑 졸업 이미지 생성/발송 실패: {e}")
                     await query.edit_message_text("❌ 이미지 생성 중 오류가 발생했습니다.", parse_mode='HTML')
@@ -436,7 +437,7 @@ class TelegramCallbacks:
                         prev_c = yf_close
                 except Exception as e:
                     logging.debug(f"YF 정규장 종가 롤오버 스캔 실패 ({t}): {e}")
-                    if curr_p > 0 and prev_c == 0.0:
+                if curr_p > 0 and prev_c == 0.0:
                         prev_c = curr_p
             
             ma_5day = await asyncio.to_thread(self.broker.get_5day_ma, t)
@@ -630,22 +631,25 @@ class TelegramCallbacks:
                 else:
                     await asyncio.to_thread(self.cfg.set_manual_vwap_mode, ticker, False)
                     mode_txt = "📉 LOC 단일 타격 (초안정성)"
-                    
+                
                 await query.edit_message_text(f"✅ <b>[{ticker}]</b> 퀀트 엔진이 <b>V14 무매4</b> 모드로 전환되었습니다.\n▫️ <b>집행 방식:</b> {mode_txt}\n▫️ /sync 명령어에서 변경된 지시서를 확인하세요.", parse_mode='HTML')
 
         elif action == "AVWAP_SET":
             action_type = sub
             ticker = data[2]
             
+            if 'app_data' not in context.bot_data:
+                context.bot_data['app_data'] = {}
+            render_app_data = context.bot_data['app_data']
+            
+            if context.job_queue:
+                for job in context.job_queue.jobs():
+                    if job.data is not None:
+                        render_app_data = job.data
+            
+            tracking_cache = render_app_data.setdefault('sniper_tracking', {})
+            
             if action_type == "REFRESH":
-                if 'app_data' not in context.bot_data:
-                    context.bot_data['app_data'] = {}
-                render_app_data = context.bot_data['app_data']
-                
-                if context.job_queue:
-                    for job in context.job_queue.jobs():
-                        if job.data is not None:
-                            render_app_data = job.data
                 try:
                     from telegram_avwap_console import AvwapConsolePlugin
                     plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
@@ -657,36 +661,63 @@ class TelegramCallbacks:
                         await query.answer("✅ 시장 변화가 없어 최신 상태가 유지 중입니다.", show_alert=False)
                     else:
                         await query.answer(f"갱신 에러: {e}", show_alert=True)
-            else:
-                # 🚨 [Phantom Radar] 암살자 제어 메뉴 영구 봉인 (TARGET_MANUAL, TARGET_AUTO, EARLY, MULTI 등)
-                await query.answer("⚠️ [시스템 락다운] 해당 기능은 실전 모드에서 영구 봉인되었습니다.", show_alert=True)
-                return
-
-        elif action == "AVWAP":
-            await query.answer()
-            if sub == "MENU":
-                ticker = data[2]
+            
+            # MODIFIED: [V56.00 차세대 AVWAP 실전 암살자 전면 재가동 락온]
+            elif action_type == "TARGET_MANUAL":
+                controller.user_states[chat_id] = f"CONF_AVWAP_TARGET_{ticker}"
+                await context.bot.send_message(chat_id, f"🎯 <b>[{ticker}] 수동 목표 수익률(%)을 띄어쓰기 없이 숫자로만 입력하세요.</b>\n(예: 3.5)", parse_mode='HTML')
+                await query.answer()
+            elif action_type == "TARGET_AUTO":
+                tracking_cache[f"AVWAP_TARGET_MODE_{ticker}"] = "AUTO"
+                if ticker == "SOXL":
+                    tracking_cache["AVWAP_TARGET_MODE_SOXS"] = "AUTO"
+                await query.answer("🤖 자율 목표 전환 완료", show_alert=False)
                 try:
                     from telegram_avwap_console import AvwapConsolePlugin
                     plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
-                    app_data = context.bot_data.get('app_data', {})
-                    msg, markup = await plugin.get_console_message(app_data)
+                    msg, markup = await plugin.get_console_message(render_app_data)
                     await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                except Exception as e:
-                    if "Message is not modified" in str(e):
-                        pass
-                    else:
-                        await query.edit_message_text(f"❌ 관제탑 호출 에러: {e}", parse_mode='HTML')
+                except Exception:
+                    pass
+            elif action_type in ["EARLY", "MULTI"]:
+                is_multi = (action_type == "MULTI")
+                await asyncio.to_thread(self.cfg.set_avwap_multi_strike_mode, ticker, is_multi)
+                await query.answer(f"🔄 {'다중출장' if is_multi else '조기퇴근'} 모드로 전환되었습니다.", show_alert=False)
+                try:
+                    from telegram_avwap_console import AvwapConsolePlugin
+                    plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
+                    msg, markup = await plugin.get_console_message(render_app_data)
+                    await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
+                except Exception:
+                    pass
 
         elif action == "MODE":
             mode_val = sub
             ticker = data[2] if len(data) > 2 else "SOXL"
             
-            # 🚨 [Phantom Radar] AVWAP 락온 방어막 (ON/OFF 및 팝업 원천 차단)
-            if mode_val in ["AVWAP_WARN", "AVWAP_ON", "AVWAP_OFF"]:
-                await query.answer("⚠️ [시스템 락다운] 해당 기능은 실전 모드에서 영구 봉인되었습니다.", show_alert=True)
+            # MODIFIED: [V56.00 차세대 AVWAP 실전 암살자 전면 재가동 락온]
+            if mode_val == "AVWAP_WARN":
+                msg, markup = self.view.get_avwap_warning_menu(ticker)
+                await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
                 return
+            elif mode_val in ["AVWAP_ON", "AVWAP_OFF"]:
+                is_on = (mode_val == "AVWAP_ON")
+                await asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, ticker, is_on)
+                await query.answer(f"✅ AVWAP 암살자 {'가동' if is_on else '해제'} 완료", show_alert=False)
                 
+                # 환경설정 메뉴 갱신
+                active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
+                atr_data = {t: (0.0, 0.0) for t in active_tickers}
+                app_data = context.bot_data.get('app_data', {})
+                tracking_cache = app_data.get('sniper_tracking', {})
+                
+                msg, markup = self.view.get_settlement_message(active_tickers, self.cfg, atr_data, tracking_cache)
+                try:
+                    await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
+                except Exception:
+                    pass
+                return
+
             await query.answer()
             current_ver = await asyncio.to_thread(self.cfg.get_version, ticker)
             if current_ver == "V_REV" and mode_val == "ON":
