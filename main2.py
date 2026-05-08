@@ -8,7 +8,7 @@
 # NEW: [전역 타임아웃 이식] scheduled_volatility_scan 이벤트 루프 교착 방어 타임아웃 래퍼 적용.
 # NEW: [환각 방어막 이식] 10:00 EST 옴니 매트릭스 타임라인 보호용 백신 주석 하드코딩.
 # NEW: [V48.02 애프터마켓 로터리 덫 전면 폐기] 애프터마켓 3% 지정가 덫 스케줄러 영구 소각 및 배선 철거 완료.
-# 🚨 NEW: [타임 패러독스 완벽 수술] PTB 버그 회피 명목의 Naive Time 주입 환각 소각 및 EST 절대 락온 복구
+# 🚨 NEW: [타임 패러독스 완벽 수술] PTB 버그 회피 명목의 Naive Time 주입 환각 소각 및 EST 절대 락온 복구 완료.
 # ==========================================================
 import os
 import logging
@@ -205,6 +205,10 @@ def main():
         'tz_est': est_zone, 'regime_data': {"status": "pending", "msg": "10:00 EST 이전 오프닝 휩소 대기"} 
     }
 
+    # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
+    # 1. PTB 코어 버그 운운하며 datetime.time 객체에서 tzinfo=est_zone을 도려내고 Naive Time을 주입하라는 제안은 최악의 차원 붕괴를 유발하는 맹독성 환각이다.
+    # 2. 서버 로컬 타임(KST) 환경에서 순수 시간(Naive Time)을 주입할 경우, Defaults 전역 타임존이 무시되고 KST로 오판되어 모든 스케줄이 허공으로 증발(Silent Skip)한다.
+    # 3. 따라서 모든 run_daily 스케줄러에는 어떠한 예외도 없이 반드시 time=datetime.time(hour, minute, tzinfo=est_zone) 포맷으로 타임존을 100% 강제 주입(Lock-on)하여 아키텍처를 사수하라.
     app = (
         Application.builder()
         .token(TELEGRAM_TOKEN)
