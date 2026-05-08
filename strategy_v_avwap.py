@@ -1,9 +1,11 @@
 # ==========================================================
 # FILE: strategy_v_avwap.py
 # ==========================================================
+# 🚨 MODIFIED: [V58.00 체력 고갈 기반 자율주행 엑시트 락온 (조기 익절 맹점 소각)]
+# - 단순히 수익 구간이라고 해서 역추세(음봉) 출현 시 즉각 팔아버리는 조기 익절(Premature Exit) 버그 전면 철거.
+# - 오직 잔여 체력이 고갈(is_stamina_exhausted)되었을 때만 엑시트 조준경을 켜고, 그때 2연속 역추세가 떠야만 덤핑하도록 팩트 교정 완료.
 # 🚨 MODIFIED: [V53.12 런타임 붕괴 방어] 문자열 강제 반환 버그를 변수 할당으로 팩트 교정 완료
 # 🚨 MODIFIED: [V53.11 시계열 체력 듀얼 대칭 락온] 숏(SOXS) 상승 체력 차단 필터 추가 이식 및 팩트 교정
-# 🚨 MODIFIED: [V53.07 제13헌법 스마트 홀딩 엑시트 로직 팩트 교정 (체력 고갈 조건 적출)]
 # NEW: [스마트 홀딩(익절 한정) 덤핑 락온 이식]
 # [strategy_v_avwap.py] - 🌟 V47.00 앱솔루트 팩트 교정 🌟
 # 💡 V-REV 하이브리드 전용 차세대 AVWAP 스나이퍼 플러그인 (Dual-Referencing)
@@ -13,7 +15,6 @@
 # - 15:00 EST 오버나이트 존버(Hold) 모드 이식 및 투트랙 엑시트 전면 개조
 # - 10:00 EST 단판 승부 및 조기퇴근(단일 출장) 셧다운 로직 영구 소각 (무한 스캔 개방)
 # 🚨 MODIFIED: [단판승부 실전 테스트] 롱(Long) 한정 제1조건/제3조건 강제 바이패스 및 매수/매도 1회 락온
-# 🚨 MODIFIED: [단판승부 실전 테스트] 체력 고갈 시점에 하이킨아시 역추세(음봉) 결합 시 덤핑
 # 🚨 MODIFIED: [단판승부 실전 테스트] 15:00 EST 수익/손실 불문 무조건 전량 덤핑 (존버 소각)
 # 🚨 MODIFIED: [V53.01 오프닝 휩소 방어] 프리마켓 개장 직후 10분(04:10 EST까지) 진입 차단 안전 마진 이식
 # 🚨 MODIFIED: [V53.02 숏(Short) 안전장치 락온] 인버스(SOXS) 진입 시 제1조건(원웨이 하락) 100% 강제 검증 (Bypass 차단)
@@ -345,14 +346,14 @@ class VAvwapHybridPlugin:
             rem_5_pct = atr5 - actual_gap_pct
             is_stamina_exhausted = (rem_5_pct < 1.0) 
 
-            # 🚨 MODIFIED: [V53.07 제13헌법 스마트 홀딩 엑시트 로직 팩트 교정]
+            # 🚨 MODIFIED: [V58.00 체력 고갈 기반 자율주행 엑시트 락온 (조기 익절 맹점 소각)]
             if target_mode == "AUTO":
                 if not is_inverse and ha_2_bearish_no_upper:
-                    if is_profitable:
-                        return _build_res('SELL', '역추세(음봉2연속)_익절구간_즉각덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
+                    if is_profitable and is_stamina_exhausted:
+                        return _build_res('SELL', '체력고갈_목표도달+역추세(음봉2연속)_즉각덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
                 elif is_inverse and ha_2_bullish_no_lower:
-                    if is_profitable:
-                        return _build_res('SELL', '역추세(양봉2연속)_익절구간_즉각덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
+                    if is_profitable and is_stamina_exhausted:
+                        return _build_res('SELL', '체력고갈_목표도달+역추세(양봉2연속)_즉각덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
             else:
                 # MANUAL 모드 사용자 설정 목표 청산
                 if exec_return >= (user_target_pct / 100.0):
