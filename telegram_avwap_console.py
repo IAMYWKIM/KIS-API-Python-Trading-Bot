@@ -17,6 +17,8 @@
 # 현재 캔들이 조건에 맞지 않더라도 영구 락온 상태라면 모멘텀 🟢 점등 유지 및 "음봉이지만 시계열 락온 유지" 직관적 텍스트 렌더링 동기화 완료.
 # 🚨 MODIFIED: [V59.00 AVWAP 암살자 예산 100% 수혈 및 15:25 전량 덤핑 팩트 교정]
 # 관제탑 렌더링 분기점을 15:00에서 15:25로 이동하여 시각적 디커플링 원천 차단
+# 🚨 MODIFIED: [V59.01 AVWAP 관제탑 '목표 익절' 텍스트 영구 소각]
+# 암살자 청산 로직이 15:25 EST 무조건 덤핑으로 대수술됨에 따라, 의미를 상실한 목표 수익률 연산 및 '목표 익절' 렌더링 블록을 시스템에서 100% 적출(소각) 완료.
 # ==========================================================
 import logging
 import datetime
@@ -278,9 +280,6 @@ class AvwapConsolePlugin:
             strikes = tracking_cache.get(f"AVWAP_STRIKES_{t}", 0)
             is_shutdown = tracking_cache.get(f"AVWAP_SHUTDOWN_{t}", False)
             
-            user_target_pct = await asyncio.to_thread(getattr(self.cfg, 'get_avwap_target_profit', lambda x: 4.0), t)
-            target_mode = tracking_cache.get(f"AVWAP_TARGET_MODE_{t}", "AUTO") 
-            
             label = "롱" if t == "SOXL" else "숏"
             msg += f"\n🎯 <b>[ {t} ({label}) 작전반 - {active_str} ]</b>\n"
 
@@ -415,33 +414,7 @@ class AvwapConsolePlugin:
                 msg += f"   [0%] {make_bar(exh_5)} [+{atr5:.2f}%]\n"
                 msg += f"               <b>({exh_5:.0f}% 소진 / 고가 기준)</b>\n"
 
-            if target_mode == "AUTO":
-                if exh_5 >= 90: base_target = 1.0
-                elif exh_5 >= 80: base_target = 2.0
-                elif exh_5 >= 70: base_target = 3.0
-                else: base_target = 4.0
-                
-                if rem_5_pct > 0:
-                    rem_cap = math.floor(rem_5_pct * 10) / 10.0
-                    dynamic_target = min(base_target, rem_cap)
-                    dynamic_target = max(1.0, dynamic_target)
-                else:
-                    dynamic_target = 1.0
-                
-                applied_pct = dynamic_target
-                target_display = f"🤖자율주행 (+{applied_pct:.1f}%)"
-            else:
-                applied_pct = user_target_pct
-                target_display = f"🖐️수동고정 (+{applied_pct:.1f}%)"
-
-            if avwap_qty > 0 and avwap_avg > 0:
-                locked_pct = tracking_cache.get(f"AVWAP_LOCKED_TARGET_PCT_{t}", applied_pct)
-                target_price = avwap_avg * (1 + locked_pct / 100.0)
-                if target_mode == "AUTO":
-                    target_display = f"🤖자율주행 (+{locked_pct:.1f}%)"
-                msg += f"▫️ 목표 익절: <b>${target_price:.2f}</b> ({target_display})\n"
-            else:
-                msg += f"▫️ 목표 익절: <b>{target_display}</b>\n"
+            # 🚨 MODIFIED: [V59.01 AVWAP 관제탑 '목표 익절' 텍스트 영구 소각 완료]
 
             curr_time = now_est.time()
             # 🚨 MODIFIED: [V59.00 AVWAP 15:25 전량 덤핑 락온] 타임 쉴드 전진 배치
@@ -459,7 +432,7 @@ class AvwapConsolePlugin:
                 else:
                     status_txt = "🛑 당일 영구동결 (SHUTDOWN)"
             elif avwap_qty > 0: 
-                status_txt = "🎯 딥매수 완료 (익절 감시중)"
+                status_txt = "🎯 딥매수 완료 (15:25 EST 덤핑 대기 중)"
             else:
                 try:
                     avwap_state_dict = {"strikes": strikes}
@@ -506,6 +479,5 @@ class AvwapConsolePlugin:
         ])
 
         msg += f"\n\n⏱️ <i>마지막 스캔: {now_est.strftime('%Y-%m-%d %H:%M:%S')} (EST)</i>\n"
-        msg += f"💡 <i>설정 제어는 /settlement (전술설정) 메뉴에서 가능합니다.</i>"
 
         return msg, InlineKeyboardMarkup(keyboard)
