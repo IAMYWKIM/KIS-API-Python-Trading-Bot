@@ -13,6 +13,9 @@
 # 2) get_plan 내부 V_REV 더미 반환 시 is_reverse=True 로 강제 결속하여 UI 렌더링 엇박자(프랑켄슈타인 맹점) 완벽 해체.
 # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각]
 # 15:25 전량 덤핑 헌법에 따라 의미를 상실한 AVWAP 목표 수익률 및 출장 모드 파라미터 추출 배선 영구 적출 완료.
+# 🚨 MODIFIED: [V60.00 횡보장 락다운 전면 소각 및 롱 진입 100% 개방]
+# 옴니 매트릭스가 횡보장(SIDEWAYS)으로 판별하더라도 기본 방향인 롱(SOXL, TQQQ)의 진입은 무조건 허용하여
+# 기회비용 상실(데이터 기아)을 영구 차단. 단, 역방향 숏(SOXS) 진입은 엄격히 통제.
 # ==========================================================
 import logging
 import pandas as pd
@@ -109,9 +112,13 @@ class InfiniteStrategy:
         regime = regime_data.get("regime", "SIDEWAYS")
         desc = regime_data.get("desc", regime)
 
-        # 횡보장 휩소 구간 (방향성 충돌): 신규 매수 전면 차단 (암살자 퇴직 모드)
+        # 🚨 MODIFIED: [V60.00 횡보장 락다운 전면 소각 및 롱 진입 100% 개방]
+        # 횡보장(방향성 충돌) 구간에서 숏(SOXS) 진입은 차단하되, 기본 방향 롱(SOXL, TQQQ)은 무조건 진입 허용(Bypass)
         if target_ticker == "NONE" or regime == "SIDEWAYS":
-            return {"allow_buy": False, "allow_sell": qty > 0, "msg": f"{desc} - 암살자 퇴직 (신규 진입 차단)"}
+            if ticker.upper() == "SOXS":
+                return {"allow_buy": False, "allow_sell": qty > 0, "msg": f"{desc} - 숏(SOXS) 진입 차단"}
+            else:
+                return {"allow_buy": True, "allow_sell": True, "msg": f"{desc} - 롱({ticker.upper()}) 진입 100% 개방"}
 
         # 듀얼 모멘텀 공수 일치 여부 확인
         if ticker.upper() == target_ticker.upper():
@@ -230,3 +237,4 @@ class InfiniteStrategy:
             base_day_open=base_day_open, avwap_avg_price=avg_price, avwap_qty=qty, avwap_alloc_cash=alloc_cash, 
             context_data=context_data, df_1min_base=df_1min_base, now_est=now_est, avwap_state=avwap_state, **kwargs
         )
+

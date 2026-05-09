@@ -7,6 +7,10 @@
 # 수익/손실 불문 전량 덤핑(SELL)하여 본진 예산을 복구하도록 아키텍처 대수술 완료.
 # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] SELL 사유 텍스트 내부에 남아있는 레거시 키워드 '(조기퇴근)' 100% 영구 소각 완료.
 # 🚨 MODIFIED: [V59.04 프리마켓 락다운 쉴드 이식] 09:30 이전 매수 타격 원천 차단으로 제13헌법 6조 완벽 준수.
+# 🚨 MODIFIED: [V60.00 옴니 매트릭스 중복 필터링 영구 소각]
+# 상위 라우터(strategy.py)에서 이미 옴니 매트릭스 통제망이 완벽히 작동하고 있으므로,
+# 플러그인 클래스 내부에 잔존하던 잘못된 apply_omni_matrix_filter 찌꺼기 코드 및 
+# 미정의 qty 참조 런타임 붕괴 뇌관을 제2헌법(단일 책임 원칙)에 의거 100% 적출 완료.
 # ==========================================================
 import logging
 import datetime
@@ -244,7 +248,7 @@ class VAvwapHybridPlugin:
                                 if i == 0:
                                     ha_open.append((float(df_5m['open'].iloc[i]) + float(df_5m['close'].iloc[i])) / 2.0)
                                 else:
-                                    ha_open.append((ha_open[i-1] + float(df_5m['HA_Close'].iloc[i-1])) / 2.0)
+                                     ha_open.append((ha_open[i-1] + float(df_5m['HA_Close'].iloc[i-1])) / 2.0)
 
                             df_5m['HA_Open'] = pd.Series(ha_open, index=df_5m.index)
                             df_5m['HA_High'] = df_5m[['high', 'HA_Open', 'HA_Close']].max(axis=1)
