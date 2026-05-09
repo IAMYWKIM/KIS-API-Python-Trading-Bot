@@ -20,6 +20,7 @@
 # 제어 콜백 파이프라인(데드코드)을 전면 철거하고 REFRESH 기능만 보존 완료.
 # 🚨 MODIFIED: [V59.03 관제탑 진입 배선 복구] 
 # settlement 메뉴에서 '관제탑' 버튼 클릭 시 cmd_avwap을 정상 호출하도록 AVWAP:MENU 라우팅 배선 복구 완료.
+# NEW: [V59.06] VWAP 런타임 엑스레이(Dry-Run) 진단 엔진 라우터 이식 완료 (순수 Read-Only 섀도우 연산)
 # ==========================================================
 import logging
 import datetime
@@ -65,7 +66,7 @@ class TelegramCallbacks:
                 q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
                 vrev_qty = sum(int(float(lot.get('qty', 0))) for lot in q_data if int(float(lot.get('qty', 0))) > 0)
         except Exception:
-            pass
+             pass
 
         return max(kis_qty, v14_qty, vrev_qty)
 
@@ -74,6 +75,101 @@ class TelegramCallbacks:
         chat_id = update.effective_chat.id
         data = query.data.split(":")
         action, sub = data[0], data[1] if len(data) > 1 else ""
+
+        # NEW: [VWAP 엑스레이(Dry-Run) 진단 엔진 라우터 신설]
+        # 장부 상태(Residual)를 오염시키지 않기 위해 코어 엔진을 호출하지 않고
+        # 내부에서 15:30 EST 기준 수학적 섀도우 연산을 수행하여 팩트만 타전합니다.
+        if action == "XRAY":
+            await query.answer("🔍 엑스레이 진단 엔진 가동 중... (Read-Only)", show_alert=False)
+            if sub == "VWAP":
+                ticker = data[2]
+                
+                try:
+                    # 1. 기초 팩트 스캔 (비동기 래핑 & 타임아웃 족쇄)
+                    curr_p = await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=5.0)
+                    prev_c = await asyncio.wait_for(asyncio.to_thread(self.broker.get_previous_close, ticker), timeout=5.0)
+                    
+                    if curr_p is None: curr_p = 0.0
+                    if prev_c is None: prev_c = 0.0
+                    
+                    # 2. 옴니 매트릭스 판독 스캔
+                    jobs = context.job_queue.jobs() if context.job_queue else []
+                    job_data = jobs[0].data if jobs and jobs[0].data is not None else {}
+                    regime_data = job_data.get('regime_data')
+                    
+                    q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) if getattr(self, 'queue_ledger', None) else []
+                    total_q = sum(int(item.get("qty", 0)) for item in q_data)
+                    
+                    omni_filter = await asyncio.to_thread(self.strategy.apply_omni_matrix_filter, ticker, total_q, regime_data)
+                    
+                    # 3. 예산 및 0주 팩트 스캔
+                    safe_seed = await asyncio.to_thread(self.cfg.get_seed, ticker)
+                    alloc_cash = safe_seed * 0.15
+                    
+                    strategy_rev = self.strategy.v_rev_plugin
+                    await asyncio.to_thread(strategy_rev._load_state_if_needed, ticker)
+                    
+                    total_spent = float(strategy_rev.executed.get("BUY_BUDGET", {}).get(ticker, 0.0))
+                    rem_budget = max(0.0, alloc_cash - total_spent)
+                    
+                    cached_plan = await asyncio.to_thread(strategy_rev.load_daily_snapshot, ticker)
+                    if cached_plan:
+                        is_zero_start = cached_plan.get("is_zero_start", cached_plan.get("total_q", -1) == 0)
+                    else:
+                        is_zero_start = (total_q == 0)
+                        
+                    # 4. VWAP 15:30 기준 프로파일 스캔 및 동적 분배
+                    profile = await asyncio.to_thread(self.cfg.get_vwap_profile, ticker)
+                    target_keys = [f"15:{str(m).zfill(2)}" for m in range(27, 57)]
+                    total_target_vol = sum(profile.get(k, 0.0) for k in target_keys)
+                    raw_weight = profile.get("15:30", 0.0)
+                    current_weight = (raw_weight / total_target_vol) if total_target_vol > 0 else (1.0 / len(target_keys))
+                    
+                    slice_budget = alloc_cash * current_weight
+                    shared_bucket = float(strategy_rev.residual["BUY_SHARED"].get(ticker, 0.0)) + slice_budget
+                    
+                    b1_budget = shared_bucket * 0.5
+                    b2_budget = shared_bucket * 0.5
+                    
+                    # 절대 타점(Anchor) 섀도우 연산
+                    p1_trigger = round(prev_c * 1.15, 2) if is_zero_start else round(prev_c * 0.995, 2)
+                    p2_trigger = round(prev_c * 0.999, 2) if is_zero_start else round(prev_c * 0.9725, 2)
+                    
+                    msg = f"🔍 <b>[ {ticker} V-REV 런타임 엑스레이 진단 ]</b>\n"
+                    msg += f"▫️ <b>가상 시간</b> : 15:30 EST (타임 슬라이싱 4회차)\n"
+                    msg += f"▫️ <b>현재가</b> : ${curr_p:.2f} / <b>전일종가</b> : ${prev_c:.2f}\n"
+                    msg += f"▫️ <b>옴니 매트릭스</b> : {'🟢 진입 허용' if omni_filter['allow_buy'] else '🔴 진입 차단'} ({omni_filter['msg']})\n"
+                    msg += f"▫️ <b>0주 새출발</b> : {'True' if is_zero_start else 'False'}\n"
+                    msg += f"▫️ <b>1분 할당 예산</b> : ${slice_budget:.2f} (총 예산의 {current_weight*100:.1f}%)\n"
+                    msg += f"▫️ <b>누적 잔여 예산</b> : ${rem_budget:.2f}\n\n"
+                    
+                    msg += "🎯 <b>[ 봇의 내부 판단 (Action) ]</b>\n"
+                    
+                    if rem_budget <= 0:
+                        msg += "👉 <b>예산 고갈 (Budget Empty)</b> : 할당된 1일치 예산(15%)이 모두 소진되어 타격을 종료합니다.\n"
+                    elif not omni_filter['allow_buy'] and total_q == 0:
+                        msg += "👉 <b>진입 차단 (Regime Blocked)</b> : 옴니 매트릭스가 횡보장 등으로 진입을 불허하여 스킵합니다.\n"
+                    else:
+                        # Buy1 타격 검증
+                        msg += f"🔴 <b>매수 타점(Buy1)</b> : ${p1_trigger:.2f} (누적 예산: ${b1_budget:.2f})\n"
+                        if curr_p <= p1_trigger:
+                            msg += f"  👉 현재가(${curr_p:.2f})가 타점 이하이므로 <b>시장가 스윕 타격이 정상 격발</b>됩니다.\n"
+                        else:
+                            msg += f"  👉 현재가(${curr_p:.2f})가 타점을 초과하여 <b>매수 스킵(예산 다음분 이월)</b> 처리됩니다.\n"
+                            
+                        # Buy2 타격 검증
+                        msg += f"🔴 <b>매수 타점(Buy2)</b> : ${p2_trigger:.2f} (누적 예산: ${b2_budget:.2f})\n"
+                        if curr_p <= p2_trigger:
+                            msg += f"  👉 현재가(${curr_p:.2f})가 타점 이하이므로 <b>시장가 스윕 타격이 정상 격발</b>됩니다.\n"
+                        else:
+                            msg += f"  👉 현재가(${curr_p:.2f})가 타점을 초과하여 <b>매수 스킵(예산 다음분 이월)</b> 처리됩니다.\n"
+                    
+                    await context.bot.send_message(chat_id=query.message.chat_id, text=msg, parse_mode='HTML')
+                    return
+                    
+                except Exception as e:
+                    await context.bot.send_message(chat_id=query.message.chat_id, text=f"🚨 엑스레이 진단 중 에러 발생: {e}", parse_mode='HTML')
+                    return
 
         if action == "UPDATE":
             await query.answer()
@@ -419,7 +515,7 @@ class TelegramCallbacks:
                 
             if holdings is None:
                 return await query.edit_message_text("❌ API 통신 오류로 주문을 실행할 수 없습니다.")
-                 
+                
             active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
             _, allocated_cash = await asyncio.to_thread(controller._calculate_budget_allocation, cash, active_tickers)
             h = holdings.get(t, {'qty':0, 'avg':0})

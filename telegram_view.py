@@ -14,6 +14,7 @@
 # 15:25 전량 덤핑 헌법에 따라 의미를 상실한 AVWAP 수동/자율 목표 및 출장 모드 설정 버튼 UI를 100% 영구 소각 완료.
 # 🚨 MODIFIED: [V59.05 잔재 데드코드 영구 소각] 
 # AVWAP 가동 경고문(UI) 내 손절(-8.0%) 피격 시 영구 동결이라는 낡은 텍스트를 15:25 EST 도달 시 무조건 전량 덤핑 청산으로 100% 팩트 교정 완료.
+# NEW: [V59.06] VWAP 런타임 엑스레이(Dry-Run) 진단 버튼을 주요 뷰포트(지시서, 장부, 큐 관리)에 전면 이식 완료.
 # ==========================================================
 import os
 import math
@@ -186,6 +187,8 @@ class TelegramView:
         msg += "최근 매수한 <b>1지층</b>을 시장가(MOC)로 강제 덤핑하여 가용 예산을 확보합니다."
 
         keyboard.append([InlineKeyboardButton("🩸 1지층 수동 긴급 수혈 (MOC)", callback_data=f"EMERGENCY_REQ:{ticker}")])
+        # NEW: [VWAP 엑스레이 진단 스위치 이식] 큐 장부 확인 중 즉각 진단 기능 결속
+        keyboard.append([InlineKeyboardButton(f"🔍 {ticker} VWAP 런타임 엑스레이 (Dry-Run)", callback_data=f"XRAY:VWAP:{ticker}")])
         keyboard.append([InlineKeyboardButton("🔄 대시보드 새로고침", callback_data=f"QUEUE:VIEW:{ticker}")])
         
         return msg, InlineKeyboardMarkup(keyboard)
@@ -520,6 +523,10 @@ class TelegramView:
                     body_msg += " 💤 주문 없음 (관망/예산소진)\n"
                 
             body_msg += "\n"
+            
+            # NEW: [VWAP 엑스레이 진단(Dry-Run) 스위치 이식] 지시서 렌더링 시 V-REV 전용 버튼 추가
+            if v_mode == "V_REV":
+                keyboard.append([InlineKeyboardButton(f"🔍 {t} VWAP 런타임 엑스레이 (Dry-Run)", callback_data=f"XRAY:VWAP:{t}")])
 
         final_msg = header_msg + body_msg
         
@@ -731,6 +738,11 @@ class TelegramView:
             other = "TQQQ" if ticker == "SOXL" else "SOXL"
             keyboard.append([InlineKeyboardButton(f"🔄 {other} 장부 조회", callback_data=f"REC:VIEW:{other}")])
             keyboard.append([InlineKeyboardButton(f"🗄️ {ticker} V-REV 큐(Queue) 정밀 관리", callback_data=f"QUEUE:VIEW:{ticker}")])
+            
+            # NEW: [VWAP 엑스레이 진단 스위치 이식] 장부 대시보드 뷰에 버튼 추가
+            if is_reverse:
+                keyboard.append([InlineKeyboardButton(f"🔍 {ticker} VWAP 런타임 엑스레이 (Dry-Run)", callback_data=f"XRAY:VWAP:{ticker}")])
+                
             keyboard.append([InlineKeyboardButton("🔙 장부 대시보드 업데이트", callback_data=f"REC:SYNC:{ticker}")])
         else:
             if history_id is not None:
@@ -829,3 +841,4 @@ class TelegramView:
             [InlineKeyboardButton("💎 오리지널 TQQQ + SOXL 듀얼 콤보", callback_data="TICKER:ALL")]
         ]
         return f"🔄 <b>[ 운용 종목 선택 ]</b>\n현재 가동중: <b>{', '.join(current_tickers)}</b>", InlineKeyboardMarkup(keyboard)
+
