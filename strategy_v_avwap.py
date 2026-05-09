@@ -6,6 +6,7 @@
 # 암살자는 오직 진입(BUY) 조건만 판별하며, 진입 후에는 15:25 EST까지 100% 무조건 홀딩(HOLD) 후 
 # 수익/손실 불문 전량 덤핑(SELL)하여 본진 예산을 복구하도록 아키텍처 대수술 완료.
 # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] SELL 사유 텍스트 내부에 남아있는 레거시 키워드 '(조기퇴근)' 100% 영구 소각 완료.
+# 🚨 MODIFIED: [V59.04 프리마켓 락다운 쉴드 이식] 09:30 이전 매수 타격 원천 차단으로 제13헌법 6조 완벽 준수.
 # ==========================================================
 import logging
 import datetime
@@ -41,27 +42,27 @@ class VAvwapHybridPlugin:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
 
-                    if data.get('date') != today_str:
-                        qty = data.get('qty', 0)
-                        if qty > 0:
-                            data['bought'] = True
-                            data['shutdown'] = False
-                        else:
-                            data['qty'] = 0
-                            data['avg_price'] = 0.0
-                            data['shutdown'] = False
-                            data['strikes'] = 0
-                            data['bought'] = False
-                            data['daily_bought_qty'] = 0
-                            data['daily_sold_qty'] = 0
+                if data.get('date') != today_str:
+                    qty = data.get('qty', 0)
+                    if qty > 0:
+                        data['bought'] = True
+                        data['shutdown'] = False
+                    else:
+                        data['qty'] = 0
+                        data['avg_price'] = 0.0
+                        data['shutdown'] = False
+                        data['strikes'] = 0
+                        data['bought'] = False
+                        data['daily_bought_qty'] = 0
+                        data['daily_sold_qty'] = 0
 
-                        data['HA_LATCHED_BULL'] = False
-                        data['HA_LATCHED_BEAR'] = False
+                    data['HA_LATCHED_BULL'] = False
+                    data['HA_LATCHED_BEAR'] = False
 
-                        data['date'] = today_str
-                        self.save_state(ticker, now_est, data)
+                    data['date'] = today_str
+                    self.save_state(ticker, now_est, data)
 
-                    return data
+                return data
             except Exception:
                 pass
         return {"executed_buy": False, "shutdown": False, "strikes": 0, "qty": 0, "avg_price": 0.0, "daily_bought_qty": 0, "daily_sold_qty": 0, "HA_LATCHED_BULL": False, "HA_LATCHED_BEAR": False}
@@ -224,7 +225,7 @@ class VAvwapHybridPlugin:
                     if t_high_idx < t_low_idx:
                         trend_sequence = "BEAR"
                     elif t_low_idx < t_high_idx:
-                         trend_sequence = "BULL"
+                        trend_sequence = "BULL"
 
                     if is_regular_session and curr_time < datetime.time(9, 35):
                         ha_2_bullish_no_lower = False
@@ -241,7 +242,7 @@ class VAvwapHybridPlugin:
                             ha_open = []
                             for i in range(len(df_5m)):
                                 if i == 0:
-                                     ha_open.append((float(df_5m['open'].iloc[i]) + float(df_5m['close'].iloc[i])) / 2.0)
+                                    ha_open.append((float(df_5m['open'].iloc[i]) + float(df_5m['close'].iloc[i])) / 2.0)
                                 else:
                                     ha_open.append((ha_open[i-1] + float(df_5m['HA_Close'].iloc[i-1])) / 2.0)
 
@@ -312,6 +313,10 @@ class VAvwapHybridPlugin:
 
         if curr_time < time_0410:
             return _build_res('WAIT', '04:10_이전_오프닝_휩소_방어(10분_안전마진_대기)')
+
+        # 🚨 MODIFIED: [V59.04 프리마켓 락다운 쉴드 이식] 제13헌법 6조 완벽 준수
+        if not is_regular_session:
+            return _build_res('WAIT', '프리마켓_노이즈_원천차단_정규장_개장_대기')
 
         if curr_time >= time_1525:
             avwap_state["shutdown"] = True
@@ -388,7 +393,7 @@ class VAvwapHybridPlugin:
                 cond_seq = False
         else:
             if trend_sequence == "BULL":
-                 cond_seq = False
+                cond_seq = False
 
         if cond1_met and cond2_met and cond3_met and cond_seq:
             if avwap_alloc_cash > 0:

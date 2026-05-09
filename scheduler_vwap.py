@@ -25,6 +25,7 @@
 # 🚨 MODIFIED: [V54.01 VWAP 데이터 통합 롤백] vwap_data.py 외부 파일 임포트 소각 및 ConfigManager 수혈 락온
 # 🚨 MODIFIED: [V54.02 깡통 스냅샷 붕괴 방어] prev_c 다이렉트 추출 파이프라인 이식으로 데이터 기아(Data Starvation) 원천 차단
 # 🚨 NEW: [달력 API 결측 연쇄 기절 방어] 장마감시간 빈 값 반환 시 평일 16:00 EST 강제 폴백 락온 이식 완료.
+# 🚨 MODIFIED: [V59.04 옴니 매트릭스 하드코딩 소각 및 60% 지배력 락다운 붕괴 수술]
 # ==========================================================
 import logging
 import datetime
@@ -185,7 +186,7 @@ async def scheduled_vwap_init_and_cancel(context):
                                     strategy_rev.ensure_failsafe_snapshot,
                                     t, curr_p, prev_c, rev_daily_budget, q_data, total_kis_qty, avwap_qty
                                 )
-                            elif version == "V14" and is_manual_vwap and strategy and hasattr(strategy, 'v14_vwap_plugin'):
+                            elif version == "V14" and is_manual_vwap and hasattr(strategy, 'v14_vwap_plugin'):
                                 _, alloc_cash, _ = await asyncio.to_thread(cfg.calculate_v14_state, t)
                                 await asyncio.to_thread(
                                     strategy.v14_vwap_plugin.ensure_failsafe_snapshot,
@@ -267,7 +268,7 @@ async def scheduled_vwap_trade(context):
     
     if not (vwap_start_time <= now_est <= vwap_end_time):
         return
-        
+
     app_data = context.job.data
     cfg, broker, strategy, tx_lock = app_data['cfg'], app_data['broker'], app_data['strategy'], app_data['tx_lock']
     chat_id = context.job.chat_id
@@ -601,7 +602,7 @@ async def scheduled_vwap_trade(context):
                                                 await asyncio.sleep(2.0)
                                                 unfilled_check = await asyncio.to_thread(broker.get_unfilled_orders_detail, t)
                                                 safe_unfilled = unfilled_check if isinstance(unfilled_check, list) else []
-                                                
+
                                                 my_order = next((ox for ox in safe_unfilled if ox.get('odno') == odno), None)
                                                 if my_order:
                                                     ccld_qty = int(float(my_order.get('tot_ccld_qty') or 0))
@@ -639,7 +640,7 @@ async def scheduled_vwap_trade(context):
                                                                 _pf.flush()
                                                                 os.fsync(_pf.fileno())
                                                             os.replace(tmp_path, f_path)
-                                                            
+                                                        
                                                         await asyncio.to_thread(_save_pending_grad, pending_file, pending_data)
                                                     except Exception as pg_e:
                                                         logging.error(f"🚨 [{t}] pending_grad 마커 파일 저장 실패: {pg_e}")
@@ -689,7 +690,9 @@ async def scheduled_vwap_trade(context):
                         
                         target_orders = []
                         gap_thresh = await asyncio.to_thread(getattr(cfg, 'get_vrev_gap_threshold', lambda x: -0.67), t)
-                        omni_filter = {"allow_buy": True}  
+                        
+                        # 🚨 MODIFIED: [V59.04] 옴니 매트릭스 하드코딩 소각 및 팩트 수혈 교정
+                        omni_filter = await asyncio.to_thread(strategy.apply_omni_matrix_filter, t, total_q, regime_data)
                         
                         if omni_filter["allow_buy"] and current_regime == "BUY" and not vwap_cache.get(f"REV_{t}_gap_hijack_fired"):
                             base_tkr = base_map.get(t, 'SOXX')
@@ -754,9 +757,8 @@ async def scheduled_vwap_trade(context):
                             if rev_plan is None:
                                 continue
                                 
-                            # 🚨 MODIFIED: [V-REV 추세장 LOC 스위칭 침묵 버그 및 상태 증발 완벽 수술] 
-                            # 텔레그램 무음 파라미터 소각 및 에러 타전망 이식 완료
-                            if not is_zero_start and rev_plan.get('trigger_loc') and minutes_to_close >= 15:
+                            # 🚨 MODIFIED: [V59.04] 60% 지배력 추세장 락다운 붕괴 맹점 수술 (15분 미만 족쇄 전면 소각)
+                            if not is_zero_start and rev_plan.get('trigger_loc'):
                                 vwap_cache[f"REV_{t}_loc_fired"] = True
                                 msg = f"🛡️ <b>[{t}] 60% 거래량 지배력 감지 (추세장 전환)</b>\n"
                                 msg += f"▫️ 기관급 자금 쏠림으로 인해 위험한 1분 단위 타임 슬라이싱(VWAP)을 전면 중단합니다.\n"
