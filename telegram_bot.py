@@ -10,6 +10,7 @@
 # 🚨 MODIFIED: [NameError 픽스] ticker_data_list 매핑 시 safe_seed 변수명 불일치 런타임 에러 팩트 교정 완료.
 # 🚨 MODIFIED: [V44.54 TypeError 코루틴 비동기 래핑] is_update_allowed 및 restart_daemon 호출부 await 팩트 교정 완료.
 # 🚨 MODIFIED: [V55.00 오퍼레이션 SSOT] cmd_add_q, cmd_clear_q 내부 다이렉트 파일 I/O 영구 소각 및 QueueLedger 스레드 세이프 코어 메서드 직결.
+# 🚨 MODIFIED: [V59.04 UI 콜백 런타임 붕괴 방어] 콜백 쿼리로 명령어 호출 시 update.message가 None이 되어 발생하는 AttributeError 완벽 수술. target_msg 팩트 브릿지 탑재.
 # ==========================================================
 import logging
 import datetime
@@ -218,7 +219,9 @@ class TelegramController:
         if not self._is_admin(update):
             return
             
-        status_msg = await update.message.reply_text("⏳ <b>[AVWAP 듀얼 모멘텀 관제탑]</b>\n레이더망을 가동하여 시장 데이터를 스캔 중...")
+        # 🚨 MODIFIED: [V59.04 UI 콜백 런타임 붕괴 방어] 콜백 쿼리로 호출 시 AttributeError 원천 차단
+        target_msg = update.callback_query.message if update.callback_query else update.message
+        status_msg = await target_msg.reply_text("⏳ <b>[AVWAP 듀얼 모멘텀 관제탑]</b>\n레이더망을 가동하여 시장 데이터를 스캔 중...", parse_mode='HTML')
         
         try:
             from telegram_avwap_console import AvwapConsolePlugin
@@ -687,7 +690,7 @@ class TelegramController:
                 avwap_avg = tracking_cache.get(f"AVWAP_AVG_{t}", 0.0)
                 avwap_budget = cash
                 avwap_strikes = tracking_cache.get(f"AVWAP_STRIKES_{t}", 0)
-                
+
                 if tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"):
                     avwap_status_txt = "🛑 당일 영구동결 (SHUTDOWN)"
                 elif tracking_cache.get(f"AVWAP_BOUGHT_{t}"):
@@ -760,7 +763,7 @@ class TelegramController:
                 'profit_pct': (curr - actual_avg) / actual_avg * 100 if actual_avg > 0 else 0,
                 'upward_sniper': "ON" if upward_sniper_mode_on else "OFF",
                 'target': target_val, 'star_pct': round(plan.get('star_ratio', 0) * 100, 2) if 'star_ratio' in plan else 0.0,
-                'seed': seed, 'one_portion': plan.get('one_portion', 0.0), 'plan': plan,
+                'seed': safe_seed, 'one_portion': plan.get('one_portion', 0.0), 'plan': plan,
                 'is_locked': is_already_ordered, 'mode': "REG",
                 'is_reverse': is_rev, 'star_price': plan.get('star_price', 0.0),
                 'escrow': escrow_val,
@@ -846,6 +849,9 @@ class TelegramController:
         if not self._is_admin(update):
             return
             
+        # 🚨 MODIFIED: [V59.04 UI 콜백 런타임 붕괴 방어] 콜백 쿼리로 호출 시 AttributeError 원천 차단
+        target_msg = update.callback_query.message if update.callback_query else update.message
+        
         try:
             # MODIFIED: [맹점 4 수술] 파일 I/O 동기 블로킹 비동기 래핑
             history_data = await asyncio.to_thread(self.cfg.get_history)
@@ -853,7 +859,7 @@ class TelegramController:
             history_data = []
             
         if not history_data:
-            await update.message.reply_text("📭 <b>명예의 전당 (졸업 기록)이 비어있습니다.</b>", parse_mode='HTML')
+            await target_msg.reply_text("📭 <b>명예의 전당 (졸업 기록)이 비어있습니다.</b>", parse_mode='HTML')
             return
             
         sorted_hist = sorted(history_data, key=lambda x: x.get('end_date', ''), reverse=True)
@@ -874,7 +880,7 @@ class TelegramController:
             
         keyboard.append([InlineKeyboardButton("❌ 닫기", callback_data="RESET:CANCEL")])
         
-        await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        await target_msg.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
     async def cmd_mode(self, update, context):
         if not self._is_admin(update):
