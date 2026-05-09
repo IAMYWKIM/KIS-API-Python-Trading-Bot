@@ -15,6 +15,8 @@
 # 🚨 MODIFIED: [V59.05 잔재 데드코드 영구 소각] 
 # AVWAP 가동 경고문(UI) 내 손절(-8.0%) 피격 시 영구 동결이라는 낡은 텍스트를 15:25 EST 도달 시 무조건 전량 덤핑 청산으로 100% 팩트 교정 완료.
 # NEW: [V59.06] VWAP 런타임 엑스레이(Dry-Run) 진단 버튼을 주요 뷰포트(지시서, 장부, 큐 관리)에 전면 이식 완료.
+# 🚨 MODIFIED: [V60.00 옴니 매트릭스 락다운 전면 폐기]
+# 지시서(/sync) 렌더링 시 옴니 매트릭스 락다운 경고문을 표출하던 시각적 찌꺼기 100% 영구 소각 완료.
 # ==========================================================
 import os
 import math
@@ -457,10 +459,8 @@ class TelegramView:
             if v_mode == "V_REV":
                 body_msg += "📋 <b>[주문 가이던스 - ⚖️다중 LIFO 제어]</b>\n"
                 
+                # MODIFIED: [V60.00 옴니 매트릭스 락다운 전면 폐기] 시각적 찌꺼기 영구 소각
                 plan_info = t_info.get('plan', {})
-                omni_msg = plan_info.get('omni_msg', '')
-                if omni_msg:
-                    body_msg += f"⛔ <b>옴니 매트릭스 락다운:</b> {omni_msg}\n"
                 
                 body_msg += f"⚡ <b>[Gap Hijack 🤖자율주행]</b> 상승장 판별 시 잔여예산 스윕 대기\n"
                 
@@ -478,10 +478,8 @@ class TelegramView:
                 if is_manual_vwap and not is_rev_logic:
                     body_msg += "⏱️ <b>VWAP 스케줄:</b> 장 마감 30분 전 ➔ 1분 단위 유동성 분할 타격\n"
                     
+                # MODIFIED: [V60.00 옴니 매트릭스 락다운 전면 폐기] 시각적 찌꺼기 영구 소각
                 plan_info = t_info.get('plan', {})
-                omni_msg = plan_info.get('omni_msg', '')
-                if omni_msg:
-                    body_msg += f"⛔ <b>옴니 매트릭스 락다운:</b> {omni_msg}\n"
                 
                 body_msg += f"📋 <b>[주문 계획 - {proc_status}]</b>\n"
                 plan_orders = plan_info.get('orders', [])
@@ -841,4 +839,3 @@ class TelegramView:
             [InlineKeyboardButton("💎 오리지널 TQQQ + SOXL 듀얼 콤보", callback_data="TICKER:ALL")]
         ]
         return f"🔄 <b>[ 운용 종목 선택 ]</b>\n현재 가동중: <b>{', '.join(current_tickers)}</b>", InlineKeyboardMarkup(keyboard)
-

@@ -21,6 +21,8 @@
 # 🚨 MODIFIED: [V59.00 AVWAP 암살자 예산 100% 수혈 및 15:25 전량 덤핑 팩트 교정]
 # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 매도 사유 내 잔재하는 낡은 익절(조기퇴근 등) 분기 100% 적출 및 15:25 덤핑 셧다운 단일화 락온
 # 🚨 MODIFIED: [V59.05 잔재 데드코드 영구 소각] AVWAP 다중 출장(N회차) 및 조기 익절/손절 잔재 텍스트 100% 영구 소각 완료.
+# 🚨 MODIFIED: [V60.00 옴니 매트릭스 락다운 데드코드 전면 폐기] 
+# 스나이퍼 격발 전 매수 방아쇠를 잠그기 위해 잔존하던 옴니 매트릭스 필터 데드코드를 전면 소각하여 런타임 뇌관 해체.
 # ==========================================================
 import logging
 import datetime
@@ -96,7 +98,7 @@ async def scheduled_sniper_monitor(context):
     app_data = context.job.data
     cfg, broker, strategy, tx_lock = app_data['cfg'], app_data['broker'], app_data['strategy'], app_data['tx_lock']
     
-    regime_data = app_data.get('regime_data')
+    # 🚨 MODIFIED: [V60.00] 더 이상 사용되지 않는 regime_data 로드 코드 영구 소각
     
     base_map = app_data.get('base_map', {'SOXL': 'SOXX', 'TQQQ': 'QQQ'})
     chat_id = context.job.chat_id
@@ -234,7 +236,7 @@ async def scheduled_sniper_monitor(context):
                             except Exception as e:
                                 logging.error(f"AVWAP 상태 복구 실패: {e}")
                             tracking_cache[f"AVWAP_INIT_{current_target}"] = True
-            
+             
                         if tracking_cache.get(f"AVWAP_SHUTDOWN_{current_target}"): continue
                         
                         target_base = base_map.get(t, t) 
@@ -246,7 +248,7 @@ async def scheduled_sniper_monitor(context):
                                 if ctx_data:
                                     tracking_cache[f"AVWAP_CTX_{current_target}"] = ctx_data
                             except Exception: pass
-                        
+                         
                         if not ctx_data:
                             continue 
         
@@ -388,10 +390,10 @@ async def scheduled_sniper_monitor(context):
                                     await asyncio.to_thread(broker.cancel_targeted_orders, current_target, "02", "00")
                                     await asyncio.sleep(1.0)
                                     continue
-                                
+                         
                                 res = await asyncio.to_thread(broker.send_order, current_target, "BUY", qty, price, "LIMIT")
                                 odno = res.get('odno', '') if isinstance(res, dict) else ''
-                                
+                            
                                 if res and res.get('rt_cd') == '0' and odno:
                                     ccld_qty = 0
                                     for _ in range(4):
@@ -475,7 +477,7 @@ async def scheduled_sniper_monitor(context):
                                         has_unfilled = True
                                         break
                                     await asyncio.sleep(2.0)
-                    
+                     
                                 if has_unfilled:
                                     await asyncio.to_thread(broker.cancel_targeted_orders, current_target, "01", "00")
                                     await asyncio.sleep(1.0)
@@ -599,14 +601,8 @@ async def scheduled_sniper_monitor(context):
 
                 is_rev = (await asyncio.to_thread(cfg.get_version, t) == "V_REV")
 
-                if False and action == "BUY" and not is_rev and regime_data is not None:
-                    # 🚨 MODIFIED: [V47.00] 옴니 매트릭스 락다운 블록을 바이패스 처리하여 04:00 EST 진입 허용 (if False 강제 주입)
-                    # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각 방어막] 10:00 EST 이전 regime_data pending 상태 유지는 오프닝 휩소 무지성 타격을 막기 위한 V44.65 절대 헌법이다. 이를 버그로 오인하여 진입을 개방하는 훼손 행위를 영구 차단한다.
-                    # 🚨 [비동기 래핑] 파일 I/O 및 객체 호출 방어
-                    omni_filter = await asyncio.to_thread(strategy.apply_omni_matrix_filter, t, 0, regime_data)
-                    if not omni_filter["allow_buy"]:
-                        action = "HOLD"
-                        reason = f"⛔ 옴니 매트릭스 진입 차단: {omni_filter['msg']}"
+                # MODIFIED: [V60.00] 옴니 매트릭스 락다운 데드코드 전면 폐기 완료.
+                # (기존 if False and action == "BUY" ... 블록 영구 소각)
 
                 if action == "BUY" and not is_rev and not sniper_buy_locked and master_switch != "UP_ONLY":
                     qty = res.get("qty", 0)
@@ -675,7 +671,7 @@ async def scheduled_sniper_monitor(context):
                                              
                                 msg = f"🚨 <b>[{t}] 스나이퍼 딥-매수(Intercept) 명중!</b>\n▫️ 타겟가: ${limit_p}\n▫️ 팩트 단가: ${display_price}\n▫️ 체결수량: {ccld_qty}주 (요청: {qty}주)\n▫️ 사유: {reason}\n▫️ 하방 방어망이 잠깁니다 (상방 독립 유지)."
                                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
-             
+              
                 is_zero_start_session = False
                 try:
                     snap = None
@@ -717,7 +713,7 @@ async def scheduled_sniper_monitor(context):
                         
                         if has_unfilled:
                             continue
-                             
+                              
                         order_res = await asyncio.to_thread(broker.send_order, t, "SELL", qty, limit_p, "LIMIT")
                         odno = order_res.get('odno', '') if isinstance(order_res, dict) else ''
                         
@@ -734,7 +730,7 @@ async def scheduled_sniper_monitor(context):
                                 else:
                                     ccld_qty = qty
                                     break
-                             
+                              
                             if ccld_qty < qty:
                                 try:
                                     await asyncio.to_thread(broker.cancel_order, t, odno)
@@ -759,10 +755,10 @@ async def scheduled_sniper_monitor(context):
                                         p = float(ex.get('ft_ccld_unpr3', '0'))
                                         if p > 0: return p
                                     return 0.0
-                            
+                             
                                 actual_exec_price = get_actual_execution_price(exec_history, "01", odno)
                                 display_price = actual_exec_price if actual_exec_price > 0 else limit_p
-                                     
+                                           
                                 msg = f"🦇 <b>[{t}] 스나이퍼 상방 기습({action}) 명중!</b>\n▫️ 타겟가: ${limit_p}\n▫️ 팩트 단가: ${display_price}\n▫️ 체결수량: {ccld_qty}주 (요청: {qty}주)\n▫️ 사유: {reason}\n▫️ 상방 감시망이 잠깁니다 (하방 독립 유지)."
                                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
 
@@ -770,4 +766,4 @@ async def scheduled_sniper_monitor(context):
         # 🚨 MODIFIED: [V46.05 이벤트 루프 교착 방어] Lock Starvation 대비 호흡 연장
         await asyncio.wait_for(_do_sniper(), timeout=90.0)
     except Exception as e:
-         logging.error(f"🚨 스나이퍼 타임아웃 에러: {e}", exc_info=True)
+        logging.error(f"🚨 스나이퍼 타임아웃 에러: {e}", exc_info=True)

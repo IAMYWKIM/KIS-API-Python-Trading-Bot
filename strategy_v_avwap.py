@@ -7,10 +7,10 @@
 # 수익/손실 불문 전량 덤핑(SELL)하여 본진 예산을 복구하도록 아키텍처 대수술 완료.
 # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] SELL 사유 텍스트 내부에 남아있는 레거시 키워드 '(조기퇴근)' 100% 영구 소각 완료.
 # 🚨 MODIFIED: [V59.04 프리마켓 락다운 쉴드 이식] 09:30 이전 매수 타격 원천 차단으로 제13헌법 6조 완벽 준수.
-# 🚨 MODIFIED: [V60.00 옴니 매트릭스 중복 필터링 영구 소각]
-# 상위 라우터(strategy.py)에서 이미 옴니 매트릭스 통제망이 완벽히 작동하고 있으므로,
-# 플러그인 클래스 내부에 잔존하던 잘못된 apply_omni_matrix_filter 찌꺼기 코드 및 
-# 미정의 qty 참조 런타임 붕괴 뇌관을 제2헌법(단일 책임 원칙)에 의거 100% 적출 완료.
+# 🚨 MODIFIED: [V60.00 옴니 매트릭스 진입 차단망 전면 폐기 및 데드코드 소각]
+# 1) 상위 라우터(strategy.py)에서 중앙 통제가 이루어지므로, 플러그인 내부에 잘못 복사된 
+#    self.apply_omni_matrix_filter 호출 및 미정의 qty 참조 블록을 100% 영구 소각 (제2헌법 준수).
+# 2) 횡보장 락다운(allow_buy=False)에 의한 타격 중단을 원천 차단하고 오직 팩트 데이터로만 진입 판별.
 # ==========================================================
 import logging
 import datetime
@@ -163,6 +163,9 @@ class VAvwapHybridPlugin:
             return None
 
     def get_decision(self, base_ticker=None, exec_ticker=None, base_curr_p=0.0, exec_curr_p=0.0, base_day_open=0.0, avwap_avg_price=0.0, avwap_qty=0, avwap_alloc_cash=0.0, context_data=None, df_1min_base=None, now_est=None, avwap_state=None, **kwargs):
+        # MODIFIED: [V60.00 옴니 매트릭스 중복 필터 블록 전면 소각]
+        # 제2헌법 및 제13헌법 5조에 의거, 하단에 존재하던 self.apply_omni_matrix_filter 호출 및 
+        # allow_buy 분기 블록을 흔적도 없이 적출함. 암살자는 이제 오직 팩트 지표로만 판단함.
 
         df_1min_base = df_1min_base if df_1min_base is not None else kwargs.get('base_df')
         avwap_qty = avwap_qty if avwap_qty != 0 else kwargs.get('current_qty', 0)

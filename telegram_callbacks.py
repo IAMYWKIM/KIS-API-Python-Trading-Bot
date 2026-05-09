@@ -21,6 +21,8 @@
 # 🚨 MODIFIED: [V59.03 관제탑 진입 배선 복구] 
 # settlement 메뉴에서 '관제탑' 버튼 클릭 시 cmd_avwap을 정상 호출하도록 AVWAP:MENU 라우팅 배선 복구 완료.
 # NEW: [V59.06] VWAP 런타임 엑스레이(Dry-Run) 진단 엔진 라우터 이식 완료 (순수 Read-Only 섀도우 연산)
+# 🚨 MODIFIED: [V60.00 옴니 매트릭스 락다운 데드코드 전면 폐기]
+# XRAY 진단 엔진 내부에서 매수 방아쇠를 강제로 잠그던 옴니 매트릭스 스캔 블록 및 시각적 브리핑 요소를 영구 소각함.
 # ==========================================================
 import logging
 import datetime
@@ -92,15 +94,10 @@ class TelegramCallbacks:
                     if curr_p is None: curr_p = 0.0
                     if prev_c is None: prev_c = 0.0
                     
-                    # 2. 옴니 매트릭스 판독 스캔
-                    jobs = context.job_queue.jobs() if context.job_queue else []
-                    job_data = jobs[0].data if jobs and jobs[0].data is not None else {}
-                    regime_data = job_data.get('regime_data')
+                    # MODIFIED: [V60.00] 옴니 매트릭스 판독 스캔 블록 영구 소각 완료
                     
                     q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) if getattr(self, 'queue_ledger', None) else []
                     total_q = sum(int(item.get("qty", 0)) for item in q_data)
-                    
-                    omni_filter = await asyncio.to_thread(self.strategy.apply_omni_matrix_filter, ticker, total_q, regime_data)
                     
                     # 3. 예산 및 0주 팩트 스캔
                     safe_seed = await asyncio.to_thread(self.cfg.get_seed, ticker)
@@ -138,7 +135,7 @@ class TelegramCallbacks:
                     msg = f"🔍 <b>[ {ticker} V-REV 런타임 엑스레이 진단 ]</b>\n"
                     msg += f"▫️ <b>가상 시간</b> : 15:30 EST (타임 슬라이싱 4회차)\n"
                     msg += f"▫️ <b>현재가</b> : ${curr_p:.2f} / <b>전일종가</b> : ${prev_c:.2f}\n"
-                    msg += f"▫️ <b>옴니 매트릭스</b> : {'🟢 진입 허용' if omni_filter['allow_buy'] else '🔴 진입 차단'} ({omni_filter['msg']})\n"
+                    # MODIFIED: [V60.00] 옴니 매트릭스 렌더링 텍스트 영구 소각 완료
                     msg += f"▫️ <b>0주 새출발</b> : {'True' if is_zero_start else 'False'}\n"
                     msg += f"▫️ <b>1분 할당 예산</b> : ${slice_budget:.2f} (총 예산의 {current_weight*100:.1f}%)\n"
                     msg += f"▫️ <b>누적 잔여 예산</b> : ${rem_budget:.2f}\n\n"
@@ -147,8 +144,7 @@ class TelegramCallbacks:
                     
                     if rem_budget <= 0:
                         msg += "👉 <b>예산 고갈 (Budget Empty)</b> : 할당된 1일치 예산(15%)이 모두 소진되어 타격을 종료합니다.\n"
-                    elif not omni_filter['allow_buy'] and total_q == 0:
-                        msg += "👉 <b>진입 차단 (Regime Blocked)</b> : 옴니 매트릭스가 횡보장 등으로 진입을 불허하여 스킵합니다.\n"
+                    # MODIFIED: [V60.00] 옴니 매트릭스 진입 차단 분기점 영구 소각 완료
                     else:
                         # Buy1 타격 검증
                         msg += f"🔴 <b>매수 타점(Buy1)</b> : ${p1_trigger:.2f} (누적 예산: ${b1_budget:.2f})\n"
