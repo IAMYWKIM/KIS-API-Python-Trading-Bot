@@ -14,6 +14,7 @@
 # process_auto_sync 실행 중 MANUAL_BUY 및 MANUAL_SYNC 감지 시 작동하던 _write_q_manual, _write_q_file 등의
 # 다이렉트 파일 I/O 로직을 100% 적출하고, QueueLedger의 스레드 세이프 코어 메서드(overwrite_queue)로 락온 완료.
 # NEW: [V59.05] VWAP 런타임 엑스레이(Dry-Run) 진단 버튼 이식
+# 🚨 MODIFIED: [V59.07 런타임 붕괴(IndentationError) 수술] _write_v_state 등 파일 I/O 블록의 들여쓰기 팩트 완벽 교정
 # ==========================================================
 import logging
 import datetime
@@ -250,7 +251,7 @@ class TelegramSyncEngine:
                                 temp_sim_qty += exec_qty
                                 temp_sim_avg = new_avg
                             else:
-                                 temp_sim_qty -= exec_qty
+                                temp_sim_qty -= exec_qty
                                 
                             rec_item = {
                                 'date': target_ledger_str, 'side': "BUY" if side_cd == "02" else "SELL",
@@ -317,12 +318,12 @@ class TelegramSyncEngine:
                         new_target_records.append(calib_item)
                         
                         if new_target_records:
-                         if actual_qty > 0:
-                            for r in new_target_records:
-                                r['avg_price'] = actual_avg
+                            if actual_qty > 0:
+                                for r in new_target_records:
+                                    r['avg_price'] = actual_avg
                         elif temp_recs: 
-                         if actual_qty > 0:
-                            temp_recs[-1]['avg_price'] = actual_avg
+                            if actual_qty > 0:
+                                temp_recs[-1]['avg_price'] = actual_avg
                         
                     await asyncio.to_thread(self.cfg.overwrite_incremental_ledger, ticker, temp_recs, new_target_records)
                     
@@ -445,9 +446,9 @@ class TelegramSyncEngine:
                                         q_today_qty = 0
                                         for item in q_data_before:
                                             if str(item.get("date", "")).startswith(target_ledger_str):
-                                                 iq = int(float(item.get("qty", 0)))
-                                                 q_today_qty += iq
-                                                 q_today_amt += iq * float(item.get("price", 0))
+                                                iq = int(float(item.get("qty", 0)))
+                                                q_today_qty += iq
+                                                q_today_amt += iq * float(item.get("price", 0))
                                                 
                                         pure_manual_q = b_tot_q - q_today_qty
                                         pure_manual_amt = b_tot_amt - q_today_amt
@@ -543,7 +544,7 @@ class TelegramSyncEngine:
                                     if img_path and os.path.exists(img_path):
                                         with open(img_path, 'rb') as f_out:
                                             if img_path.lower().endswith('.gif'):
-                                                 await context.bot.send_animation(chat_id=chat_id, animation=f_out)
+                                                await context.bot.send_animation(chat_id=chat_id, animation=f_out)
                                             else:
                                                 await context.bot.send_photo(chat_id=chat_id, photo=f_out)
                                 except Exception as e:
@@ -564,7 +565,7 @@ class TelegramSyncEngine:
                             if os.path.exists(vwap_state_file):
                                 try:
                                     def _read_v_state(f_path):
-                                         with open(f_path, 'r', encoding='utf-8') as vf:
+                                        with open(f_path, 'r', encoding='utf-8') as vf:
                                             return json.load(vf)
                                             
                                     v_state = await asyncio.to_thread(_read_v_state, vwap_state_file)
@@ -573,12 +574,12 @@ class TelegramSyncEngine:
                                         v_state["executed"]["SELL_QTY"] = max(0, old_sell_qty - gap_qty)
                                         
                                     def _write_v_state(state_dict, f_path):
-                                            fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(f_path) or '.')
-                                            with os.fdopen(fd, 'w', encoding='utf-8') as _vf_out:
-                                                 json.dump(state_dict, _vf_out, ensure_ascii=False, indent=4)
-                                                _vf_out.flush()
-                                                os.fsync(_vf_out.fileno())
-                                            os.replace(tmp_path, f_path)
+                                        fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(f_path) or '.')
+                                        with os.fdopen(fd, 'w', encoding='utf-8') as _vf_out:
+                                            json.dump(state_dict, _vf_out, ensure_ascii=False, indent=4)
+                                            _vf_out.flush()
+                                            os.fsync(_vf_out.fileno())
+                                        os.replace(tmp_path, f_path)
                                             
                                     await asyncio.to_thread(_write_v_state, v_state, vwap_state_file)
                                     logging.info(f"🔧 [{ticker}] VWAP 잔차 수학적 보정 완료: {old_sell_qty} -> {v_state['executed']['SELL_QTY']}")
@@ -591,19 +592,19 @@ class TelegramSyncEngine:
                                 await context.bot.send_message(chat_id, f"🔧 <b>[{ticker}] V-REV 큐(Queue) 비파괴 보정 완료!</b>\n▫️ 수동 매도 물량(<b>{gap_qty}주</b>)을 LIFO 큐에서 안전하게 차감했습니다.", parse_mode='HTML')
                             
                         elif adjusted_actual_qty > 0 and adjusted_actual_qty > vrev_ledger_qty:
-                             gap_qty = adjusted_actual_qty - vrev_ledger_qty
+                            gap_qty = adjusted_actual_qty - vrev_ledger_qty
                             
                             real_buy_price = actual_avg
                             try:
-                               buy_execs = [ex for ex in (target_execs or []) if ex.get('sll_buy_dvsn_cd') == "02"]
+                                buy_execs = [ex for ex in (target_execs or []) if ex.get('sll_buy_dvsn_cd') == "02"]
                                 if buy_execs:
                                     b_tot_amt = sum(int(float(ex.get('ft_ccld_qty') or '0')) * float(ex.get('ft_ccld_unpr3') or '0') for ex in buy_execs)
                                     b_tot_q = sum(int(float(ex.get('ft_ccld_qty') or '0')) for ex in buy_execs)
                                     if b_tot_q > 0:
-                                         real_buy_price = round(b_tot_amt / b_tot_q, 4)
+                                        real_buy_price = round(b_tot_amt / b_tot_q, 4)
                                     
                                     if real_buy_price == actual_avg:
-                                         search_start_dt = (now_kst - datetime.timedelta(days=4)).strftime('%Y%m%d')
+                                        search_start_dt = (now_kst - datetime.timedelta(days=4)).strftime('%Y%m%d')
                                         past_raw = await asyncio.to_thread(self.broker.get_execution_history, ticker, search_start_dt, query_end_dt)
                                         past_execs = filter_to_est(past_raw)
                                         if past_execs:
@@ -612,7 +613,7 @@ class TelegramSyncEngine:
                                                 b_tot_amt = sum(int(float(ex.get('ft_ccld_qty') or '0')) * float(ex.get('ft_ccld_unpr3') or '0') for ex in p_buy_execs)
                                                 b_tot_q = sum(int(float(ex.get('ft_ccld_qty') or '0')) for ex in p_buy_execs)
                                                 if b_tot_q > 0:
-                                                     real_buy_price = round(b_tot_amt / b_tot_q, 4)
+                                                    real_buy_price = round(b_tot_amt / b_tot_q, 4)
                             except Exception as e:
                                 logging.error(f"🚨 수동매수 실제 체결단가 역산 중 예외 발생 (기존 평단가 fallback): {e}")
 
