@@ -104,7 +104,7 @@ class TelegramController:
         elif market_open <= now < market_close:
             return "REG", "🔥 정규장"
         elif market_close <= now < after_end:
-             return "AFTER", "🌙 애프터마켓"
+            return "AFTER", "🌙 애프터마켓"
         else:
             return "CLOSE", "⛔ 장마감"
 
@@ -203,7 +203,7 @@ class TelegramController:
                     if jobs and len(jobs) > 0 and jobs[0].data is not None:
                         app_data = jobs[0].data
                 except Exception:
-                     app_data = {}
+                    app_data = {}
                     
             msg, markup = await asyncio.wait_for(plugin.get_console_message(app_data), timeout=10.0)
             await status_msg.edit_text(msg, reply_markup=markup, parse_mode='HTML')
@@ -523,9 +523,9 @@ class TelegramController:
                 is_simulation=True, regime_data=regime_data
             )
             
-            # 🚨 MODIFIED: [V44.49] 파일 I/O 스캔 비동기 래핑
+            # 🚨 MODIFIED: [V44.49] 파일 I/O 스캔 비동기 래핑 및 변수명 팩트 교정
             split = await asyncio.to_thread(self.cfg.get_split_count, t)
-            seed = await asyncio.to_thread(self.cfg.get_seed, t)
+            safe_seed = await asyncio.to_thread(self.cfg.get_seed, t)
             
             t_val = plan.get('t_val', 0.0)
             is_rev = plan.get('is_reverse', False)
@@ -544,12 +544,12 @@ class TelegramController:
                 v_rev_q_lots = len(q_list)
                 v_rev_q_qty = sum(item.get('qty', 0) for item in q_list)
 
-                one_portion_cash = seed * 0.15
+                one_portion_cash = safe_seed * 0.15
                 plan['one_portion'] = one_portion_cash
                 half_portion_cash = one_portion_cash * 0.5
                 
                 tag = "VWAP" if is_manual_vwap else "LOC"
-                 
+                
                 # 🚨 MODIFIED: [V-REV 지시서 매도 가이던스 디커플링 누수 완벽 수술]
                 # 예방적 덫 전면 소각으로 인해 스냅샷의 orders 리스트가 비어있음에도 "orders" 키 존재 여부만으로 분기를 타서 큐(Queue) 역산 로직(elif)을 스킵해버리는 치명적 시각적 맹점 원천 차단
                 snap_sells_for_ui = [o for o in cached_snap.get("orders", []) if o.get('side') == 'SELL' and "잭팟" not in o.get('desc', '')] if cached_snap else []
@@ -577,7 +577,7 @@ class TelegramController:
                                 snap_avg = _snap_amt / _snap_q if _snap_q > 0 else actual_avg
                             else:
                                 snap_avg = actual_avg
-                            
+                        
                         target_jackpot = round(snap_avg * 1.01, 2) if snap_avg > 0 else 0.0
                         v_rev_guidance += f" 🎯 [전체 잭팟] ${target_jackpot:.2f} <b>{logic_qty}주</b> (옵션)\n"
                 elif q_list and logic_qty > 0:
@@ -594,7 +594,7 @@ class TelegramController:
                         
                         target_upper = round(upper_avg * 1.005, 2)
                         v_rev_guidance += f" 🔵 매도2(Pop2) ${target_upper:.2f} <b>{upper_qty}주</b> ({tag})\n"
-                
+                    
                     if not is_manual_vwap:
                         temp_qty = 0
                         temp_inv = 0.0
