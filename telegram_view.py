@@ -17,6 +17,9 @@
 # NEW: [V59.06] VWAP 런타임 엑스레이(Dry-Run) 진단 버튼을 주요 뷰포트(지시서, 장부, 큐 관리)에 전면 이식 완료.
 # 🚨 MODIFIED: [V60.00 옴니 매트릭스 락다운 전면 폐기]
 # 지시서(/sync) 렌더링 시 옴니 매트릭스 락다운 경고문을 표출하던 시각적 찌꺼기 100% 영구 소각 완료.
+# 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각 작전 지시서 적용]
+# 1) 시작 화면 안내 텍스트 중 무결성 듀얼 모멘텀을 무결성 싱글 롱 모멘텀으로 팩트 교정 완료.
+# 2) 전술 설정 메뉴 내 관제탑 진입 버튼 텍스트에서 숏(SOXS) 렌더링 영구 소각 및 단일 롱 모멘텀 팩트 압축 완료.
 # ==========================================================
 import os
 import math
@@ -78,7 +81,8 @@ class TelegramView:
         dst_state = "🌞서머타임 ON" if is_dst else "❄️서머타임 OFF"
         
         msg = f"🌌 [ 옴니 매트릭스 퀀트 엔진 {latest_version} ]\n"
-        msg += "💠 무결성 듀얼 모멘텀 (SOXL/SOXS) & V-REV 갭 스위칭\n\n"
+        # MODIFIED: [V61.00 숏(SOXS) 전면 소각] 무결성 싱글 롱 모멘텀 팩트 교정
+        msg += "💠 무결성 싱글 롱 모멘텀 (SOXL 전용) & V-REV 갭 스위칭\n\n"
         
         msg += f"🕒 [ 운영 스케줄 ({dst_state}) ]\n"
         msg += "🔹 6시간 간격 : 🔑 API 토큰 자동 갱신\n"
@@ -363,7 +367,7 @@ class TelegramView:
                 v_mode_display = "무매4 (VWAP)" if is_manual_vwap else "무매4 (LOC)"
                 main_icon = "💎"
                 bdg_txt = f"당일 예산: ${safe_one_portion:,.0f}"
-                
+            
             is_rev_logic = t_info.get('is_reverse', False)
             proc_status = t_info.get('plan', {}).get('process_status', '')
             tracking_info = t_info.get('tracking_info', {})
@@ -613,7 +617,8 @@ class TelegramView:
                 # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] TARGET_MANUAL, TARGET_AUTO, EARLY, MULTI 설정 버튼 100% 적출 및 소각 완료
                 
                 if t == "SOXL":
-                    keyboard.append([InlineKeyboardButton(f"🔫 {t} (롱) + SOXS (숏) 모멘텀 관제탑", callback_data=f"AVWAP:MENU:{t}")])
+                    # MODIFIED: [V61.00 숏(SOXS) 전면 소각 작전 지시서 적용] 관제탑 텍스트 싱글 롱 모멘텀 팩트 교정
+                    keyboard.append([InlineKeyboardButton(f"🔫 {t} 단일 롱 모멘텀 관제탑", callback_data=f"AVWAP:MENU:{t}")])
             
             if ver == "V_REV":
                 row2 = [

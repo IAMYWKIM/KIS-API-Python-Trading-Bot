@@ -23,6 +23,9 @@
 # NEW: [V59.06] VWAP 런타임 엑스레이(Dry-Run) 진단 엔진 라우터 이식 완료 (순수 Read-Only 섀도우 연산)
 # 🚨 MODIFIED: [V60.00 옴니 매트릭스 락다운 데드코드 전면 폐기]
 # XRAY 진단 엔진 내부에서 매수 방아쇠를 강제로 잠그던 옴니 매트릭스 스캔 블록 및 시각적 브리핑 요소를 영구 소각함.
+# 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각 작전 지시서 적용]
+# 1) SET_VER 및 SET_VER_CONFIRM 콜백 내 SOXS 락다운 방어막 텍스트를 시스템 영구 폐기 경고로 오버라이드 완료.
+# 2) TICKER 액션 내 SOXS 경고문 교정 및 '듀얼 모멘텀' 텍스트를 '싱글 모멘텀'으로 팩트 교정 완료.
 # ==========================================================
 import logging
 import datetime
@@ -93,7 +96,7 @@ class TelegramCallbacks:
                     
                     if curr_p is None: curr_p = 0.0
                     if prev_c is None: prev_c = 0.0
-                    
+                     
                     # MODIFIED: [V60.00] 옴니 매트릭스 판독 스캔 블록 영구 소각 완료
                     
                     q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) if getattr(self, 'queue_ledger', None) else []
@@ -200,7 +203,7 @@ class TelegramCallbacks:
                     q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
                 else:
                     q_data = []
-            
+             
                 msg, markup = self.view.get_queue_management_menu(ticker, q_data)
                 await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
 
@@ -245,8 +248,8 @@ class TelegramCallbacks:
             # 🚨 [비동기 래핑]
             q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
             if not q_data:
-                await query.answer("⚠️ 큐(Queue)가 텅 비어있어 수혈할 잔여 물량이 없습니다.", show_alert=True)
-                return
+                 await query.answer("⚠️ 큐(Queue)가 텅 비어있어 수혈할 잔여 물량이 없습니다.", show_alert=True)
+                 return
                 
             await query.answer("⏳ KIS 서버에 수동 긴급 수혈(MOC) 명령을 격발합니다...", show_alert=False)
             
@@ -304,7 +307,7 @@ class TelegramCallbacks:
                     await query.answer("✅ 지층 삭제 완료. KIS 원장과 동기화합니다.", show_alert=False)
                     
                     if ticker not in self.sync_engine.sync_locks:
-                        self.sync_engine.sync_locks[ticker] = asyncio.Lock()
+                         self.sync_engine.sync_locks[ticker] = asyncio.Lock()
                     if not self.sync_engine.sync_locks[ticker].locked():
                         await self.sync_engine.process_auto_sync(ticker, chat_id, context, silent_ledger=True)
                         
@@ -534,7 +537,7 @@ class TelegramCallbacks:
                 except Exception as e:
                     logging.debug(f"YF 정규장 종가 롤오버 스캔 실패 ({t}): {e}")
                 if curr_p > 0 and prev_c == 0.0:
-                        prev_c = curr_p
+                    prev_c = curr_p
             
             ma_5day = await asyncio.to_thread(self.broker.get_5day_ma, t)
             
@@ -604,8 +607,9 @@ class TelegramCallbacks:
             if ticker == "TQQQ" and new_ver == "V_REV":
                 await context.bot.send_message(chat_id, "⚠️ [절대 헌법 위반] TQQQ는 V14 무매4 전용 아키텍처입니다. 전환이 차단되었습니다.")
                 return
+            # 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각] SOXS 전환 락다운 텍스트 교정
             if ticker == "SOXS":
-                await context.bot.send_message(chat_id, "⚠️ [절대 헌법 위반] SOXS는 듀얼 모멘텀 타격용 티커로, 개별 모드 전환이 영구 차단되었습니다.")
+                await context.bot.send_message(chat_id, "⚠️ [V61.00 절대 헌법] 숏(SOXS) 운용은 시스템 전역에서 100% 영구 소각되었습니다.")
                 return
 
             async with self.tx_lock:
@@ -667,8 +671,9 @@ class TelegramCallbacks:
             if ticker == "TQQQ" and target_ver == "V_REV":
                 await context.bot.send_message(chat_id, "⚠️ [절대 헌법 위반] TQQQ는 V14 무매4 전용 아키텍처입니다. 전환이 차단되었습니다.")
                 return
+            # 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각] SOXS 전환 락다운 텍스트 교정
             if ticker == "SOXS":
-                await context.bot.send_message(chat_id, "⚠️ [절대 헌법 위반] SOXS는 듀얼 모멘텀 타격용 티커로, 개별 모드 전환이 영구 차단되었습니다.")
+                await context.bot.send_message(chat_id, "⚠️ [V61.00 절대 헌법] 숏(SOXS) 운용은 시스템 전역에서 100% 영구 소각되었습니다.")
                 return
 
             async with self.tx_lock:
@@ -807,15 +812,16 @@ class TelegramCallbacks:
             if sub == "ALL":
                 target_tickers = ["SOXL", "TQQQ"]
                 msg_txt = "SOXL + TQQQ 통합"
+            # 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각] 듀얼 모멘텀 -> 싱글 모멘텀 교정 및 SOXS 경고 오버라이드
             elif "," in sub:
                 if "SOXS" in sub.split(","):
-                    await context.bot.send_message(chat_id, "⚠️ [절대 헌법 위반] SOXS는 듀얼 모멘텀 암살자 전용이므로 메인 장부에 등록할 수 없습니다.")
+                    await context.bot.send_message(chat_id, "⚠️ [V61.00 절대 헌법] 숏(SOXS) 운용은 시스템 전역에서 100% 영구 소각되었습니다.")
                     return
                 target_tickers = sub.split(",")
-                msg_txt = " + ".join(target_tickers) + " 듀얼 모멘텀"
+                msg_txt = " + ".join(target_tickers) + " 싱글 모멘텀"
             else:
                 if sub == "SOXS":
-                    await context.bot.send_message(chat_id, "⚠️ [절대 헌법 위반] SOXS 단독 운용 모드는 영구 폐기되었습니다.")
+                    await context.bot.send_message(chat_id, "⚠️ [V61.00 절대 헌법] 숏(SOXS) 운용은 시스템 전역에서 100% 영구 소각되었습니다.")
                     return
                 target_tickers = [sub]
                 msg_txt = sub + " 전용"
