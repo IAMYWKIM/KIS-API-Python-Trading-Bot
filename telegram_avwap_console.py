@@ -14,11 +14,13 @@
 # 🚨 MODIFIED: [관제탑 듀얼 세션 디커플링 (Time-Split Radar)] 
 # 프리마켓(04:00~09:29)과 정규장(09:30~16:00) 데이터를 100% 팩트 분리하여, 정규장 개장 시 프리장 노이즈를 완벽히 소각하고 0점 세팅 락온.
 # 🚨 MODIFIED: [V56.00 상태 기억형(Stateful Latching) 모멘텀 락온 엔진 UI 디커플링 수술]
-# 현재 캔들이 조건에 맞지 않더라도 영구 락온 상태라면 모멘텀 🟢 점등 유지 및 "음봉이지만 시계열 락온 유지" 직관적 텍스트 렌더링 동기화 완료.
+# 현재 캔들이 조건에 맞지더라도 영구 락온 상태라면 모멘텀 🟢 점등 유지 및 "음봉이지만 시계열 락온 유지" 직관적 텍스트 렌더링 동기화 완료.
 # 🚨 MODIFIED: [V59.00 AVWAP 암살자 예산 100% 수혈 및 15:25 전량 덤핑 팩트 교정]
 # 관제탑 렌더링 분기점을 15:00에서 15:25로 이동하여 시각적 디커플링 원천 차단
 # 🚨 MODIFIED: [V59.01 AVWAP 관제탑 '목표 익절' 텍스트 영구 소각]
 # 암살자 청산 로직이 15:25 EST 무조건 덤핑으로 대수술됨에 따라, 의미를 상실한 목표 수익률 연산 및 '목표 익절' 렌더링 블록을 시스템에서 100% 적출(소각) 완료.
+# 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 
+# 15:25 전량 덤핑 헌법에 따라 무의미해진 '목표가 익절 대기' 환각 텍스트를 '미체결 잔량 오버나이트 롤오버'로 팩트 교정 완료.
 # ==========================================================
 import logging
 import datetime
@@ -92,7 +94,7 @@ class AvwapConsolePlugin:
                 avwap_ctx = await asyncio.wait_for(
                     asyncio.to_thread(self.strategy.v_avwap_plugin.fetch_macro_context, base_tkr), timeout=4.0
                 )
-            
+             
             if avwap_ctx:
                 base_prev_vwap = float(avwap_ctx.get('prev_vwap', 0.0))
             
@@ -116,7 +118,7 @@ class AvwapConsolePlugin:
                     base_day_low = float(df['low'].astype(float).min())
                     base_reg_high = base_day_high
                     base_reg_low = base_day_low
-                    
+                     
                     df['tp'] = (df['high'].astype(float) + df['low'].astype(float) + df['close'].astype(float)) / 3.0
                     df['vol'] = df['volume'].astype(float)
                     df['vol_tp'] = df['tp'] * df['vol']
@@ -395,7 +397,7 @@ class AvwapConsolePlugin:
                 def make_bar(exh):
                     pos = min(5, max(0, math.ceil(exh / 20.0)))
                     return "━" * pos + "🎯" + "━" * (5 - pos)
-                
+
                 msg += f"\n📊 <b>[ {t} 당일 체력 정밀 분석 ]</b>\n"
                 msg += f"▫️ 전일 종가: <b>${prev_c:.2f}</b> (베이스라인)\n"
                 msg += f"▫️ {hl_label} 고가: <b>${day_high:.2f}</b> ({high_pct:+.2f}%/<b>+{high_rebound_pct:.2f}%</b>)\n"
@@ -424,11 +426,9 @@ class AvwapConsolePlugin:
             if not is_avwap_active:
                 status_txt = "⚪ 모드 비활성 (레이더 관측 중)"
             elif is_shutdown: 
+                # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 15:25 전량 덤핑 후 물리적 잔량 발생 시 팩트 기반 렌더링으로 진공 압축
                 if avwap_qty > 0:
-                    if curr_time >= time_1525 and curr_p <= avwap_avg:
-                        status_txt = "🌙 오버나이트 존버 모드 (절대손절금지)"
-                    else:
-                        status_txt = "🌙 오버나이트 홀딩 중 (목표가 익절 대기)"
+                    status_txt = "🌙 미체결 잔량 오버나이트 롤오버"
                 else:
                     status_txt = "🛑 당일 영구동결 (SHUTDOWN)"
             elif avwap_qty > 0: 

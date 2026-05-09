@@ -15,7 +15,9 @@
 # 🚨 MODIFIED: [V56.00 차세대 AVWAP 실전 암살자 전면 재가동 락온]
 # - Phantom Radar 암살자 제어 메뉴 영구 봉인 락다운 전면 해체.
 # - MODE 라우터 내 AVWAP_WARN, AVWAP_ON, AVWAP_OFF 팩트 제어 로직 100% 복구 완료.
-# - AVWAP_SET 라우터 내 TARGET_MANUAL, TARGET_AUTO, EARLY, MULTI 실전 타격 제어 파이프라인 무결점 복원.
+# 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 
+# 15:25 전량 덤핑 헌법에 따라 의미를 상실한 AVWAP_SET 라우터 내 TARGET_MANUAL, TARGET_AUTO, EARLY, MULTI 
+# 제어 콜백 파이프라인(데드코드)을 전면 철거하고 REFRESH 기능만 보존 완료.
 # ==========================================================
 import logging
 import datetime
@@ -184,7 +186,7 @@ class TelegramCallbacks:
                 q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
             else:
                 q_data = []
-            
+             
             qty, price = 0, 0.0
             for item in q_data:
                 if item.get('date') == target_date:
@@ -204,7 +206,7 @@ class TelegramCallbacks:
                     # 🚨 [V55.00 오퍼레이션 SSOT] 다이렉트 파일 I/O 영구 소각 및 코어 메서드 직결
                     if getattr(self, 'queue_ledger', None):
                         await asyncio.to_thread(self.queue_ledger.delete_lot, ticker, target_date)
-                    
+                     
                     await query.answer("✅ 지층 삭제 완료. KIS 원장과 동기화합니다.", show_alert=False)
                     
                     if ticker not in self.sync_engine.sync_locks:
@@ -301,7 +303,7 @@ class TelegramCallbacks:
                 await query.edit_message_text(f"✅ <b>[{ticker}] 삼위일체 소각(Nuke) 및 초기화 완료!</b>\n▫️ 본장부, 백업장부, 큐(Queue), 에스크로의 찌꺼기 데이터가 100% 영구 삭제되었습니다.\n▫️ 다음 매수 진입 시 0주 새출발 디커플링 타점 모드로 완벽히 재시작합니다.", parse_mode='HTML')
             
             elif sub == "CANCEL":
-                await query.edit_message_text("❌ 닫았습니다.", parse_mode='HTML')
+                 await query.edit_message_text("❌ 닫았습니다.", parse_mode='HTML')
 
         elif action == "REC":
             await query.answer()
@@ -415,7 +417,7 @@ class TelegramCallbacks:
                 
             if holdings is None:
                 return await query.edit_message_text("❌ API 통신 오류로 주문을 실행할 수 없습니다.")
-                
+                 
             active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
             _, allocated_cash = await asyncio.to_thread(controller._calculate_budget_allocation, cash, active_tickers)
             h = holdings.get(t, {'qty':0, 'avg':0})
@@ -550,7 +552,7 @@ class TelegramCallbacks:
                 await asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, ticker, False)
             if hasattr(self.cfg, 'set_manual_vwap_mode'):
                 await asyncio.to_thread(self.cfg.set_manual_vwap_mode, ticker, False)
-                
+            
             await query.edit_message_text(f"✅ <b>[{ticker}]</b> 퀀트 엔진이 <b>V14 무매4</b> 모드로 전환되었습니다.\n▫️ /sync 명령어에서 변경된 지시서를 확인하세요.", parse_mode='HTML')
 
         elif action == "SET_VER_CONFIRM":
@@ -643,7 +645,7 @@ class TelegramCallbacks:
             render_app_data = context.bot_data['app_data']
             
             if context.job_queue:
-                for job in context.job_queue.jobs():
+                 for job in context.job_queue.jobs():
                     if job.data is not None:
                         render_app_data = job.data
             
@@ -662,34 +664,7 @@ class TelegramCallbacks:
                     else:
                         await query.answer(f"갱신 에러: {e}", show_alert=True)
             
-            # MODIFIED: [V56.00 차세대 AVWAP 실전 암살자 전면 재가동 락온]
-            elif action_type == "TARGET_MANUAL":
-                controller.user_states[chat_id] = f"CONF_AVWAP_TARGET_{ticker}"
-                await context.bot.send_message(chat_id, f"🎯 <b>[{ticker}] 수동 목표 수익률(%)을 띄어쓰기 없이 숫자로만 입력하세요.</b>\n(예: 3.5)", parse_mode='HTML')
-                await query.answer()
-            elif action_type == "TARGET_AUTO":
-                tracking_cache[f"AVWAP_TARGET_MODE_{ticker}"] = "AUTO"
-                if ticker == "SOXL":
-                    tracking_cache["AVWAP_TARGET_MODE_SOXS"] = "AUTO"
-                await query.answer("🤖 자율 목표 전환 완료", show_alert=False)
-                try:
-                    from telegram_avwap_console import AvwapConsolePlugin
-                    plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
-                    msg, markup = await plugin.get_console_message(render_app_data)
-                    await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                except Exception:
-                    pass
-            elif action_type in ["EARLY", "MULTI"]:
-                is_multi = (action_type == "MULTI")
-                await asyncio.to_thread(self.cfg.set_avwap_multi_strike_mode, ticker, is_multi)
-                await query.answer(f"🔄 {'다중출장' if is_multi else '조기퇴근'} 모드로 전환되었습니다.", show_alert=False)
-                try:
-                    from telegram_avwap_console import AvwapConsolePlugin
-                    plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
-                    msg, markup = await plugin.get_console_message(render_app_data)
-                    await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                except Exception:
-                    pass
+            # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] TARGET_MANUAL, TARGET_AUTO, EARLY, MULTI 콜백 파이프라인 100% 소각 완료
 
         elif action == "MODE":
             mode_val = sub

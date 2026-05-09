@@ -19,6 +19,7 @@
 # 🚨 MODIFIED: [V47.00 하이킨아시 듀얼 모멘텀] 옴니 매트릭스 락다운 블록 바이패스 처리(04:00 EST 개방)
 # 🚨 NEW: [달력 API 결측 연쇄 기절 방어] 장운영시간 빈 값 반환 시 평일 09:30~16:00 EST 강제 폴백 락온 이식 완료.
 # 🚨 MODIFIED: [V59.00 AVWAP 암살자 예산 100% 수혈 및 15:25 전량 덤핑 팩트 교정]
+# 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 매도 사유 내 잔재하는 낡은 익절(조기퇴근 등) 분기 100% 적출 및 15:25 덤핑 셧다운 단일화 락온
 # ==========================================================
 import logging
 import datetime
@@ -147,7 +148,7 @@ async def scheduled_sniper_monitor(context):
                 else:
                     _logical_date = _now_est
                 _logical_date_str = _logical_date.strftime('%Y-%m-%d')
-                
+
                 # 🚨 MODIFIED: [V46.03 예산 침범 패러독스 방어] KIS 증거금 룰에 의해 AVWAP이 본대 예산을 침범하는 것을 막기 위해 하드 마진 락온
                 for tk in await asyncio.to_thread(cfg.get_active_tickers):
                     if await asyncio.to_thread(cfg.get_version, tk) == "V_REV":
@@ -232,7 +233,7 @@ async def scheduled_sniper_monitor(context):
                             except Exception as e:
                                 logging.error(f"AVWAP 상태 복구 실패: {e}")
                             tracking_cache[f"AVWAP_INIT_{current_target}"] = True
-                        
+            
                         if tracking_cache.get(f"AVWAP_SHUTDOWN_{current_target}"): continue
                         
                         target_base = base_map.get(t, t) 
@@ -310,7 +311,7 @@ async def scheduled_sniper_monitor(context):
                             high_low_task = asyncio.to_thread(broker.get_day_high_low, current_target)
                             atr_task = asyncio.to_thread(broker.get_atr_data, current_target)
                             base_hl_task = asyncio.to_thread(broker.get_day_high_low, target_base)
-                             
+                            
                             res_prev, res_hl, res_atr, res_base_hl = await asyncio.wait_for(
                                 asyncio.gather(prev_c_task, high_low_task, atr_task, base_hl_task, return_exceptions=True),
                                 timeout=10.0
@@ -403,7 +404,7 @@ async def scheduled_sniper_monitor(context):
                                         else:
                                             ccld_qty = qty
                                             break
-                                    
+                                            
                                     if ccld_qty < qty:
                                         try:
                                             await asyncio.to_thread(broker.cancel_order, current_target, odno)
@@ -464,7 +465,7 @@ async def scheduled_sniper_monitor(context):
                                     except Exception:
                                         bid_price = 0.0
                                     exec_price = bid_price if bid_price > 0 else exec_curr_p
-                                    
+                                        
                                 has_unfilled = False
                                 for _ in range(4):
                                     unfilled = await asyncio.to_thread(broker.get_unfilled_orders_detail, current_target)
@@ -497,7 +498,7 @@ async def scheduled_sniper_monitor(context):
                                         else:
                                             ccld_qty = qty
                                             break
-                                        
+                                            
                                     if ccld_qty < qty:
                                         try:
                                             await asyncio.to_thread(broker.cancel_order, current_target, odno)
@@ -517,35 +518,20 @@ async def scheduled_sniper_monitor(context):
                                             strikes = tracking_cache.get(f"AVWAP_STRIKES_{current_target}", 0) + 1
                                             tracking_cache[f"AVWAP_STRIKES_{current_target}"] = strikes
                                             
-                                            # 🚨 MODIFIED: [V59.00 AVWAP 15:25 전량 덤핑 락온]
-                                            if "TIME_STOP" in reason or "15:25_도달" in reason:
+                                            # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 낡은 매도 사유 분기 100% 적출 및 15:25_도달 셧다운 단일화 락온
+                                            if "15:25_도달" in reason:
                                                 msg += "\n🛡️ 금일 해당 종목의 15:25 타임스탑 청산 완료, 오버나이트 갭하락 방어를 위해 단타 작전을 <b>영구 동결(Shutdown)</b>합니다."
-                                                shutdown_flag = True
-                                            elif "HARD_STOP" in reason or "손절" in reason:
-                                                msg += "\n🚨 손절(-8.0%) 피격 감지! 뇌동매매 방지를 위해 당일 암살자 작전을 <b>영구 동결(Shutdown)</b>합니다."
-                                                shutdown_flag = False 
-                                            elif "조기퇴근" in reason:
-                                                msg += f"\n🛡️ <b>[ {strikes}회차 출장 익절 완료 ]</b> 조기퇴근 모드 설정에 따라 당일 암살자 작전을 <b>영구 동결(Shutdown)</b>합니다."
-                                                shutdown_flag = False
-                                            elif "AUTO_하이킨아시_역추세" in reason or "MANUAL_목표달성" in reason:
-                                                msg += f"\n🛡️ <b>[ {strikes}회차 출장 익절 완료 (투트랙 엑시트) ]</b> 즉각 다음 모멘텀 타점 탐색을 시작합니다."
-                                                shutdown_flag = False
                                             else:
-                                                msg += f"\n🛡️ <b>[ {strikes}회차 출장 익절 완료 ]</b> 즉각 다음 모멘텀 타점 탐색을 시작합니다."
-                                                shutdown_flag = False
+                                                msg += f"\n🛡️ <b>[ {strikes}회차 출장 청산 완료 ]</b> 당일 암살자 작전을 <b>영구 동결(Shutdown)</b>합니다."
+                                            shutdown_flag = True
                                             
                                             new_avg = 0.0
                                             avwap_free_cash += (ccld_qty * exec_price)
                                         else:
                                             msg += f"\n⚠️ 잔량 {new_qty}주 발생 (미체결 강제 취소됨, 다음 1분봉 루프에서 재시도)"
                                             
-                                            if any(k in reason for k in ["조기퇴근", "HARD_STOP", "손절", "TIME_STOP"]):
-                                                shutdown_flag = True
-                                            # 🚨 MODIFIED: [V59.00 AVWAP 15:25 전량 덤핑 락온]
-                                            if any(k in reason for k in ["15:25_도달"]):
-                                                shutdown_flag = True
-                                            if any(k in reason for k in ["조기퇴근", "HARD_STOP", "손절"]):
-                                                shutdown_flag = False
+                                            # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 낡은 매도 사유 분기 100% 적출 및 15:25_도달 셧다운 단일화 락온
+                                            shutdown_flag = True
                                         
                                             new_avg = tracking_cache.get(f"AVWAP_AVG_{current_target}", 0.0)
 
@@ -634,7 +620,7 @@ async def scheduled_sniper_monitor(context):
                     if qty > 0:
                         cancelled = await asyncio.to_thread(broker.cancel_targeted_orders, t, "02", "03")
                         await asyncio.sleep(1.0)
-                
+                        
                         has_unfilled = False
                         for _ in range(4):
                             unfilled = await asyncio.to_thread(broker.get_unfilled_orders_detail, t)
@@ -715,7 +701,7 @@ async def scheduled_sniper_monitor(context):
 
                 upward_mode = await asyncio.to_thread(getattr(cfg, 'get_upward_sniper_mode', lambda x: False), t)
                 is_upward_active = upward_mode and not is_rev and not sniper_sell_locked and master_switch != "DOWN_ONLY"
-                   
+                    
                 if is_zero_start_session:
                     is_upward_active = False
 

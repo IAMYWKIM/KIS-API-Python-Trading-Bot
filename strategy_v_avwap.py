@@ -5,6 +5,7 @@
 # 🚨 [치명적 맹점 수술]: 장중 HA 2연속 음봉 및 체력고갈에 의한 조기 익절(Premature Exit) 로직 전면 영구 소각.
 # 암살자는 오직 진입(BUY) 조건만 판별하며, 진입 후에는 15:25 EST까지 100% 무조건 홀딩(HOLD) 후 
 # 수익/손실 불문 전량 덤핑(SELL)하여 본진 예산을 복구하도록 아키텍처 대수술 완료.
+# 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] SELL 사유 텍스트 내부에 남아있는 레거시 키워드 '(조기퇴근)' 100% 영구 소각 완료.
 # ==========================================================
 import logging
 import datetime
@@ -223,7 +224,7 @@ class VAvwapHybridPlugin:
                     if t_high_idx < t_low_idx:
                         trend_sequence = "BEAR"
                     elif t_low_idx < t_high_idx:
-                        trend_sequence = "BULL"
+                         trend_sequence = "BULL"
 
                     if is_regular_session and curr_time < datetime.time(9, 35):
                         ha_2_bullish_no_lower = False
@@ -237,11 +238,10 @@ class VAvwapHybridPlugin:
 
                         if not df_5m.empty:
                             df_5m['HA_Close'] = (df_5m['open'].astype(float) + df_5m['high'].astype(float) + df_5m['low'].astype(float) + df_5m['close'].astype(float)) / 4.0
-                            
                             ha_open = []
                             for i in range(len(df_5m)):
                                 if i == 0:
-                                    ha_open.append((float(df_5m['open'].iloc[i]) + float(df_5m['close'].iloc[i])) / 2.0)
+                                     ha_open.append((float(df_5m['open'].iloc[i]) + float(df_5m['close'].iloc[i])) / 2.0)
                                 else:
                                     ha_open.append((ha_open[i-1] + float(df_5m['HA_Close'].iloc[i-1])) / 2.0)
 
@@ -285,13 +285,15 @@ class VAvwapHybridPlugin:
             safe_avg = avwap_avg_price if avwap_avg_price > 0 else exec_curr_p
 
             if safe_avg <= 0:
-                return _build_res('SELL', 'CORRUPT_PRICE_EMERGENCY_DUMP(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
+                # MODIFIED: [V59.02 잔재 데드코드 영구 소각] 레거시 키워드 (조기퇴근) 100% 삭제
+                return _build_res('SELL', 'CORRUPT_PRICE_EMERGENCY_DUMP', qty=safe_qty, target_price=exec_curr_p)
 
             # 🚨 MODIFIED: [V59.00 AVWAP 15:25 전량 덤핑 락온] 15:25 EST 도달 시 수익/손실 불문 무조건 전량 팩트 덤핑
             if curr_time >= time_1525:
                 avwap_state["shutdown"] = True
                 self.save_state(exec_ticker, now_est, avwap_state)
-                return _build_res('SELL', '15:25_도달_당일교전종료_무조건덤핑(조기퇴근)', qty=safe_qty, target_price=exec_curr_p)
+                # MODIFIED: [V59.02 잔재 데드코드 영구 소각] 레거시 키워드 (조기퇴근) 100% 삭제
+                return _build_res('SELL', '15:25_도달_당일교전종료_무조건덤핑', qty=safe_qty, target_price=exec_curr_p)
 
             # 🚨 [AI 에이전트 절대 주의 - 환각 방어막]
             # 장중 휩소 및 조기 익절(HA 역추세, 수익률 도달) 로직 전면 영구 소각 완료.
@@ -386,7 +388,7 @@ class VAvwapHybridPlugin:
                 cond_seq = False
         else:
             if trend_sequence == "BULL":
-                cond_seq = False
+                 cond_seq = False
 
         if cond1_met and cond2_met and cond3_met and cond_seq:
             if avwap_alloc_cash > 0:

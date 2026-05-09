@@ -10,6 +10,8 @@
 # - Phantom Radar 락다운 해제: 실전 매매를 위한 AVWAP 제어 UI 및 상태 표출 로직 100% 복원 완료.
 # - get_settlement_message 내 암살자 가동 스위치, 목표가 모드 전환, 출장 모드 스위치 주석 해제 및 배선 재결속.
 # - 관제탑 진입 버튼에서 '(모니터)' 꼬리표 소각 및 실전 작전 통제권 포트폴리오 매니저에게 반환.
+# 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 
+# 15:25 전량 덤핑 헌법에 따라 의미를 상실한 AVWAP 수동/자율 목표 및 출장 모드 설정 버튼 UI를 100% 영구 소각 완료.
 # ==========================================================
 import os
 import math
@@ -189,7 +191,7 @@ class TelegramView:
     def get_queue_action_confirm_menu(self, ticker, target_date, qty, price):
         short_date = target_date[:10]
         msg = f"🗑️ <b>[{ticker} 지층 부분 삭제 확인]</b>\n\n"
-        msg += f"선택하신 <b>[{short_date}]</b> 지층 (<b>{qty}주 / ${price:.2f}</b>) 데이터를 장부에서 도려내시겠습니까?\n"
+        msg += f"선택하신 <b>[{short_date}]</b> 지층 (<b>{qty}주 / ${price:.2f}</b>) 데이터를 장부에서 도려내하시겠습니까?\n"
         msg += "▫️ 실제 KIS 계좌의 주식은 매도되지 않습니다.\n"
         msg += "▫️ 계좌 수량과 장부가 어긋날 경우 /sync 시 비파괴 보정(CALIB)이 발동됩니다."
         
@@ -214,7 +216,6 @@ class TelegramView:
         return msg, InlineKeyboardMarkup(keyboard)
 
     def get_avwap_warning_menu(self, ticker):
-        # MODIFIED: [V56.00 차세대 AVWAP 실전 암살자 전면 재가동 락온] 경고 메뉴 활성화
         msg = f"🛑 <b>[{ticker}] 차세대 AVWAP 듀얼 모멘텀 무장 해제 및 경고</b>\n\n"
         msg += "현재 <b>AVWAP 암살자 모드</b> 가동을 지시하셨습니다.\n"
         msg += "이 전술은 잉여 현금의 100%를 장중 딥매수 모멘텀 타격에 쏟아붓는 초공격형 옵션입니다.\n\n"
@@ -494,7 +495,7 @@ class TelegramView:
                         if "수혈" in desc: 
                             ico = "🩸"
                             desc = desc.replace("🩸", "")
-                            
+                           
                         type_str = "" if o['type'] == 'LIMIT' else f"({o['type']})"
                         type_disp = f" {type_str}" if type_str else ""
                         
@@ -564,7 +565,6 @@ class TelegramView:
                 msg += f"▫️ 증권사 수수료: <b>{fee_rate}%</b>\n"
                 msg += "▫️ 막판 갭 스위칭: <b>🤖 자율주행 (상승장 자동 가동)</b>\n"
                 
-                # MODIFIED: [V56.00 차세대 AVWAP 실전 암살자 전면 재가동 락온] 상태 텍스트 복구
                 if hasattr(config, 'get_avwap_hybrid_mode'):
                     is_avwap_on = config.get_avwap_hybrid_mode(t)
                     avwap_status_txt = "실전 가동 중 🔥" if is_avwap_on else "대기 중 ⚪"
@@ -594,7 +594,6 @@ class TelegramView:
                 keyboard.append(row1)
 
             if ver == "V_REV":
-                # MODIFIED: [V56.00 차세대 AVWAP 실전 암살자 전면 재가동 락온] ON/OFF 스위치 복구
                 is_avwap = config.get_avwap_hybrid_mode(t) if hasattr(config, 'get_avwap_hybrid_mode') else False
                 avwap_txt = "⚔️ 파격적 AVWAP 모멘텀 [ OFF ]"
                 avwap_cb = f"MODE:AVWAP_WARN:{t}" 
@@ -603,28 +602,10 @@ class TelegramView:
                     avwap_cb = f"MODE:AVWAP_OFF:{t}" 
                 keyboard.append([InlineKeyboardButton(avwap_txt, callback_data=avwap_cb)])
                 
-                # 관제탑 진입 버튼에서 (모니터) 소각
+                # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] TARGET_MANUAL, TARGET_AUTO, EARLY, MULTI 설정 버튼 100% 적출 및 소각 완료
+                
                 if t == "SOXL":
                     keyboard.append([InlineKeyboardButton(f"🔫 {t} (롱) + SOXS (숏) 모멘텀 관제탑", callback_data=f"AVWAP:MENU:{t}")])
-                    
-                # MODIFIED: [V56.00 차세대 AVWAP 실전 암살자 전면 재가동 락온] 하위 설정 버튼 100% 복원
-                if is_avwap:
-                    is_multi = getattr(config, 'get_avwap_multi_strike_mode', lambda x: False)(t)
-                    strike_action = "MULTI" if not is_multi else "EARLY"
-                    strike_icon_btn = "💼 조기퇴근 전환" if is_multi else "🔁 다중출장 전환"
-                    
-                    target_mode = tracking_cache.get(f"AVWAP_TARGET_MODE_{t}", "AUTO")
-                    if target_mode == "AUTO":
-                        btn_mode_text = "🖐️ 수동 목표 전환"
-                        toggle_target_action = "TARGET_MANUAL"
-                    else:
-                        btn_mode_text = "🤖 자율 목표 전환"
-                        toggle_target_action = "TARGET_AUTO"
-                    
-                    keyboard.append([
-                        InlineKeyboardButton(btn_mode_text, callback_data=f"AVWAP_SET:{toggle_target_action}:{t}"),
-                        InlineKeyboardButton(strike_icon_btn, callback_data=f"AVWAP_SET:{strike_action}:{t}")
-                    ])
             
             if ver == "V_REV":
                 row2 = [
