@@ -21,6 +21,8 @@
 # 암살자 청산 로직이 15:25 EST 무조건 덤핑으로 대수술됨에 따라, 의미를 상실한 목표 수익률 연산 및 '목표 익절' 렌더링 블록을 시스템에서 100% 적출(소각) 완료.
 # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 
 # 15:25 전량 덤핑 헌법에 따라 무의미해진 '목표가 익절 대기' 환각 텍스트를 '미체결 잔량 오버나이트 롤오버'로 팩트 교정 완료.
+# 🚨 MODIFIED: [V59.05 잔재 데드코드 영구 소각] 
+# 15:25 단판 승부 헌법에 따라 무의미해진 다중 출장(N회차 교전 완료) 및 무한 출장 렌더링 텍스트를 100% 영구 소각 완료.
 # ==========================================================
 import logging
 import datetime
@@ -62,7 +64,7 @@ class AvwapConsolePlugin:
             
         if not avwap_tickers:
             return "⚠️ <b>[AVWAP 암살자 오프라인]</b>\n▫️ AVWAP 지원 종목이 없습니다.", None
-        
+         
         active_avwap = avwap_tickers
         tracking_cache = app_data.get('sniper_tracking', {})
         
@@ -104,7 +106,7 @@ class AvwapConsolePlugin:
             
             if df_1m is not None and not df_1m.empty:
                 df = df_1m.copy()
-                
+                 
                 # 🚨 [Time-Split Radar] 세션에 따른 데이터 슬라이싱 (노이즈 소각)
                 if 'time_est' in df.columns:
                     if is_regular_session:
@@ -177,6 +179,7 @@ class AvwapConsolePlugin:
                                 # 0.01$ 갭 필터링
                                 df_5m['No_Lower_Wick'] = (df_5m['HA_Open'] - df_5m['HA_Low']) <= 0.01
                                 df_5m['No_Upper_Wick'] = (df_5m['HA_High'] - df_5m['HA_Open']) <= 0.01
+                            
                                 df_5m['Is_Bullish'] = df_5m['HA_Close'] >= df_5m['HA_Open']
                                 df_5m['Is_Bearish'] = df_5m['HA_Close'] < df_5m['HA_Open']
 
@@ -367,11 +370,9 @@ class AvwapConsolePlugin:
             msg += f"   {c3_str} 잔여 체력 1% 이상 (현재: {rem_5_pct_console:.1f}%)\n"
             msg += f"▫️ 타격 상태: {trend_str}\n"
 
-            strike_icon_txt = "무한 출장 (실시간 추세 돌파 락온)"
-            if strikes > 0:
-                msg += f"▫️ 모드: <b>{strike_icon_txt} ({strikes}회차 교전 완료)</b>\n"
-            else:
-                msg += f"▫️ 모드: <b>{strike_icon_txt} 세팅됨</b>\n"
+            # 🚨 MODIFIED: [V59.05 잔재 데드코드 영구 소각] 다중 출장 텍스트 100% 영구 소각 완료
+            strike_icon_txt = "당일 단판 승부 (15:25 전량 덤핑 락온)"
+            msg += f"▫️ 작전: <b>{strike_icon_txt}</b>\n"
 
             msg += f"▫️ 독립 물량: {avwap_qty}주\n"
 

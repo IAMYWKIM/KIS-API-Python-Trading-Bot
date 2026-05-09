@@ -12,6 +12,8 @@
 # - 관제탑 진입 버튼에서 '(모니터)' 꼬리표 소각 및 실전 작전 통제권 포트폴리오 매니저에게 반환.
 # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 
 # 15:25 전량 덤핑 헌법에 따라 의미를 상실한 AVWAP 수동/자율 목표 및 출장 모드 설정 버튼 UI를 100% 영구 소각 완료.
+# 🚨 MODIFIED: [V59.05 잔재 데드코드 영구 소각] 
+# AVWAP 가동 경고문(UI) 내 손절(-8.0%) 피격 시 영구 동결이라는 낡은 텍스트를 15:25 EST 도달 시 무조건 전량 덤핑 청산으로 100% 팩트 교정 완료.
 # ==========================================================
 import os
 import math
@@ -216,13 +218,14 @@ class TelegramView:
         return msg, InlineKeyboardMarkup(keyboard)
 
     def get_avwap_warning_menu(self, ticker):
+        # 🚨 MODIFIED: [V59.05 잔재 데드코드 영구 소각] AVWAP 가동 경고문 팩트 교정
         msg = f"🛑 <b>[{ticker}] 차세대 AVWAP 듀얼 모멘텀 무장 해제 및 경고</b>\n\n"
         msg += "현재 <b>AVWAP 암살자 모드</b> 가동을 지시하셨습니다.\n"
         msg += "이 전술은 잉여 현금의 100%를 장중 딥매수 모멘텀 타격에 쏟아붓는 초공격형 옵션입니다.\n\n"
-        msg += "⚠️ <b>[ 실전 가동 제약 사항 (V56 락온) ]</b>\n"
+        msg += "⚠️ <b>[ 실전 가동 제약 사항 (V59 락온) ]</b>\n"
         msg += "1. 기존 V14의 상방 스나이퍼 기능은 즉시 영구 셧다운됩니다.\n"
         msg += "2. V-REV 큐(Queue)와는 물량과 평단가가 100% 분리되어 독립 연산됩니다.\n"
-        msg += "3. 손절(-8.0%) 피격 시 뇌동매매 방지를 위해 <b>그 즉시 당일 매매가 영구 동결(Shut-down)</b> 됩니다.\n\n"
+        msg += "3. 15:25 EST 도달 시 수익/손실 불문 <b>무조건 전량 덤핑 청산 후 당일 영구 동결(Shut-down)</b> 됩니다.\n\n"
         msg += "포트폴리오 매니저의 최종 승인을 대기합니다."
         
         keyboard = [
@@ -495,7 +498,7 @@ class TelegramView:
                         if "수혈" in desc: 
                             ico = "🩸"
                             desc = desc.replace("🩸", "")
-                           
+                            
                         type_str = "" if o['type'] == 'LIMIT' else f"({o['type']})"
                         type_disp = f" {type_str}" if type_str else ""
                         

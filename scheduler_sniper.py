@@ -20,6 +20,7 @@
 # 🚨 NEW: [달력 API 결측 연쇄 기절 방어] 장운영시간 빈 값 반환 시 평일 09:30~16:00 EST 강제 폴백 락온 이식 완료.
 # 🚨 MODIFIED: [V59.00 AVWAP 암살자 예산 100% 수혈 및 15:25 전량 덤핑 팩트 교정]
 # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 매도 사유 내 잔재하는 낡은 익절(조기퇴근 등) 분기 100% 적출 및 15:25 덤핑 셧다운 단일화 락온
+# 🚨 MODIFIED: [V59.05 잔재 데드코드 영구 소각] AVWAP 다중 출장(N회차) 및 조기 익절/손절 잔재 텍스트 100% 영구 소각 완료.
 # ==========================================================
 import logging
 import datetime
@@ -155,7 +156,7 @@ async def scheduled_sniper_monitor(context):
                         rev_daily_budget = float(await asyncio.to_thread(cfg.get_seed, tk) or 0.0) * 0.15
                         spent = 0.0
                         state_file = f"data/vwap_state_REV_{_logical_date_str}_{tk}.json"
-                        
+                         
                         def _read_v_state():
                             if os.path.exists(state_file):
                                 try:
@@ -316,7 +317,7 @@ async def scheduled_sniper_monitor(context):
                                 asyncio.gather(prev_c_task, high_low_task, atr_task, base_hl_task, return_exceptions=True),
                                 timeout=10.0
                             )
-                             
+                            
                             prev_c = float(res_prev) if not isinstance(res_prev, Exception) and res_prev else 0.0
                             
                             # 🚨 [AI 에이전트 절대 주의 - 환각 방어막] 당일 고가(day_high) 팩트 스캔 및 주입
@@ -387,7 +388,7 @@ async def scheduled_sniper_monitor(context):
                                     await asyncio.to_thread(broker.cancel_targeted_orders, current_target, "02", "00")
                                     await asyncio.sleep(1.0)
                                     continue
-                                    
+                                
                                 res = await asyncio.to_thread(broker.send_order, current_target, "BUY", qty, price, "LIMIT")
                                 odno = res.get('odno', '') if isinstance(res, dict) else ''
                                 
@@ -415,10 +416,8 @@ async def scheduled_sniper_monitor(context):
                                     if ccld_qty > 0:
                                         avwap_free_cash -= (ccld_qty * price)
                                         
-                                        strike_cnt = tracking_cache.get(f"AVWAP_STRIKES_{current_target}", 0) + 1
-                                        strike_prefix = f"<b>[{strike_cnt}회차 출장]</b> "
-                                        
-                                        msg = f"⚔️ <b>[AVWAP] {strike_prefix}단타 암살자 딥매수 타격 성공!</b>\n▫️ 타겟: {current_target}\n▫️ 타점: ${price}\n▫️ 팩트 체결수량: {ccld_qty}주 (목표 {qty}주)\n▫️ 사유: {reason}"
+                                        # MODIFIED: [V59.05 잔재 데드코드 영구 소각] 다중 출장 텍스트 적출
+                                        msg = f"⚔️ <b>[AVWAP] 단타 암살자 딥매수 타격 성공!</b>\n▫️ 타겟: {current_target}\n▫️ 타점: ${price}\n▫️ 팩트 체결수량: {ccld_qty}주 (목표 {qty}주)\n▫️ 사유: {reason}"
                                         if ccld_qty < qty:
                                             msg += f"\n▫️ 미체결 {qty - ccld_qty}주는 안전을 위해 즉각 취소(Nuke)되었습니다."
                                         await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
@@ -465,7 +464,7 @@ async def scheduled_sniper_monitor(context):
                                     except Exception:
                                         bid_price = 0.0
                                     exec_price = bid_price if bid_price > 0 else exec_curr_p
-                                        
+                                    
                                 has_unfilled = False
                                 for _ in range(4):
                                     unfilled = await asyncio.to_thread(broker.get_unfilled_orders_detail, current_target)
@@ -505,7 +504,7 @@ async def scheduled_sniper_monitor(context):
                                             await asyncio.sleep(0.5)
                                         except Exception as e_cancel:
                                             logging.warning(f"⚠️ [{current_target}] AVWAP 매도 잔여 취소 실패: {e_cancel}")
-                                            
+                                    
                                     if ccld_qty > 0:
                                         msg = f"⚔️ <b>[AVWAP] 암살자 덤핑 타격!</b>\n▫️ 타겟: {current_target}\n▫️ 타점: ${exec_price}\n▫️ 팩트 체결수량: {ccld_qty}주 (목표 {qty}주)\n▫️ 사유: {reason}"
                                         
@@ -518,21 +517,15 @@ async def scheduled_sniper_monitor(context):
                                             strikes = tracking_cache.get(f"AVWAP_STRIKES_{current_target}", 0) + 1
                                             tracking_cache[f"AVWAP_STRIKES_{current_target}"] = strikes
                                             
-                                            # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 낡은 매도 사유 분기 100% 적출 및 15:25_도달 셧다운 단일화 락온
-                                            if "15:25_도달" in reason:
-                                                msg += "\n🛡️ 금일 해당 종목의 15:25 타임스탑 청산 완료, 오버나이트 갭하락 방어를 위해 단타 작전을 <b>영구 동결(Shutdown)</b>합니다."
-                                            else:
-                                                msg += f"\n🛡️ <b>[ {strikes}회차 출장 청산 완료 ]</b> 당일 암살자 작전을 <b>영구 동결(Shutdown)</b>합니다."
+                                            # 🚨 MODIFIED: [V59.05 잔재 데드코드 영구 소각] 다중 출장 텍스트 적출 및 15:25 단판 승부 락온
+                                            msg += "\n🛡️ 금일 해당 종목의 15:25 타임스탑 청산 완료. 암살자 작전을 <b>영구 동결(Shutdown)</b>합니다."
                                             shutdown_flag = True
                                             
                                             new_avg = 0.0
                                             avwap_free_cash += (ccld_qty * exec_price)
                                         else:
                                             msg += f"\n⚠️ 잔량 {new_qty}주 발생 (미체결 강제 취소됨, 다음 1분봉 루프에서 재시도)"
-                                            
-                                            # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 낡은 매도 사유 분기 100% 적출 및 15:25_도달 셧다운 단일화 락온
                                             shutdown_flag = True
-                                        
                                             new_avg = tracking_cache.get(f"AVWAP_AVG_{current_target}", 0.0)
 
                                         await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
