@@ -18,6 +18,8 @@
 # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 
 # 15:25 전량 덤핑 헌법에 따라 의미를 상실한 AVWAP_SET 라우터 내 TARGET_MANUAL, TARGET_AUTO, EARLY, MULTI 
 # 제어 콜백 파이프라인(데드코드)을 전면 철거하고 REFRESH 기능만 보존 완료.
+# 🚨 MODIFIED: [V59.03 관제탑 진입 배선 복구] 
+# settlement 메뉴에서 '관제탑' 버튼 클릭 시 cmd_avwap을 정상 호출하도록 AVWAP:MENU 라우팅 배선 복구 완료.
 # ==========================================================
 import logging
 import datetime
@@ -493,6 +495,12 @@ class TelegramCallbacks:
                 msg += "\n⚠️ <b>일부 필수 주문 실패 (매매 잠금 보류)</b>"
 
             await context.bot.send_message(chat_id, msg, parse_mode='HTML')
+
+        # 🚨 MODIFIED: [V59.03 관제탑 진입 배선 복구] settlement 메뉴의 관제탑 버튼 신호 수신 라우터
+        elif action == "AVWAP":
+            await query.answer()
+            if sub == "MENU":
+                await controller.cmd_avwap(update, context)
 
         elif action == "SET_VER":
             await query.answer()
