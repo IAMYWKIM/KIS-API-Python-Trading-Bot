@@ -12,6 +12,7 @@
 # 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각 작전 지시서 적용]
 # _fetch_vwap_momentum_regime_sync 내부의 하락장(BEAR, SOXS) 판별 블록 전면 소각 및 하락장 시 NONE 타겟 락온으로 간소화.
 # 🚨 MODIFIED: [V61.01 숏(SOXS) 전면 소각 작전 지시서 적용] determine_market_regime 독스트링 내 SOXS 환각 텍스트 100% 영구 적출 완료.
+# 🚨 MODIFIED: [V61.03 데드코드 소각] 시스템 전역에서 호출되지 않는 레거시 함수 get_tqqq_target_drop, get_soxl_target_drop 영구 적출 완료.
 # ==========================================================
 import yfinance as yf
 import pandas as pd
@@ -129,79 +130,6 @@ def _calculate_1y_atr(ticker, cache_key, default_atr):
         logging.error(f"⚠️ [Engine] {ticker} ATR 연산 오류: {e}")
         return _load_cache(cache_key, default_atr)
 
-def get_tqqq_target_drop():
-    """ [ TQQQ 스나이퍼 ] 실시간 VXN과 QQQ 1년 ATR을 결합하여 타격선 계산 """
-    try:
-        vxn_data = yf.download("^VXN", period="2y", interval="1d", progress=False, timeout=5)
-        if vxn_data.empty: 
-            return round(-(QQQ_DEFAULT_ATR_PCT * 3), 2)
-            
-        vxn_data = _flatten_columns(vxn_data)
-                
-        valid_closes = vxn_data['Close'].dropna()
-        valid_closes_1y = valid_closes.tail(252)
-        
-        if valid_closes_1y.empty:
-            return round(-(QQQ_DEFAULT_ATR_PCT * 3), 2)
-            
-        try:
-            mean_vxn = float(valid_closes_1y.mean())
-            if pd.isna(mean_vxn) or mean_vxn <= 0:
-                 raise ValueError("Invalid Mean")
-            _save_cache("VXN_MEAN", mean_vxn)
-        except Exception:
-            # 🚨 [수술 완료] UnboundLocalError 런타임 즉사 버그 교정 (반환값 정상 할당)
-            mean_vxn = _load_cache("VXN_MEAN", 20.0)
-        
-        # 💡 [V3.2 패치] 1배수 기초지수 QQQ의 1년 ATR * 3배 동적 스케일링 (가중치 배제 절대 진폭 고정)
-        qqq_1y_atr = _calculate_1y_atr("QQQ", "QQQ_ATR_1Y", QQQ_DEFAULT_ATR_PCT)
-        base_amp = round(-(qqq_1y_atr * 3), 2)
-        
-        target_drop = base_amp
-        return target_drop
-        
-    except Exception as e:
-        logging.error(f"❌ VXN 스캔 오류: {e}")
-        return round(-(QQQ_DEFAULT_ATR_PCT * 3), 2)
-
-def get_soxl_target_drop():
-    """ [ SOXL 스나이퍼 ] SOXX HV와 SOXX 1년 ATR을 결합하여 타격선 계산 """
-    try:
-        soxx_data = yf.download("SOXX", period="2y", interval="1d", progress=False, timeout=5)
-        if soxx_data.empty or len(soxx_data) < 21: 
-            return round(-(SOXX_DEFAULT_ATR_PCT * 3), 2)
-        
-        soxx_data = _flatten_columns(soxx_data)
-                
-        closes = soxx_data['Close'].dropna()
-        log_returns = np.log(closes / closes.shift(1))
-        hv_20d = log_returns.rolling(window=20).std() * np.sqrt(252) * 100
-        
-        valid_hvs = hv_20d.dropna()
-        valid_hvs_1y = valid_hvs.tail(252)
-        
-        if valid_hvs_1y.empty:
-            return round(-(SOXX_DEFAULT_ATR_PCT * 3), 2)
-            
-        try:
-            mean_hv = float(valid_hvs_1y.mean())
-            if pd.isna(mean_hv) or mean_hv <= 0:
-                raise ValueError("Invalid Mean")
-            _save_cache("SOXX_HV_MEAN", mean_hv)
-        except Exception:
-            # 🚨 [수술 완료] UnboundLocalError 런타임 즉사 버그 교정 (반환값 정상 할당)
-            mean_hv = _load_cache("SOXX_HV_MEAN", 25.0)
-        
-        # 💡 [V3.2 패치] 1배수 기초지수 SOXX의 1년 ATR * 3배 동적 스케일링 (가중치 배제 절대 진폭 고정)
-        soxx_1y_atr = _calculate_1y_atr("SOXX", "SOXX_ATR_1Y", SOXX_DEFAULT_ATR_PCT)
-        base_amp = round(-(soxx_1y_atr * 3), 2)
-        
-        target_drop = base_amp
-        return target_drop
-        
-    except Exception as e:
-        logging.error(f"❌ SOXX HV 연산 오류: {e}")
-        return round(-(SOXX_DEFAULT_ATR_PCT * 3), 2)
 
 def get_tqqq_target_drop_full():
     """ 💡 [텔레그램 UI 표시용] TQQQ 상세 데이터 반환 (4개 파라미터 리턴) """
@@ -355,9 +283,9 @@ def _fetch_vwap_momentum_regime_sync(broker_instance=None) -> dict:
             
         # 수급과 캔들의 방향이 불일치하는 구간 (기관의 눈치 싸움 및 휩소 구간)
         else:
-            regime = "SIDEWAYS"
-            target_ticker = "NONE"
-            msg_desc = "횡보장 (VWAP과 캔들 방향 충돌)"
+             regime = "SIDEWAYS"
+             target_ticker = "NONE"
+             msg_desc = "횡보장 (VWAP과 캔들 방향 충돌)"
             
         return {
             "status": "success",
@@ -403,15 +331,15 @@ class VolatilityEngine:
         """
         try:
             if ticker == "TQQQ":
-                _, weight, _, _ = get_tqqq_target_drop_full()
+                 _, weight, _, _ = get_tqqq_target_drop_full()
             elif ticker == "SOXL":
                 _, weight, _, _ = get_soxl_target_drop_full()
             else:
                 weight = 1.0
 
             # 🚨 [수술 완료] 최종 안전망: 메인 관제탑으로 넘어가기 전 한 번 더 강력한 Clamp 적용
-            clamped = max(WEIGHT_MIN, min(WEIGHT_MAX, float(weight)))
-            return {'weight': clamped}
+             clamped = max(WEIGHT_MIN, min(WEIGHT_MAX, float(weight)))
+             return {'weight': clamped}
 
         except Exception as e:
             logging.error(f"⚠️ [VolatilityEngine] {ticker} 가중치 산출 래퍼 오류: {e}")

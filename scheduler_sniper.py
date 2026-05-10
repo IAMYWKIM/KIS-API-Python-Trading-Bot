@@ -27,8 +27,7 @@
 # 1) 암살자 출격 감시 루프 내 avwap_targets 배열에 SOXS를 강제 주입하여 이중 타격을 유발하던 디커플링 로직을 100% 영구 철거 완료.
 # 2) 다중 티커 루프를 걷어내고 롱(SOXL) 단일 방향으로 진공 압축 및 들여쓰기 교정 완료.
 # 🚨 MODIFIED: [V61.02 가상 에스크로 연산 데드코드 영구 소각]
-# V59 절대 헌법(AVWAP 예산 100% 수혈)에 따라 무의미해진 V46 시절의 
-# 파일 I/O 기반 virtual_locked_budget 연산 블록 30여 줄을 100% 영구 적출하여 런타임 병목 해체 완료.
+# V59 절대 헌법(AVWAP 예산 100% 수혈)에 따라 무의미해진 V46 시절의 파일 I/O 기반 virtual_locked_budget 연산 블록 30여 줄을 100% 영구 적출하여 런타임 병목 해체 완료.
 # ==========================================================
 import logging
 import datetime
@@ -88,8 +87,8 @@ async def scheduled_sniper_monitor(context):
         else: return
     except Exception:
         if now_est.weekday() < 5:
-            market_open = now_est.replace(hour=9, minute=30, second=0, microsecond=0)
-            market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
+             market_open = now_est.replace(hour=9, minute=30, second=0, microsecond=0)
+             market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
         else: return
     
     pre_start = market_open - datetime.timedelta(hours=5, minutes=30)
@@ -143,14 +142,14 @@ async def scheduled_sniper_monitor(context):
                 cash, holdings = 0.0, None
             except Exception:
                 cash, holdings = 0.0, None
-                
+            
             if holdings is None: return
             
             safe_holdings = holdings if isinstance(holdings, dict) else {}
              
             # 🚨 NEW: [V61.02 가상 에스크로 연산 데드코드 영구 소각] V46 시절의 가상 에스크로 차감 연산 블록 30여줄 전면 철거
+            # 🚨 MODIFIED: [V61.03 데드코드 소각] 미사용 변수 virtual_locked_budget 영구 적출
             # 🚨 MODIFIED: [V59.00] 본대 예산 보호막 무력화 및 가용 현금 100% 수혈 락온 (AVWAP 95% 타격)
-            virtual_locked_budget = 0.0
             avwap_free_cash = max(0.0, float(cash))
             
             for t in await asyncio.to_thread(cfg.get_active_tickers):
@@ -169,7 +168,7 @@ async def scheduled_sniper_monitor(context):
                             _vwap_cache_ref = app_data.get('vwap_cache', {})
                             if _vwap_cache_ref.get(f"REV_{t}_sweep_msg_sent"):
                                 continue
-                             
+                           
                             if not tracking_cache.get(f"REV_{t}_panic_sell_warn"):
                                 tracking_cache[f"REV_{t}_panic_sell_warn"] = True
                                 await context.bot.send_message(
@@ -212,7 +211,7 @@ async def scheduled_sniper_monitor(context):
                         try:
                             ctx_data = await asyncio.wait_for(asyncio.to_thread(strategy.v_avwap_plugin.fetch_macro_context, target_base), timeout=10.0)
                             if ctx_data:
-                                tracking_cache[f"AVWAP_CTX_{t}"] = ctx_data
+                                 tracking_cache[f"AVWAP_CTX_{t}"] = ctx_data
                         except Exception: pass
                      
                     if not ctx_data:
@@ -236,7 +235,7 @@ async def scheduled_sniper_monitor(context):
                         base_curr_p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_current_price, target_base), timeout=10.0)
                         base_curr_p = float(base_curr_p_val or 0.0)
                     except asyncio.TimeoutError:
-                        base_curr_p = 0.0
+                         base_curr_p = 0.0
                     except Exception:
                         base_curr_p = 0.0
                         
@@ -256,7 +255,7 @@ async def scheduled_sniper_monitor(context):
                             fetched_open_val = await asyncio.wait_for(asyncio.to_thread(_fetch_open, target_base), timeout=10.0)
                             fetched_open = float(fetched_open_val or 0.0)
                         except asyncio.TimeoutError:
-                            fetched_open = 0.0
+                             fetched_open = 0.0
                         except Exception:
                             fetched_open = 0.0
                             
@@ -355,11 +354,11 @@ async def scheduled_sniper_monitor(context):
                             if has_unfilled:
                                 await asyncio.to_thread(broker.cancel_targeted_orders, t, "02", "00")
                                 await asyncio.sleep(1.0)
-                                continue
+                            continue
                         
                             res = await asyncio.to_thread(broker.send_order, t, "BUY", qty, price, "LIMIT")
                             odno = res.get('odno', '') if isinstance(res, dict) else ''
-                        
+                            
                             if res and res.get('rt_cd') == '0' and odno:
                                 ccld_qty = 0
                                 for _ in range(4):
@@ -720,7 +719,7 @@ async def scheduled_sniper_monitor(context):
                                         p = float(ex.get('ft_ccld_unpr3', '0'))
                                         if p > 0: return p
                                     return 0.0
-                              
+                                
                                 actual_exec_price = get_actual_execution_price(exec_history, "01", odno)
                                 display_price = actual_exec_price if actual_exec_price > 0 else limit_p
                                             
