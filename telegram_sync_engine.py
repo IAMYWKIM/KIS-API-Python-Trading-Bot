@@ -16,6 +16,7 @@
 # NEW: [V59.05] VWAP 런타임 엑스레이(Dry-Run) 진단 버튼 이식
 # 🚨 MODIFIED: [V59.07 런타임 붕괴(IndentationError) 수술] _write_v_state 등 파일 I/O 블록의 들여쓰기 팩트 완벽 교정
 # 🚨 MODIFIED: [V61.04 시각적 디커플링 영구 소각] /sync 지시서 렌더링 시 AVWAP 타임라인 강제 덮어쓰기 블록(time_1000, time_1500) 전면 철거.
+# 🚨 MODIFIED: [V61.05 런타임 붕괴 수술] snapshot = None 및 예외 처리 구간 들여쓰기(IndentationError) 팩트 교정 완료.
 # ==========================================================
 import logging
 import datetime
@@ -521,7 +522,7 @@ class TelegramSyncEngine:
                                 _vrev_snap_ok = True
                                 
                         except Exception as e:
-                             logging.error(f"🚨 스냅샷 캡처 및 복리 정산 중 치명적 오류 감지: {e}\n{traceback.format_exc()}")
+                            logging.error(f"🚨 스냅샷 캡처 및 복리 정산 중 치명적 오류 감지: {e}\n{traceback.format_exc()}")
                             snapshot = None
                             
                         await asyncio.to_thread(self.queue_ledger.sync_with_broker, ticker, 0)
@@ -549,7 +550,7 @@ class TelegramSyncEngine:
                                             else:
                                                 await context.bot.send_photo(chat_id=chat_id, photo=f_out)
                                 except Exception as e:
-                                    logging.error(f"📸 V-REV 스냅샷 이미지 렌더링/발송 실패: {e}")
+                                    logging.error(f"📸 졸업 이미지 발송 실패: {e}")
                         else:
                              await context.bot.send_message(chat_id, f"⚠️ <b>[{ticker} V-REV 0주 강제 정산 완료]</b>\n▫️ 0주를 확인하여 큐를 안전하게 비웠으나 통신 지연으로 졸업 카드는 생략되었습니다.", parse_mode='HTML')
                             
@@ -680,16 +681,16 @@ class TelegramSyncEngine:
                                     
                                     try:
                                         img_path = await asyncio.to_thread(
-                                             self.view.create_profit_image,
+                                            self.view.create_profit_image,
                                             ticker=ticker, profit=new_hist['profit'], yield_pct=new_hist['yield'],
                                             invested=new_hist['invested'], revenue=new_hist['revenue'], end_date=new_hist['end_date']
                                         )
                                         if img_path and os.path.exists(img_path):
                                             with open(img_path, 'rb') as f_out:
-                                                    if img_path.lower().endswith('.gif'):
-                                                      await context.bot.send_animation(chat_id=chat_id, animation=f_out)
-                                                    else:
-                                                     await context.bot.send_photo(chat_id=chat_id, photo=f_out)
+                                                if img_path.lower().endswith('.gif'):
+                                                    await context.bot.send_animation(chat_id=chat_id, animation=f_out)
+                                                else:
+                                                    await context.bot.send_photo(chat_id=chat_id, photo=f_out)
                                     except Exception as e:
                                         logging.error(f"📸 졸업 이미지 발송 실패: {e}")
                                 else:
