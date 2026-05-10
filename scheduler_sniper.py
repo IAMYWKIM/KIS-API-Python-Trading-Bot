@@ -26,6 +26,9 @@
 # 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각 작전 지시서 적용]
 # 1) 암살자 출격 감시 루프 내 avwap_targets 배열에 SOXS를 강제 주입하여 이중 타격을 유발하던 디커플링 로직을 100% 영구 철거 완료.
 # 2) 다중 티커 루프를 걷어내고 롱(SOXL) 단일 방향으로 진공 압축 및 들여쓰기 교정 완료.
+# 🚨 MODIFIED: [V61.02 가상 에스크로 연산 데드코드 영구 소각]
+# V59 절대 헌법(AVWAP 예산 100% 수혈)에 따라 무의미해진 V46 시절의 
+# 파일 I/O 기반 virtual_locked_budget 연산 블록 30여 줄을 100% 영구 적출하여 런타임 병목 해체 완료.
 # ==========================================================
 import logging
 import datetime
@@ -145,45 +148,7 @@ async def scheduled_sniper_monitor(context):
             
             safe_holdings = holdings if isinstance(holdings, dict) else {}
              
-            virtual_locked_budget = 0.0
-            try:
-                est_tz = ZoneInfo('America/New_York')
-                _now_est = datetime.datetime.now(est_tz)
-                if _now_est.hour < 4 or (_now_est.hour == 4 and _now_est.minute < 5):
-                    _logical_date = _now_est - datetime.timedelta(days=1)
-                else:
-                    _logical_date = _now_est
-                _logical_date_str = _logical_date.strftime('%Y-%m-%d')
-
-                # 🚨 MODIFIED: [V46.03 예산 침범 패러독스 방어] KIS 증거금 룰에 의해 AVWAP이 본대 예산을 침범하는 것을 막기 위해 하드 마진 락온
-                for tk in await asyncio.to_thread(cfg.get_active_tickers):
-                    if await asyncio.to_thread(cfg.get_version, tk) == "V_REV":
-                        rev_daily_budget = float(await asyncio.to_thread(cfg.get_seed, tk) or 0.0) * 0.15
-                        spent = 0.0
-                        state_file = f"data/vwap_state_REV_{_logical_date_str}_{tk}.json"
-                    
-                        def _read_v_state():
-                            if os.path.exists(state_file):
-                                try:
-                                    with open(state_file, 'r', encoding='utf-8') as _f:
-                                        _st = json.load(_f)
-                                        return float(_st.get("executed", {}).get("BUY_BUDGET", 0.0))
-                                except Exception: pass
-                            return 0.0
-            
-                        spent = await asyncio.to_thread(_read_v_state)
-                        # MODIFIED: [V46.04 AVWAP 증거금 침식 방어] 15:27 해제 조건 소각 및 마진 1.20배 락온
-                        virtual_locked_budget += max(0.0, rev_daily_budget - spent) * 1.20
-                        
-                    elif await asyncio.to_thread(cfg.get_version, tk) == "V14":
-                        _, dynamic_budget, _ = await asyncio.to_thread(cfg.calculate_v14_state, tk)
-                        # MODIFIED: [V46.04 AVWAP 증거금 침식 방어] 마진 1.20배 락온
-                        virtual_locked_budget += (dynamic_budget * 1.20)
-            except Exception as e:
-                logging.error(f"🚨 가상 에스크로 예산 산출 중 에러: {e}")
-                
-            avwap_free_cash = max(0.0, float(cash) - virtual_locked_budget)
-
+            # 🚨 NEW: [V61.02 가상 에스크로 연산 데드코드 영구 소각] V46 시절의 가상 에스크로 차감 연산 블록 30여줄 전면 철거
             # 🚨 MODIFIED: [V59.00] 본대 예산 보호막 무력화 및 가용 현금 100% 수혈 락온 (AVWAP 95% 타격)
             virtual_locked_budget = 0.0
             avwap_free_cash = max(0.0, float(cash))
@@ -239,7 +204,7 @@ async def scheduled_sniper_monitor(context):
                         tracking_cache[f"AVWAP_INIT_{t}"] = True
          
                     if tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"): continue
-                    
+            
                     target_base = base_map.get(t, t) 
                     
                     ctx_data = tracking_cache.get(f"AVWAP_CTX_{t}")
@@ -362,7 +327,7 @@ async def scheduled_sniper_monitor(context):
                     
                     action = decision.get("action")
                     reason = decision.get("reason", "")
-                        
+                    
                     # 🚨 MODIFIED: [V47.00 AVWAP 오버나이트 홀딩 락온] 돌연변이 상태(first_scan_done 등) 동기화
                     if 'first_scan_done' in avwap_state_dict:
                         tracking_cache[f"AVWAP_FIRST_SCAN_DONE_{t}"] = avwap_state_dict['first_scan_done']
@@ -478,7 +443,7 @@ async def scheduled_sniper_monitor(context):
                                     has_unfilled = True
                                     break
                                 await asyncio.sleep(2.0)
-                 
+                            
                             if has_unfilled:
                                 await asyncio.to_thread(broker.cancel_targeted_orders, t, "01", "00")
                                 await asyncio.sleep(1.0)
@@ -668,7 +633,7 @@ async def scheduled_sniper_monitor(context):
                                    
                                 actual_exec_price = get_actual_execution_price(exec_history, "02", odno)
                                 display_price = actual_exec_price if actual_exec_price > 0 else limit_p
-                                      
+                                   
                                 msg = f"🚨 <b>[{t}] 스나이퍼 딥-매수(Intercept) 명중!</b>\n▫️ 타겟가: ${limit_p}\n▫️ 팩트 단가: ${display_price}\n▫️ 체결수량: {ccld_qty}주 (요청: {qty}주)\n▫️ 사유: {reason}\n▫️ 하방 방어망이 잠깁니다 (상방 독립 유지)."
                                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
               
