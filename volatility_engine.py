@@ -11,6 +11,7 @@
 # 전일 VWAP vs 당일 실시간 VWAP 동행 지표(Coincident Indicator) 듀얼 모멘텀 엔진으로 100% 교체.
 # 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각 작전 지시서 적용]
 # _fetch_vwap_momentum_regime_sync 내부의 하락장(BEAR, SOXS) 판별 블록 전면 소각 및 하락장 시 NONE 타겟 락온으로 간소화.
+# 🚨 MODIFIED: [V61.01 숏(SOXS) 전면 소각 작전 지시서 적용] determine_market_regime 독스트링 내 SOXS 환각 텍스트 100% 영구 적출 완료.
 # ==========================================================
 import yfinance as yf
 import pandas as pd
@@ -372,10 +373,11 @@ def _fetch_vwap_momentum_regime_sync(broker_instance=None) -> dict:
     except Exception as e:
         return {"status": "error", "msg": str(e)}
 
+# 🚨 MODIFIED: [V61.01 숏(SOXS) 전면 소각 작전 지시서 적용] 독스트링 내 SOXS 환각 텍스트 100% 영구 적출 완료
 async def determine_market_regime(broker_instance=None) -> dict:
     """
     비동기 데드락 원천 차단 방어막이 씌워진 VWAP 모멘텀 시장 국면 판별 함수.
-    매일 특정 스케줄에 호출되어 당일의 운명(SOXL/SOXS/NONE)을 락온합니다.
+    매일 특정 스케줄에 호출되어 당일의 운명(SOXL/NONE)을 락온합니다.
     """
     try:
         # 최대 10초 무한 대기 족쇄(Timeout) 가동

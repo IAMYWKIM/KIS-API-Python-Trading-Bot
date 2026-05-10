@@ -20,6 +20,8 @@
 # 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각 작전 지시서 적용]
 # 1) 시작 화면 안내 텍스트 중 무결성 듀얼 모멘텀을 무결성 싱글 롱 모멘텀으로 팩트 교정 완료.
 # 2) 전술 설정 메뉴 내 관제탑 진입 버튼 텍스트에서 숏(SOXS) 렌더링 영구 소각 및 단일 롱 모멘텀 팩트 압축 완료.
+# 🚨 MODIFIED: [V61.01 숏(SOXS) 전면 소각 작전 지시서 적용] 
+# create_sync_report 내부 루프의 SOXS 바이패스 데드코드 전면 적출 및 클리닝 완료.
 # ==========================================================
 import os
 import math
@@ -321,8 +323,7 @@ class TelegramView:
             t = t_info.get('ticker', 'UNK')
             v_mode = t_info.get('version', 'V14')
             
-            if t == "SOXS":
-                continue 
+            # 🚨 MODIFIED: [V61.01 숏(SOXS) 전면 소각 작전 지시서 적용] 바이패스 데드코드 영구 소각
             
             is_manual_vwap = t_info.get('is_manual_vwap', False)
             is_zero_start = t_info.get('is_zero_start', False)
@@ -481,7 +482,7 @@ class TelegramView:
             else:
                 if is_manual_vwap and not is_rev_logic:
                     body_msg += "⏱️ <b>VWAP 스케줄:</b> 장 마감 30분 전 ➔ 1분 단위 유동성 분할 타격\n"
-                    
+                
                 # MODIFIED: [V60.00 옴니 매트릭스 락다운 전면 폐기] 시각적 찌꺼기 영구 소각
                 plan_info = t_info.get('plan', {})
                 
@@ -503,7 +504,7 @@ class TelegramView:
                         if "수혈" in desc: 
                             ico = "🩸"
                             desc = desc.replace("🩸", "")
-                            
+                        
                         type_str = "" if o['type'] == 'LIMIT' else f"({o['type']})"
                         type_disp = f" {type_str}" if type_str else ""
                         
@@ -728,6 +729,7 @@ class TelegramView:
             else:
                 msg += f"▪️ <b>현재 T값 : {t_val} T</b> ({int(split)}분할)\n"
         msg += f"▪️ 보유 수량 : {qty} 주 (평단 ${avg:.2f})\n"
+        
         if is_history:
             profit = sold - invested
             pct = (profit/invested*100) if invested > 0 else 0
@@ -785,7 +787,7 @@ class TelegramView:
             draw.rectangle([40, y_box, 290, y_box + 100], fill="#2A2F3D")
             self._safe_draw_text(draw, (165, y_box + 35), f"${invested:,.2f}", font=f_b_val, fill="white", anchor="mm")
             self._safe_draw_text(draw, (165, y_box + 75), "TOTAL INVESTED", font=f_b_lbl, fill="#8E8E93", anchor="mm")
-            
+          
             draw.rectangle([310, y_box, 560, y_box + 100], fill="#2A2F3D")
             self._safe_draw_text(draw, (435, y_box + 35), f"${revenue:,.2f}", font=f_b_val, fill="white", anchor="mm")
             self._safe_draw_text(draw, (435, y_box + 75), "TOTAL REVENUE", font=f_b_lbl, fill="#8E8E93", anchor="mm")

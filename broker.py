@@ -31,6 +31,7 @@
 # 🚨 MODIFIED: [V49.11 체력 스캔 프리/애프터장 팩트 수혈] ATR5/ATR14 연산 시 prepost=True 속성을 강제 주입하여 장외 진폭까지 100% 반영
 # NEW: [V47 시계열 체력 측정 로직] 당일 최고가/최저가 및 발생 타임스탬프 캡처 및 영속화 엔진 탑재
 # NEW: [주간주문 및 예약주문 파이프라인 이식] 외부 스크립트 기능 핀셋 이식 완료
+# 🚨 MODIFIED: [V61.01 숏(SOXS) 전면 소각 작전 지시서 적용] _get_exchange_code 및 get_dynamic_sniper_target 내부 SOXS 하드코딩 찌꺼기 영구 적출 및 싱글 롱 모멘텀 압축
 # ==========================================================
 
 import requests
@@ -101,6 +102,7 @@ class KoreaInvestmentBroker:
             if 'access_token' in data:
                 self.token = data['access_token']
                 expire_str = (datetime.datetime.now(kst).replace(tzinfo=None) + datetime.timedelta(seconds=int(data['expires_in']))).strftime('%Y-%m-%d %H:%M:%S')
+            
                 dir_name = os.path.dirname(self.token_file)
                 if dir_name and not os.path.exists(dir_name):
                     os.makedirs(dir_name, exist_ok=True)
@@ -220,7 +222,8 @@ class KoreaInvestmentBroker:
             print(f"⚠️ [Broker] 거래소 동적 획득 실패: {ticker} - {e}")
 
         if not dynamic_success:
-            if ticker in ["SOXL", "SOXS"]: price_cd, order_cd = "AMS", "AMEX"
+            # MODIFIED: [V61.01 숏(SOXS) 전면 소각 작전 지시서 적용] SOXS 하드코딩 영구 적출
+            if ticker == "SOXL": price_cd, order_cd = "AMS", "AMEX"
             elif ticker == "TQQQ": price_cd, order_cd = "NAS", "NASD"
 
         self._excg_cd_cache[ticker] = {'PRICE': price_cd, 'ORDER': order_cd}
@@ -274,11 +277,11 @@ class KoreaInvestmentBroker:
                    
                         if not ticker:
                             continue
-                            
+            
                         qty = int(self._safe_float(item.get('ovrs_cblc_qty', 0)))
                         ord_psbl_qty = int(self._safe_float(item.get('ord_psbl_qty', 0)))
                         avg = self._safe_float(item.get('pchs_avg_pric', 0))
-                        
+                 
                         if qty > 0 and ord_psbl_qty == 0:
                             ord_psbl_qty = qty
                      
@@ -412,7 +415,7 @@ class KoreaInvestmentBroker:
             last_candle = resampled.iloc[-1]
             vol_ma10 = float(last_candle['Vol_MA10']) if not pd.isna(last_candle['Vol_MA10']) else float(last_candle['Volume'])
             vol_ma20 = float(last_candle['Vol_MA20']) if not pd.isna(last_candle['Vol_MA20']) else float(last_candle['Volume'])
-            
+    
             latest_1m = regular_market.iloc[-1] 
   
             return {
@@ -528,6 +531,7 @@ class KoreaInvestmentBroker:
     def get_1min_candles_df(self, ticker):
         try:
             stock = yf.Ticker(ticker)
+           
             df = stock.history(period="1d", interval="1m", prepost=True, timeout=5)
             
             if df.empty: return None
@@ -536,7 +540,7 @@ class KoreaInvestmentBroker:
             est = ZoneInfo('America/New_York')
             if df.index.tz is None: df.index = df.index.tz_localize('UTC').tz_convert(est)
             else: df.index = df.index.tz_convert(est)
-                
+  
             # MODIFIED: [V47.00 하이킨아시 파서 open 컬럼 강제 수혈 락온]
             df = df.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'})
             df['time_est'] = df.index.strftime('%H%M00')
@@ -590,7 +594,8 @@ class KoreaInvestmentBroker:
         
         for attempt in range(10):
             params = {
-                "CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "OVRS_EXCG_CD": excg_cd, 
+                "CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, 
+                "OVRS_EXCG_CD": excg_cd, 
                 "SORT_SQN": "DS", "CTX_AREA_FK200": fk200, "CTX_AREA_NK200": nk200
             }
             headers = self._get_header("TTTS3018R")
@@ -655,7 +660,8 @@ class KoreaInvestmentBroker:
     def cancel_targeted_orders(self, ticker, side, target_ord_dvsn):
         sll_buy_cd = '02' if side == "BUY" else '01'
         orders = self.get_unfilled_orders_detail(ticker)
-        if orders is False or not orders: return 0
+        if orders is False or not orders: 
+            return 0
         
         target_orders = []
     
@@ -732,6 +738,7 @@ class KoreaInvestmentBroker:
                 "PDNO": ticker, "ORD_QTY": str(order_qty), "OVRS_ORD_UNPR": str(final_price),
                 "ORD_SVR_DVSN_CD": "0", "ORD_DVSN": ord_dvsn 
             }
+  
             res = self._call_api(tr_id, "/uapi/overseas-stock/v1/trading/order", "POST", body=body)
             
             rt_cd = res.get('rt_cd', '999')
@@ -863,7 +870,7 @@ class KoreaInvestmentBroker:
                                     "item": dict(item),
                                     "total_qty": item_qty,
                                     "total_amt": item_qty * item_price
-                                }
+                                 }
                             else:
                                 odno_map[odno]["total_qty"] += item_qty
                                 odno_map[odno]["total_amt"] += (item_qty * item_price)
@@ -954,7 +961,7 @@ class KoreaInvestmentBroker:
             ledger_records.append({
                 'date': 'INCOMPLETE', 'side': 'UNKNOWN', 'qty': curr_qty, 'price': final_avg, 'is_incomplete': True
             })
-                
+              
         ledger_records.reverse()
         return ledger_records, final_qty, final_avg
 
@@ -981,11 +988,12 @@ class KoreaInvestmentBroker:
         return 0.0, ""
 
     def get_dynamic_sniper_target(self, index_ticker):
-        if index_ticker in ["SOXX", "SOXL", "SOXS"]:
+        # MODIFIED: [V61.01 숏(SOXS) 전면 소각 작전 지시서 적용] SOXS 하드코딩 영구 적출
+        if index_ticker in ["SOXX", "SOXL"]:
             target_index = "SOXX"
         else:
             target_index = index_ticker
-            
+          
         try:
             class TargetFloat(float): pass
             
@@ -1064,4 +1072,3 @@ class KoreaInvestmentBroker:
             return 0.0, 0.0
         except Exception as e:
             return 0.0, 0.0
-
