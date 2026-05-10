@@ -13,6 +13,7 @@
 # _fetch_vwap_momentum_regime_sync 내부의 하락장(BEAR, SOXS) 판별 블록 전면 소각 및 하락장 시 NONE 타겟 락온으로 간소화.
 # 🚨 MODIFIED: [V61.01 숏(SOXS) 전면 소각 작전 지시서 적용] determine_market_regime 독스트링 내 SOXS 환각 텍스트 100% 영구 적출 완료.
 # 🚨 MODIFIED: [V61.03 데드코드 소각] 시스템 전역에서 호출되지 않는 레거시 함수 get_tqqq_target_drop, get_soxl_target_drop 영구 적출 완료.
+# 🚨 MODIFIED: [V61.04 들여쓰기 붕괴 방어] 런타임 즉사(IndentationError)를 유발하던 스페이스 오차 100% 팩트 교정 완료.
 # ==========================================================
 import yfinance as yf
 import pandas as pd
@@ -130,7 +131,6 @@ def _calculate_1y_atr(ticker, cache_key, default_atr):
         logging.error(f"⚠️ [Engine] {ticker} ATR 연산 오류: {e}")
         return _load_cache(cache_key, default_atr)
 
-
 def get_tqqq_target_drop_full():
     """ 💡 [텔레그램 UI 표시용] TQQQ 상세 데이터 반환 (4개 파라미터 리턴) """
     try:
@@ -226,7 +226,6 @@ def get_soxl_target_drop_full():
         fallback_amp = round(-(SOXX_DEFAULT_ATR_PCT * 3), 2)
         return 0.0, 1.0, fallback_amp, fallback_amp
 
-
 # 🚨 [V40.XX 옴니 매트릭스 전면 수술] 이평선 제거 & 동행 지표(VWAP) 스위칭 엔진 교체
 def _fetch_vwap_momentum_regime_sync(broker_instance=None) -> dict:
     """
@@ -283,9 +282,9 @@ def _fetch_vwap_momentum_regime_sync(broker_instance=None) -> dict:
             
         # 수급과 캔들의 방향이 불일치하는 구간 (기관의 눈치 싸움 및 휩소 구간)
         else:
-             regime = "SIDEWAYS"
-             target_ticker = "NONE"
-             msg_desc = "횡보장 (VWAP과 캔들 방향 충돌)"
+            regime = "SIDEWAYS"
+            target_ticker = "NONE"
+            msg_desc = "횡보장 (VWAP과 캔들 방향 충돌)"
             
         return {
             "status": "success",
@@ -319,7 +318,6 @@ async def determine_market_regime(broker_instance=None) -> dict:
     except Exception as e:
         return {"status": "error", "msg": f"비동기 래핑 오류: {str(e)}"}
 
-
 class VolatilityEngine:
     def __init__(self):
         pass
@@ -331,15 +329,15 @@ class VolatilityEngine:
         """
         try:
             if ticker == "TQQQ":
-                 _, weight, _, _ = get_tqqq_target_drop_full()
+                _, weight, _, _ = get_tqqq_target_drop_full()
             elif ticker == "SOXL":
                 _, weight, _, _ = get_soxl_target_drop_full()
             else:
                 weight = 1.0
 
             # 🚨 [수술 완료] 최종 안전망: 메인 관제탑으로 넘어가기 전 한 번 더 강력한 Clamp 적용
-             clamped = max(WEIGHT_MIN, min(WEIGHT_MAX, float(weight)))
-             return {'weight': clamped}
+            clamped = max(WEIGHT_MIN, min(WEIGHT_MAX, float(weight)))
+            return {'weight': clamped}
 
         except Exception as e:
             logging.error(f"⚠️ [VolatilityEngine] {ticker} 가중치 산출 래퍼 오류: {e}")
