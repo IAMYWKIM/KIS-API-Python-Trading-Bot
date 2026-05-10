@@ -27,6 +27,8 @@
 # 1) SOXS 종목 강제 주입 로직 영구 소각.
 # 2) 인버스 판별, 하락세, 음봉(Bearish) 전용 텍스트 및 상태 메모리 전면 철거.
 # 3) 오직 롱(SOXL) 단일 방향 팩트 시각화 및 조건 판별문 진공 압축 완료.
+# 🚨 NEW: [상대적 체력 연산 30.0% 셧다운 락온 및 UI 디커플링 수술]
+# 기존 절대 진폭 차감을 소각하고, 상대적 잔여 체력 비율(%)을 연산하여 UI 및 Latching 로직에 100% 팩트 동기화.
 # ==========================================================
 import logging
 import datetime
@@ -127,7 +129,7 @@ class AvwapConsolePlugin:
                     df['tp'] = (df['high'].astype(float) + df['low'].astype(float) + df['close'].astype(float)) / 3.0
                     df['vol'] = df['volume'].astype(float)
                     df['vol_tp'] = df['tp'] * df['vol']
-                     
+                    
                     cum_vol = df['vol'].sum()
                     if cum_vol > 0:
                         base_curr_vwap = df['vol_tp'].sum() / cum_vol
@@ -290,7 +292,9 @@ class AvwapConsolePlugin:
             
             cond1_met, cond2_met, cond3_met = False, False, False
             cond_seq = True
-            rem_5_pct_console = 0.0
+            
+            # 🚨 NEW: [상대적 체력 연산 30.0% 셧다운 락온 및 UI 디커플링 수술]
+            rem_relative_pct = 0.0
 
             if trend_sequence == "BEAR":
                 cond_seq = False
@@ -303,14 +307,16 @@ class AvwapConsolePlugin:
                 actual_gap_dollar = day_high - day_low
                 actual_gap_pct = (actual_gap_dollar / prev_c) * 100.0
                 if atr5 > 0:
-                    rem_5_pct_console = atr5 - actual_gap_pct
-                    cond3_met = (rem_5_pct_console >= 1.0)
+                    rem_relative_pct = ((atr5 - actual_gap_pct) / atr5 * 100.0) if atr5 > 0 else 0.0
+                    cond3_met = (rem_relative_pct >= 30.0)
                     
             # 🚨 MODIFIED: [V56.00 상태 기억(Latching) 메모리 연산 및 디커플링 렌더링]
             ha_latched_bull = tracking_cache.get(f"HA_LATCHED_BULL_{t}", False)
 
             if ha_2_bullish_no_lower: ha_latched_bull = True
-            if trend_sequence == "BEAR" or rem_5_pct_console < 1.0: ha_latched_bull = False
+            
+            # 🚨 MODIFIED: [Latching 릴리스 팩트 교정] 상대 체력 30% 미만 시 상태기억 해제
+            if trend_sequence == "BEAR" or rem_relative_pct < 30.0: ha_latched_bull = False
 
             tracking_cache[f"HA_LATCHED_BULL_{t}"] = ha_latched_bull
 
@@ -324,8 +330,8 @@ class AvwapConsolePlugin:
             c3_str = "🟢" if cond3_met else "🔴"
             c_seq_str = "🟢" if cond_seq else "🔴"
 
-            # 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각] 롱 단일 텍스트 압축
-            criteria = "H/L방향(+) &amp; 시계열상승 &amp; HA모멘텀(현재가&gt;VWAP) &amp; 체력(&gt;=1%)"
+            # 🚨 MODIFIED: [상대적 체력 연산 30.0% 셧다운 락온] 판별 기준 텍스트 압축 완료
+            criteria = "H/L방향(+) &amp; 시계열상승 &amp; HA모멘텀(현재가&gt;VWAP) &amp; 상대체력(&gt;=30%)"
 
             if base_curr_p > 0 and base_curr_vwap > 0 and prev_c > 0 and atr5 > 0:
                 if cond1_met and cond2_met and cond3_met and cond_seq:
@@ -344,7 +350,8 @@ class AvwapConsolePlugin:
             msg += f"   {c_seq_str} 시계열 체력 통과 ({seq_text})\n"
                 
             msg += f"   {c2_str} HA 모멘텀 일치 (현재 5T: {ha_status_text})\n"
-            msg += f"   {c3_str} 잔여 체력 1% 이상 (현재: {rem_5_pct_console:.1f}%)\n"
+            # 🚨 MODIFIED: [상대적 체력 연산 30.0% 셧다운 락온] 잔여 체력 브리핑 텍스트 팩트 수술
+            msg += f"   {c3_str} 상대 잔여 체력 30% 이상 (현재: {rem_relative_pct:.1f}%)\n"
             msg += f"▫️ 타격 상태: {trend_str}\n"
 
             # 🚨 MODIFIED: [V59.05 잔재 데드코드 영구 소각] 다중 출장 텍스트 100% 영구 소각 완료
@@ -354,7 +361,6 @@ class AvwapConsolePlugin:
             msg += f"▫️ 독립 물량: {avwap_qty}주\n"
 
             exh_5 = 0.0
-            rem_5_pct = 0.0
 
             if atr5 > 0 and prev_c > 0 and day_low > 0:
                 high_pct = ((day_high - prev_c) / prev_c) * 100 if prev_c > 0 else 0.0
@@ -368,9 +374,10 @@ class AvwapConsolePlugin:
                 high_rebound_pct = (high_rebound_gap / prev_c) * 100 if prev_c > 0 else 0.0
                 
                 exh_5 = (high_rebound_pct / atr5 * 100) if atr5 > 0 else 0
-                rem_5_pct = atr5 - high_rebound_pct
                 
-                rem_5_str = f"+{rem_5_pct:.2f}% 추가 상승 여력" if rem_5_pct >= 0 else "체력 완전 고갈 (오버슈팅)"
+                # 🚨 MODIFIED: [상대적 체력 연산 30.0% 셧다운 락온] 배터리 UI 텍스트 팩트 수술
+                rem_relative_battery = 100.0 - exh_5
+                rem_relative_str = f"상대 체력 {rem_relative_battery:.1f}% 잔여" if rem_relative_battery >= 0 else "체력 완전 고갈 (오버슈팅)"
 
                 def make_bar(exh):
                     pos = min(5, max(0, math.ceil(exh / 20.0)))
@@ -388,10 +395,11 @@ class AvwapConsolePlugin:
                     avg_rebound_pct = (avg_rebound_gap / prev_c) * 100 if prev_c > 0 else 0.0
                     msg += f"▫️ 매수평단: <b>${avwap_avg:.2f}</b> ({avg_pct:+.2f}%/<b>+{avg_rebound_pct:.2f}%</b>)\n"
                 msg += "\n"
-                
+                 
                 msg += f"🔋 <b>단기 체력 (ATR5 예상진폭: {atr5:.2f}%)</b>\n"
-                msg += f"▫️ 잔여 체력: <b>{rem_5_str}</b>\n"
-                msg += f"   [0%] {make_bar(exh_5)} [+{atr5:.2f}%]\n"
+                msg += f"▫️ 잔여 체력: <b>{rem_relative_str}</b>\n"
+                # 🚨 MODIFIED: [상대적 체력 연산 30.0% 셧다운 락온] 배터리 바 [100%] 팩트 수술
+                msg += f"   [0%] {make_bar(exh_5)} [100%]\n"
                 msg += f"               <b>({exh_5:.0f}% 소진 / 고가 기준)</b>\n"
 
             curr_time = now_est.time()

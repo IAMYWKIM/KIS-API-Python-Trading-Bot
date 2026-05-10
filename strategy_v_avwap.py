@@ -15,6 +15,8 @@
 # 1) is_inverse 인버스 판별 변수 및 SOXS 티커 조건 분기 100% 전면 철거.
 # 2) 하이킨아시 음봉 판별 팩트(ha_latched_bear 등) 상태 메모리 및 연산 영구 소각.
 # 3) 롱(SOXL) 진입 전용 단일 팩트(cond1, cond2, cond_seq)로 아키텍처 진공 압축 완료.
+# 🚨 NEW: [상대적 체력 연산 30.0% 셧다운 락온]
+# 기존 절대 진폭(1.0%) 차감 방식을 전면 소각하고, ATR5 대비 잔여 체력 비율(%)을 연산하여 30.0% 미만 시 신규 진입을 영구 동결하는 기관급 하드 마진 방어막 탑재.
 # ==========================================================
 import logging
 import datetime
@@ -154,7 +156,7 @@ class VAvwapHybridPlugin:
                     avg_vol_20 = float(past_first_30m['Volume'].mean())
 
             if prev_vwap == 0.0:
-                 prev_vwap = prev_close
+                prev_vwap = prev_close
 
             return {
                 "prev_close": prev_close,
@@ -337,11 +339,14 @@ class VAvwapHybridPlugin:
             
         actual_gap_dollar = day_high - day_low
         actual_gap_pct = (actual_gap_dollar / prev_c) * 100.0 if prev_c > 0 else 0.0
-        rem_5_pct = atr5 - actual_gap_pct
-        if rem_5_pct < 1.0:
+        
+        # NEW: [상대적 체력 연산 30.0% 셧다운 락온] 절대 진폭 차감이 아닌 ATR5 대비 잔여 체력 비율(%) 연산 및 락온
+        rem_relative_pct = ((atr5 - actual_gap_pct) / atr5 * 100.0) if atr5 > 0 else 0.0
+
+        if rem_relative_pct < 30.0:
             avwap_state["shutdown"] = True
             self.save_state(exec_ticker, now_est, avwap_state)
-            return _build_res('SHUTDOWN', 'ATR5_체력고갈_감지_당일신규진입_영구동결')
+            return _build_res('SHUTDOWN', 'ATR5_상대체력_30%미만_고갈_당일신규진입_영구동결')
 
         # 기초지수(SOXX) 고저가 방향 팩트 스캔
         base_day_high = float(kwargs.get('base_day_high', 0.0))
@@ -362,7 +367,9 @@ class VAvwapHybridPlugin:
             if not ha_latched_bull:
                 ha_latched_bull = True
                 latch_changed = True
-        if trend_sequence == "BEAR" or rem_5_pct < 1.0:
+                
+        # MODIFIED: [Latching 릴리스 팩트 교정] 상대 체력 30% 미만 시 상태기억 해제
+        if trend_sequence == "BEAR" or rem_relative_pct < 30.0:
             if ha_latched_bull:
                 ha_latched_bull = False
                 latch_changed = True
@@ -396,3 +403,4 @@ class VAvwapHybridPlugin:
             if not cond_seq: 
                 fail_reasons.append("시계열체력하락세")
             return _build_res('WAIT', f'진입조건대기({",".join(fail_reasons)})')
+
