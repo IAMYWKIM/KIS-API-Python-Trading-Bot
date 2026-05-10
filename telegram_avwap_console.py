@@ -31,6 +31,8 @@
 # 기존 절대 진폭 차감을 소각하고, 상대적 잔여 체력 비율(%)을 연산하여 UI 및 Latching 로직에 100% 팩트 동기화.
 # 🚨 NEW: [V65.00 AVWAP 동적 하드스탑 락온]
 # 암살자 상태 및 작전 텍스트에 ATR5 동적 하드스탑 감시 팩트를 다이내믹하게 인젝션하여 시각적 디커플링 해체 완료.
+# 🚨 NEW: [V66.00 AVWAP 암살자 덤핑 지터(Jitter) 분산 락온]
+# 관제탑 렌더링 시 하드코딩된 15:25 덤핑 텍스트를 소각하고, 캐시에 저장된 지터 초를 반영한 동적 타임스탬프로 시각적 팩트 교정 완료.
 # ==========================================================
 import logging
 import datetime
@@ -110,7 +112,7 @@ class AvwapConsolePlugin:
             df_1m = await asyncio.wait_for(
                 asyncio.to_thread(self.broker.get_1min_candles_df, base_tkr), timeout=4.0
             )
-            
+             
             if df_1m is not None and not df_1m.empty:
                 df = df_1m.copy()
                  
@@ -244,6 +246,8 @@ class AvwapConsolePlugin:
                         tracking_cache[f"AVWAP_AVG_{t}"] = saved_state.get('avg_price', 0.0)
                         tracking_cache[f"AVWAP_STRIKES_{t}"] = saved_state.get('strikes', 0)
                         tracking_cache[f"HA_LATCHED_BULL_{t}"] = saved_state.get('HA_LATCHED_BULL', False)
+                        # NEW: [V66.00 AVWAP 덤핑 지터 분산 타격 락온] 지터 캐시 로드
+                        tracking_cache[f"AVWAP_DUMP_JITTER_{t}"] = saved_state.get('dump_jitter_sec', 0)
                         tracking_cache[f"AVWAP_INIT_{t}"] = True
                 except Exception as e:
                     logging.error(f"🚨 AVWAP 관제탑 상태 자가 복구 실패 ({t}): {e}")
@@ -256,7 +260,7 @@ class AvwapConsolePlugin:
             try:
                 prev_c = await asyncio.wait_for(asyncio.to_thread(self.broker.get_previous_close, t), timeout=2.0)
             except Exception: prev_c = 0.0
-            
+             
             try:
                 df_t = await asyncio.wait_for(asyncio.to_thread(self.broker.get_1min_candles_df, t), timeout=3.0)
                 if df_t is not None and not df_t.empty:
@@ -326,7 +330,7 @@ class AvwapConsolePlugin:
                 cond2_met = (base_curr_p > base_curr_vwap) and ha_latched_bull
                 if cond2_met and not ha_2_bullish_no_lower:
                     ha_status_text = f"{ha_status_text}이지만 시계열 락온 유지"
-            
+             
             c1_str = "🟢" if cond1_met else "🔴"
             c2_str = "🟢" if cond2_met else "🔴"
             c3_str = "🟢" if cond3_met else "🔴"
@@ -356,8 +360,14 @@ class AvwapConsolePlugin:
             msg += f"   {c3_str} 상대 잔여 체력 30% 이상 (현재: {rem_relative_pct:.1f}%)\n"
             msg += f"▫️ 타격 상태: {trend_str}\n"
 
-            # NEW: [V65.00 AVWAP 동적 하드스탑 락온] 작전 브리핑 텍스트 팩트 교정
-            strike_icon_txt = "당일 단판 승부 (15:25 덤핑 & ATR5 하드스탑 락온)"
+            # 🚨 MODIFIED: [V66.00 AVWAP 지터 분산 타격 락온] 동적 덤핑 시간 연산
+            dump_jitter_sec = tracking_cache.get(f"AVWAP_DUMP_JITTER_{t}", 0)
+            base_dump_dt = datetime.datetime.combine(now_est.date(), datetime.time(15, 25)).replace(tzinfo=ZoneInfo('America/New_York'))
+            dynamic_dump_dt = base_dump_dt - datetime.timedelta(seconds=dump_jitter_sec)
+            dynamic_dump_str = dynamic_dump_dt.strftime("%H:%M:%S")
+
+            # NEW: [V66.00 AVWAP 동적 하드스탑 락온 및 지터 분산 타격] 작전 브리핑 텍스트 팩트 교정
+            strike_icon_txt = f"당일 단판 승부 ({dynamic_dump_str} 덤핑 & ATR5 하드스탑 락온)"
             msg += f"▫️ 작전: <b>{strike_icon_txt}</b>\n"
 
             msg += f"▫️ 독립 물량: {avwap_qty}주\n"
@@ -376,7 +386,7 @@ class AvwapConsolePlugin:
                 high_rebound_pct = (high_rebound_gap / prev_c) * 100 if prev_c > 0 else 0.0
             
                 exh_5 = (high_rebound_pct / atr5 * 100) if atr5 > 0 else 0
-                
+                 
                 # 🚨 MODIFIED: [상대적 체력 연산 30.0% 셧다운 락온] 배터리 UI 텍스트 팩트 수술
                 rem_relative_battery = 100.0 - exh_5
                 rem_relative_str = f"상대 체력 {rem_relative_battery:.1f}% 잔여" if rem_relative_battery >= 0 else "체력 완전 고갈 (오버슈팅)"
@@ -397,7 +407,7 @@ class AvwapConsolePlugin:
                     avg_rebound_pct = (avg_rebound_gap / prev_c) * 100 if prev_c > 0 else 0.0
                     msg += f"▫️ 매수평단: <b>${avwap_avg:.2f}</b> ({avg_pct:+.2f}%/<b>+{avg_rebound_pct:.2f}%</b>)\n"
                 msg += "\n"
-                 
+                  
                 msg += f"🔋 <b>단기 체력 (ATR5 예상진폭: {atr5:.2f}%)</b>\n"
                 msg += f"▫️ 잔여 체력: <b>{rem_relative_str}</b>\n"
                 # 🚨 MODIFIED: [상대적 체력 연산 30.0% 셧다운 락온] 배터리 바 [100%] 팩트 수술
@@ -405,8 +415,8 @@ class AvwapConsolePlugin:
                 msg += f"               <b>({exh_5:.0f}% 소진 / 고가 기준)</b>\n"
 
             curr_time = now_est.time()
-            # 🚨 MODIFIED: [V59.00 AVWAP 15:25 전량 덤핑 락온] 타임 쉴드 전진 배치
-            time_1525 = datetime.time(15, 25)
+            # 🚨 MODIFIED: [V66.00 AVWAP 동적 지터 분산 타격 락온] 타임 쉴드 전진 배치 변수 소각 및 동적 덤핑 타임 적용
+            time_dynamic_dump = dynamic_dump_dt.time()
             
             status_txt = "👀 타점 스캔중"
             if not is_avwap_active:
@@ -414,12 +424,12 @@ class AvwapConsolePlugin:
             elif is_shutdown: 
                 # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 15:25 전량 덤핑 후 물리적 잔량 발생 시 팩트 기반 렌더링으로 진공 압축
                 if avwap_qty > 0:
-                    status_txt = "🌙 미체결 잔량 오버나이트 롤오버"
+                     status_txt = "🌙 미체결 잔량 오버나이트 롤오버"
                 else:
                     status_txt = "🛑 당일 영구동결 (SHUTDOWN)"
             elif avwap_qty > 0: 
-                # NEW: [V65.00 AVWAP 동적 하드스탑 락온] 상태 텍스트 팩트 교정
-                status_txt = "🎯 딥매수 완료 (15:25 덤핑 & ATR5 하드스탑 감시 중)"
+                # NEW: [V66.00 AVWAP 동적 하드스탑 및 지터 분산 락온] 상태 텍스트 팩트 교정
+                status_txt = f"🎯 딥매수 완료 ({dynamic_dump_str} 덤핑 & ATR5 하드스탑 감시 중)"
             else:
                 try:
                     avwap_state_dict = {"strikes": strikes}
@@ -439,7 +449,7 @@ class AvwapConsolePlugin:
                         avwap_state=avwap_state_dict,
                         regime_data=None,
                         prev_close=prev_c,
-                        day_high=day_high,
+                         day_high=day_high,
                         day_low=day_low,
                         atr5=atr5,
                         base_day_high=base_day_high,
