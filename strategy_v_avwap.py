@@ -17,6 +17,9 @@
 # 3) 롱(SOXL) 진입 전용 단일 팩트(cond1, cond2, cond_seq)로 아키텍처 진공 압축 완료.
 # 🚨 NEW: [상대적 체력 연산 30.0% 셧다운 락온]
 # 기존 절대 진폭(1.0%) 차감 방식을 전면 소각하고, ATR5 대비 잔여 체력 비율(%)을 연산하여 30.0% 미만 시 신규 진입을 영구 동결하는 기관급 하드 마진 방어막 탑재.
+# 🚨 NEW: [V65.00 AVWAP 동적 하드스탑 락온]
+# 진입 평단가 대비 현재가의 손실률(%)이 당일 ATR5(%) 수치 이상으로 하락하는 찰나,
+# 즉시 셧다운(shutdown=True) 플래그를 활성화하고 전량 덤핑(SELL)을 격발하는 절대 방어막 탑재.
 # ==========================================================
 import logging
 import datetime
@@ -304,6 +307,14 @@ class VAvwapHybridPlugin:
                 # MODIFIED: [V59.02 잔재 데드코드 영구 소각] 레거시 키워드 (조기퇴근) 100% 삭제
                 return _build_res('SELL', '15:25_도달_당일교전종료_무조건덤핑', qty=safe_qty, target_price=exec_curr_p)
 
+            # NEW: [V65.00 AVWAP 동적 하드스탑 락온] ATR5 기반 실시간 손절 방어막 전진 배치
+            if atr5 > 0 and exec_curr_p > 0 and safe_avg > 0:
+                loss_pct = ((safe_avg - exec_curr_p) / safe_avg) * 100.0
+                if loss_pct >= atr5:
+                    avwap_state["shutdown"] = True
+                    self.save_state(exec_ticker, now_est, avwap_state)
+                    return _build_res('SELL', f'ATR5_동적_하드스탑_피격(-{loss_pct:.2f}%)_당일영구동결', qty=safe_qty, target_price=exec_curr_p)
+
             # 🚨 [AI 에이전트 절대 주의 - 환각 방어막]
             # 장중 휩소 및 조기 익절(HA 역추세, 수익률 도달) 로직 전면 영구 소각 완료.
             # 암살자는 진입 후 15:25 EST까지 어떠한 흔들림 없이 100% 홀딩(HOLD)합니다.
@@ -403,4 +414,3 @@ class VAvwapHybridPlugin:
             if not cond_seq: 
                 fail_reasons.append("시계열체력하락세")
             return _build_res('WAIT', f'진입조건대기({",".join(fail_reasons)})')
-

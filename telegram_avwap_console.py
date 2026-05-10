@@ -29,6 +29,8 @@
 # 3) 오직 롱(SOXL) 단일 방향 팩트 시각화 및 조건 판별문 진공 압축 완료.
 # 🚨 NEW: [상대적 체력 연산 30.0% 셧다운 락온 및 UI 디커플링 수술]
 # 기존 절대 진폭 차감을 소각하고, 상대적 잔여 체력 비율(%)을 연산하여 UI 및 Latching 로직에 100% 팩트 동기화.
+# 🚨 NEW: [V65.00 AVWAP 동적 하드스탑 락온]
+# 암살자 상태 및 작전 텍스트에 ATR5 동적 하드스탑 감시 팩트를 다이내믹하게 인젝션하여 시각적 디커플링 해체 완료.
 # ==========================================================
 import logging
 import datetime
@@ -138,7 +140,7 @@ class AvwapConsolePlugin:
           
                     if base_curr_p == 0.0:
                         base_curr_p = float(df['close'].iloc[-1])
-                        
+                    
                     recent_5 = df.tail(5)
                     sum_vol_5 = recent_5['vol'].sum()
                     if sum_vol_5 > 0:
@@ -348,14 +350,14 @@ class AvwapConsolePlugin:
             
             seq_text = "상승/대기" if cond_seq else "하락세(Time_High&lt;Time_Low)"
             msg += f"   {c_seq_str} 시계열 체력 통과 ({seq_text})\n"
-                
+            
             msg += f"   {c2_str} HA 모멘텀 일치 (현재 5T: {ha_status_text})\n"
             # 🚨 MODIFIED: [상대적 체력 연산 30.0% 셧다운 락온] 잔여 체력 브리핑 텍스트 팩트 수술
             msg += f"   {c3_str} 상대 잔여 체력 30% 이상 (현재: {rem_relative_pct:.1f}%)\n"
             msg += f"▫️ 타격 상태: {trend_str}\n"
 
-            # 🚨 MODIFIED: [V59.05 잔재 데드코드 영구 소각] 다중 출장 텍스트 100% 영구 소각 완료
-            strike_icon_txt = "당일 단판 승부 (15:25 전량 덤핑 락온)"
+            # NEW: [V65.00 AVWAP 동적 하드스탑 락온] 작전 브리핑 텍스트 팩트 교정
+            strike_icon_txt = "당일 단판 승부 (15:25 덤핑 & ATR5 하드스탑 락온)"
             msg += f"▫️ 작전: <b>{strike_icon_txt}</b>\n"
 
             msg += f"▫️ 독립 물량: {avwap_qty}주\n"
@@ -372,7 +374,7 @@ class AvwapConsolePlugin:
                 
                 high_rebound_gap = day_high - day_low if day_high >= day_low else 0.0
                 high_rebound_pct = (high_rebound_gap / prev_c) * 100 if prev_c > 0 else 0.0
-                
+            
                 exh_5 = (high_rebound_pct / atr5 * 100) if atr5 > 0 else 0
                 
                 # 🚨 MODIFIED: [상대적 체력 연산 30.0% 셧다운 락온] 배터리 UI 텍스트 팩트 수술
@@ -416,7 +418,8 @@ class AvwapConsolePlugin:
                 else:
                     status_txt = "🛑 당일 영구동결 (SHUTDOWN)"
             elif avwap_qty > 0: 
-                status_txt = "🎯 딥매수 완료 (15:25 EST 덤핑 대기 중)"
+                # NEW: [V65.00 AVWAP 동적 하드스탑 락온] 상태 텍스트 팩트 교정
+                status_txt = "🎯 딥매수 완료 (15:25 덤핑 & ATR5 하드스탑 감시 중)"
             else:
                 try:
                     avwap_state_dict = {"strikes": strikes}

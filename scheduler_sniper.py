@@ -28,6 +28,8 @@
 # 2) 다중 티커 루프를 걷어내고 롱(SOXL) 단일 방향으로 진공 압축 및 들여쓰기 교정 완료.
 # 🚨 MODIFIED: [V61.02 가상 에스크로 연산 데드코드 영구 소각]
 # V59 절대 헌법(AVWAP 예산 100% 수혈)에 따라 무의미해진 V46 시절의 파일 I/O 기반 virtual_locked_budget 연산 블록 30여 줄을 100% 영구 적출하여 런타임 병목 해체 완료.
+# 🚨 NEW: [V65.00 AVWAP 동적 하드스탑 락온]
+# 매도 체결 완료 시 코어 엔진에서 반환된 청산 사유(reason)를 스캔하여, 하드스탑 피격 팩트 감지 시 기존 15:25 덤핑 텍스트를 오버라이드하고 시각적 디커플링을 해체.
 # ==========================================================
 import logging
 import datetime
@@ -168,7 +170,7 @@ async def scheduled_sniper_monitor(context):
                             _vwap_cache_ref = app_data.get('vwap_cache', {})
                             if _vwap_cache_ref.get(f"REV_{t}_sweep_msg_sent"):
                                 continue
-                           
+                            
                             if not tracking_cache.get(f"REV_{t}_panic_sell_warn"):
                                 tracking_cache[f"REV_{t}_panic_sell_warn"] = True
                                 await context.bot.send_message(
@@ -201,7 +203,7 @@ async def scheduled_sniper_monitor(context):
                         except Exception as e:
                             logging.error(f"AVWAP 상태 복구 실패: {e}")
                         tracking_cache[f"AVWAP_INIT_{t}"] = True
-         
+          
                     if tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"): continue
             
                     target_base = base_map.get(t, t) 
@@ -211,7 +213,7 @@ async def scheduled_sniper_monitor(context):
                         try:
                             ctx_data = await asyncio.wait_for(asyncio.to_thread(strategy.v_avwap_plugin.fetch_macro_context, target_base), timeout=10.0)
                             if ctx_data:
-                                 tracking_cache[f"AVWAP_CTX_{t}"] = ctx_data
+                                tracking_cache[f"AVWAP_CTX_{t}"] = ctx_data
                         except Exception: pass
                      
                     if not ctx_data:
@@ -235,7 +237,7 @@ async def scheduled_sniper_monitor(context):
                         base_curr_p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_current_price, target_base), timeout=10.0)
                         base_curr_p = float(base_curr_p_val or 0.0)
                     except asyncio.TimeoutError:
-                         base_curr_p = 0.0
+                        base_curr_p = 0.0
                     except Exception:
                         base_curr_p = 0.0
                         
@@ -255,7 +257,7 @@ async def scheduled_sniper_monitor(context):
                             fetched_open_val = await asyncio.wait_for(asyncio.to_thread(_fetch_open, target_base), timeout=10.0)
                             fetched_open = float(fetched_open_val or 0.0)
                         except asyncio.TimeoutError:
-                             fetched_open = 0.0
+                            fetched_open = 0.0
                         except Exception:
                             fetched_open = 0.0
                             
@@ -354,7 +356,7 @@ async def scheduled_sniper_monitor(context):
                             if has_unfilled:
                                 await asyncio.to_thread(broker.cancel_targeted_orders, t, "02", "00")
                                 await asyncio.sleep(1.0)
-                            continue
+                                continue
                         
                             res = await asyncio.to_thread(broker.send_order, t, "BUY", qty, price, "LIMIT")
                             odno = res.get('odno', '') if isinstance(res, dict) else ''
@@ -485,7 +487,11 @@ async def scheduled_sniper_monitor(context):
                                         tracking_cache[f"AVWAP_STRIKES_{t}"] = strikes
                                         
                                         # 🚨 MODIFIED: [V59.05 잔재 데드코드 영구 소각] 다중 출장 텍스트 적출 및 15:25 단판 승부 락온
-                                        msg += "\n🛡️ 금일 해당 종목의 15:25 타임스탑 청산 완료. 암살자 작전을 <b>영구 동결(Shutdown)</b>합니다."
+                                        # NEW: [V65.00 AVWAP 동적 하드스탑 락온] 청산 사유 스캔 및 시각적 디커플링 해체
+                                        if "하드스탑" in reason or "ATR5" in reason:
+                                            msg += f"\n🛡️ <b>ATR5 동적 하드스탑 피격에 의한 당일 영구 동결</b> (사유: {reason})"
+                                        else:
+                                            msg += "\n🛡️ 금일 해당 종목의 15:25 타임스탑 청산 완료. 암살자 작전을 <b>영구 동결(Shutdown)</b>합니다."
                                         shutdown_flag = True
                                         
                                         new_avg = 0.0
@@ -719,10 +725,10 @@ async def scheduled_sniper_monitor(context):
                                         p = float(ex.get('ft_ccld_unpr3', '0'))
                                         if p > 0: return p
                                     return 0.0
-                                
+                    
                                 actual_exec_price = get_actual_execution_price(exec_history, "01", odno)
                                 display_price = actual_exec_price if actual_exec_price > 0 else limit_p
-                                            
+                                
                                 msg = f"🦇 <b>[{t}] 스나이퍼 상방 기습({action}) 명중!</b>\n▫️ 타겟가: ${limit_p}\n▫️ 팩트 단가: ${display_price}\n▫️ 체결수량: {ccld_qty}주 (요청: {qty}주)\n▫️ 사유: {reason}\n▫️ 상방 감시망이 잠깁니다 (하방 독립 유지)."
                                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
 
