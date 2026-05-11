@@ -24,12 +24,14 @@
 # create_sync_report 내부 루프의 SOXS 바이패스 데드코드 전면 적출 및 클리닝 완료.
 # 🚨 NEW: [V66.00 AVWAP 암살자 덤핑 지터(Jitter) 분산 락온]
 # 암살자 가동 경고 팝업 내 15:25 도달 시 문구를 15:22~15:25 동적 지터 분산 도달 시로 팩트 교정 완료.
+# NEW: [V66.02 원격 로그 핀셋 추출 엔진 탑재] 텔레그램 4096자 렌더링 쉴드 및 시간 정순 정렬 아키텍처 이식 완료.
 # ==========================================================
 import os
 import math
 import logging
 import datetime 
 import tempfile
+import html
 from zoneinfo import ZoneInfo
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from PIL import Image, ImageDraw, ImageFont
@@ -104,7 +106,8 @@ class TelegramView:
         msg += "▶️ /ticker : 🔄 운용 종목 선택\n"
         msg += "▶️ /mode : 🎯 상방 스나이퍼 ON/OFF\n"
         msg += "▶️ /version : 🛠️ 버전 및 업데이트 내역\n"
-        msg += "▶️ /avwap : 🔫 실시간 모멘텀 레이더 관제탑\n\n"
+        msg += "▶️ /avwap : 🔫 실시간 모멘텀 레이더 관제탑\n"
+        msg += "▶️ /log : 🔍 실시간 에러 원격 추출 진단망\n\n"
         
         msg += "⚠️ /reset : 🔓 비상 해제 메뉴 (락/리버스)\n"
         msg += "┗ 🚨 수동 닻 올리기: 예산 부족으로 리버스 진입 후 예수금을 추가 입금하셨다면, 이 메뉴에서 반드시 '리버스 강제 해제' 버튼을 눌러주세요!\n\n"
@@ -197,7 +200,6 @@ class TelegramView:
         msg += "최근 매수한 <b>1지층</b>을 시장가(MOC)로 강제 덤핑하여 가용 예산을 확보합니다."
 
         keyboard.append([InlineKeyboardButton("🩸 1지층 수동 긴급 수혈 (MOC)", callback_data=f"EMERGENCY_REQ:{ticker}")])
-        # NEW: [VWAP 엑스레이 진단 스위치 이식] 큐 장부 확인 중 즉각 진단 기능 결속
         keyboard.append([InlineKeyboardButton(f"🔍 {ticker} VWAP 런타임 엑스레이 (Dry-Run)", callback_data=f"XRAY:VWAP:{ticker}")])
         keyboard.append([InlineKeyboardButton("🔄 대시보드 새로고침", callback_data=f"QUEUE:VIEW:{ticker}")])
         
@@ -237,7 +239,6 @@ class TelegramView:
         msg += "⚠️ <b>[ 실전 가동 제약 사항 (V66 락온) ]</b>\n"
         msg += "1. 기존 V14의 상방 스나이퍼 기능은 즉시 영구 셧다운됩니다.\n"
         msg += "2. V-REV 큐(Queue)와는 물량과 평단가가 100% 분리되어 독립 연산됩니다.\n"
-        # 🚨 MODIFIED: [V66.00 AVWAP 암살자 덤핑 지터 분산 락온] 프론트엔드 경고문 팩트 교정
         msg += "3. 15:22~15:25 EST (동적 분산 타격) 도달 시 수익/손실 불문 <b>무조건 전량 덤핑 청산 후 당일 영구 동결(Shut-down)</b> 됩니다.\n\n"
         msg += "포트폴리오 매니저의 최종 승인을 대기합니다."
         
@@ -264,7 +265,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V66.00 AVWAP 암살자 실전 재투입</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V66.02 원격 로그 핀셋 추출 엔진 탑재</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -324,8 +325,6 @@ class TelegramView:
         for t_info in ticker_data:
             t = t_info.get('ticker', 'UNK')
             v_mode = t_info.get('version', 'V14')
-            
-            # 🚨 MODIFIED: [V61.01 숏(SOXS) 전면 소각 작전 지시서 적용] 바이패스 데드코드 영구 소각
             
             is_manual_vwap = t_info.get('is_manual_vwap', False)
             is_zero_start = t_info.get('is_zero_start', False)
@@ -465,10 +464,7 @@ class TelegramView:
             
             if v_mode == "V_REV":
                 body_msg += "📋 <b>[주문 가이던스 - ⚖️다중 LIFO 제어]</b>\n"
-                
-                # MODIFIED: [V60.00 옴니 매트릭스 락다운 전면 폐기] 시각적 찌꺼기 영구 소각
                 plan_info = t_info.get('plan', {})
-                
                 body_msg += f"⚡ <b>[Gap Hijack 🤖자율주행]</b> 상승장 판별 시 잔여예산 스윕 대기\n"
                 
                 raw_guidance = t_info.get('v_rev_guidance', " (가이던스 대기 중)")
@@ -485,9 +481,7 @@ class TelegramView:
                 if is_manual_vwap and not is_rev_logic:
                     body_msg += "⏱️ <b>VWAP 스케줄:</b> 장 마감 30분 전 ➔ 1분 단위 유동성 분할 타격\n"
                 
-                # MODIFIED: [V60.00 옴니 매트릭스 락다운 전면 폐기] 시각적 찌꺼기 영구 소각
                 plan_info = t_info.get('plan', {})
-                
                 body_msg += f"📋 <b>[주문 계획 - {proc_status}]</b>\n"
                 plan_orders = plan_info.get('orders', [])
                 
@@ -529,7 +523,6 @@ class TelegramView:
                 
             body_msg += "\n"
             
-            # NEW: [VWAP 엑스레이 진단(Dry-Run) 스위치 이식] 지시서 렌더링 시 V-REV 전용 버튼 추가
             if v_mode == "V_REV":
                 keyboard.append([InlineKeyboardButton(f"🔍 {t} VWAP 런타임 엑스레이 (Dry-Run)", callback_data=f"XRAY:VWAP:{t}")])
 
@@ -539,7 +532,7 @@ class TelegramView:
         is_dst = bool(datetime.datetime.now(est_tz).dst())
 
         if not is_trade_active:
-            fact_hour = 17 if is_dst else 18
+             fact_hour = 17 if is_dst else 18
             final_msg += f"💡 <i>※ 현재 표출된 계획은 전일 {fact_hour}:05 기준 박제된 스냅샷이며, 금일 {fact_hour}:05에 최신 팩트 잔고를 바탕으로 리셋됩니다.</i>\n\n"
             final_msg += "⛔ 장마감/애프터마켓: 주문 불가"
             
@@ -617,10 +610,7 @@ class TelegramView:
                     avwap_cb = f"MODE:AVWAP_OFF:{t}" 
                 keyboard.append([InlineKeyboardButton(avwap_txt, callback_data=avwap_cb)])
                 
-                # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] TARGET_MANUAL, TARGET_AUTO, EARLY, MULTI 설정 버튼 100% 적출 및 소각 완료
-                
                 if t == "SOXL":
-                    # MODIFIED: [V61.00 숏(SOXS) 전면 소각 작전 지시서 적용] 관제탑 텍스트 싱글 롱 모멘텀 팩트 교정
                     keyboard.append([InlineKeyboardButton(f"🔫 {t} 단일 롱 모멘텀 관제탑", callback_data=f"AVWAP:MENU:{t}")])
             
             if ver == "V_REV":
@@ -634,7 +624,7 @@ class TelegramView:
                 ]
                 keyboard.append(row3)
             else:
-                row2 = [
+                 row2 = [
                     InlineKeyboardButton(f"⚙️ {t} 분할", callback_data=f"INPUT:SPLIT:{t}"), 
                     InlineKeyboardButton(f"🎯 {t} 목표", callback_data=f"INPUT:TARGET:{t}"),
                     InlineKeyboardButton(f"💸 {t} 복리", callback_data=f"INPUT:COMPOUND:{t}")
@@ -746,7 +736,6 @@ class TelegramView:
             keyboard.append([InlineKeyboardButton(f"🔄 {other} 장부 조회", callback_data=f"REC:VIEW:{other}")])
             keyboard.append([InlineKeyboardButton(f"🗄️ {ticker} V-REV 큐(Queue) 정밀 관리", callback_data=f"QUEUE:VIEW:{ticker}")])
             
-            # NEW: [VWAP 엑스레이 진단 스위치 이식] 장부 대시보드 뷰에 버튼 추가
             if is_reverse:
                 keyboard.append([InlineKeyboardButton(f"🔍 {ticker} VWAP 런타임 엑스레이 (Dry-Run)", callback_data=f"XRAY:VWAP:{ticker}")])
                 
@@ -797,7 +786,6 @@ class TelegramView:
             self._safe_draw_text(draw, (W/2, H - 35), f"{end_date}", font=f_b_lbl, fill="#636366", anchor="mm")
             return img_canvas
 
-    
         def resize_and_crop(bg_frame):
             bg_ratio = bg_frame.width / bg_frame.height
             if bg_ratio > (W / IMG_H):
@@ -849,3 +837,32 @@ class TelegramView:
             [InlineKeyboardButton("💎 오리지널 TQQQ + SOXL 듀얼 콤보", callback_data="TICKER:ALL")]
         ]
         return f"🔄 <b>[ 운용 종목 선택 ]</b>\n현재 가동중: <b>{', '.join(current_tickers)}</b>", InlineKeyboardMarkup(keyboard)
+
+    # NEW: [V66.02 원격 로그 핀셋 추출 엔진 탑재] 텔레그램 4096자 렌더링 쉴드 및 시간 정순 정렬 아키텍처 이식 완료
+    def format_log_report(self, error_logs):
+        # 시간 정순(과거->최신)으로 배열 복구하여 인과관계 분석 직관성 100% 확보
+        chronological_logs = list(reversed(error_logs))
+        
+        header = "🔍 <b>[ 시스템 원격 진단 리포트 (최근 50건) ]</b>\n\n<code>"
+        footer = "</code>\n\n✅ <b>[진단 완료]</b>"
+        
+        # 텔레그램 최대 글자 수(4096자) 방어를 위한 안전 마진(4000자) 계산
+        max_len = 4000 - len(header) - len(footer)
+        
+        body = ""
+        for line in chronological_logs:
+            # HTML 특수문자 이스케이프 (텔레그램 파싱 런타임 붕괴 원천 차단)
+            safe_line = html.escape(line)
+            body += f"{safe_line}\n"
+            
+        # 텍스트 제한 초과 시 가장 오래된 로그부터 안전하게 절삭(Truncate)
+        if len(body) > max_len:
+            truncated_body = body[-max_len:]
+            # 잘린 첫 줄이 불완전할 수 있으므로 첫 개행 문자 이후부터 온전한 줄만 렌더링
+            first_newline_idx = truncated_body.find('\n')
+            if first_newline_idx != -1:
+                truncated_body = truncated_body[first_newline_idx+1:]
+            body = "… (글자 수 제한으로 이전 로그 생략) …\n" + truncated_body
+            
+        return header + body + footer
+
