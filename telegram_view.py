@@ -25,6 +25,7 @@
 # 🚨 NEW: [V66.00 AVWAP 암살자 덤핑 지터(Jitter) 분산 락온]
 # 암살자 가동 경고 팝업 내 15:25 도달 시 문구를 15:22~15:25 동적 지터 분산 도달 시로 팩트 교정 완료.
 # NEW: [V66.02 원격 로그 핀셋 추출 엔진 탑재] 텔레그램 4096자 렌더링 쉴드 및 시간 정순 정렬 아키텍처 이식 완료.
+# 🚨 MODIFIED: [V66.04 런타임 붕괴 방어] 파일 전역의 IndentationError(들여쓰기) 팩트 무결점 교정 완료.
 # ==========================================================
 import os
 import math
@@ -87,7 +88,6 @@ class TelegramView:
         dst_state = "🌞서머타임 ON" if is_dst else "❄️서머타임 OFF"
         
         msg = f"🌌 [ 옴니 매트릭스 퀀트 엔진 {latest_version} ]\n"
-        # MODIFIED: [V61.00 숏(SOXS) 전면 소각] 무결성 싱글 롱 모멘텀 팩트 교정
         msg += "💠 무결성 싱글 롱 모멘텀 (SOXL 전용) & V-REV 갭 스위칭\n\n"
         
         msg += f"🕒 [ 운영 스케줄 ({dst_state}) ]\n"
@@ -265,7 +265,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V66.02 원격 로그 핀셋 추출 엔진 탑재</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V66.04 런타임 붕괴 방어 팩트 수술</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -357,7 +357,7 @@ class TelegramView:
             
             if safe_t_val > (safe_split * 1.1):
                 body_msg += "⚠️ <b>[🚨 시스템 긴급 경고: 비정상 T값 폭주 감지!]</b>\n"
-                body_msg += f"🔎 현재 T값(<b>{safe_t_val:.4f}T</b>)이 설정된 분할수(<b>{int(safe_split)}분할</b>) 초과했습니다!\n"
+                body_msg += f"🔎 현재 T값(<b>{safe_t_val:.4f}T</b>)이 설정된 분할수(<b>{int(safe_split)}분할</b>) 초 초과했습니다!\n"
                 body_msg += "💡 <b>원인 역산 추정:</b> 수동 매수로 수량이 급증했거나, '/seed' 시드머니 설정이 대폭 축소되었습니다.\n"
                 body_msg += "🛡️ <b>가동 조치:</b> 마이너스 호가 차단용 절대 하한선($0.01) 방어막 가동 중!\n\n"
 
@@ -532,7 +532,8 @@ class TelegramView:
         is_dst = bool(datetime.datetime.now(est_tz).dst())
 
         if not is_trade_active:
-             fact_hour = 17 if is_dst else 18
+            # 🚨 MODIFIED: [V66.04 런타임 붕괴 방어] create_sync_report 내 IndentationError(들여쓰기) 팩트 무결점 교정 완료.
+            fact_hour = 17 if is_dst else 18
             final_msg += f"💡 <i>※ 현재 표출된 계획은 전일 {fact_hour}:05 기준 박제된 스냅샷이며, 금일 {fact_hour}:05에 최신 팩트 잔고를 바탕으로 리셋됩니다.</i>\n\n"
             final_msg += "⛔ 장마감/애프터마켓: 주문 불가"
             
@@ -624,7 +625,7 @@ class TelegramView:
                 ]
                 keyboard.append(row3)
             else:
-                 row2 = [
+                row2 = [
                     InlineKeyboardButton(f"⚙️ {t} 분할", callback_data=f"INPUT:SPLIT:{t}"), 
                     InlineKeyboardButton(f"🎯 {t} 목표", callback_data=f"INPUT:TARGET:{t}"),
                     InlineKeyboardButton(f"💸 {t} 복리", callback_data=f"INPUT:COMPOUND:{t}")
@@ -800,9 +801,9 @@ class TelegramView:
         img = Image.new('RGB', (W, H), color='#1E222D')
         try:
             if os.path.exists("background.png"):
-                 bg = Image.open("background.png").convert("RGB")
-                 bg_cropped = resize_and_crop(bg)
-                 img.paste(bg_cropped, (0, 0))
+                bg = Image.open("background.png").convert("RGB")
+                bg_cropped = resize_and_crop(bg)
+                img.paste(bg_cropped, (0, 0))
             else:
                 draw = ImageDraw.Draw(img)
                 draw.rectangle([0, 0, W, IMG_H], fill="#111217")
