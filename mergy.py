@@ -17,7 +17,7 @@ TARGET_FILES = [
     "scheduler_core.py",
     "scheduler_regular.py",
     "scheduler_sniper.py",
-    "scheduler_vwap.py",
+    # "scheduler_vwap.py",
     "strategy.py",
     "strategy_reversion.py",
     "strategy_v14.py",
