@@ -28,6 +28,7 @@
 # 🚨 MODIFIED: [V60.00 옴니 매트릭스 락다운 전면 폐기 및 데드코드 소각]
 # 1분 타임 슬라이싱 루프 내부에서 갭 스위칭(Gap Hijack) 진입을 가로막던 
 # omni_filter 호출 의존성을 완벽히 끊어내고 런타임 붕괴(AttributeError) 뇌관 해체.
+# 🚨 MODIFIED: [V66.09 V-REV VWAP 런타임 엑스레이 이식]
 # ==========================================================
 import logging
 import datetime
@@ -115,7 +116,7 @@ async def scheduled_vwap_init_and_cancel(context):
             for t in active_tickers:
                 version = await asyncio.to_thread(cfg.get_version, t)
                 is_manual_vwap = await asyncio.to_thread(getattr(cfg, 'get_manual_vwap_mode', lambda x: False), t)
-            
+                
                 if version == "V_REV" and is_manual_vwap:
                     continue
                 
@@ -134,7 +135,6 @@ async def scheduled_vwap_init_and_cancel(context):
                             # 🚨 MODIFIED: [V54.02] 깡통 스냅샷 붕괴 방어. prev_c 다이렉트 추출 파이프라인 이식
                             prev_c = 0.0
                             snap_for_anchor = None
-                        
                             try:
                                 if version == "V_REV" and strategy_rev:
                                     snap_for_anchor = await asyncio.to_thread(strategy_rev.load_daily_snapshot, t)
@@ -213,7 +213,7 @@ async def scheduled_vwap_init_and_cancel(context):
                         except Exception as e:
                             logging.error(f"🚨 자가 치유 Nuke 실패: {e}", exc_info=True)
                             vwap_cache[f"REV_{t}_nuked"] = False 
-               
+            
     try:
         await asyncio.wait_for(_do_init(), timeout=45.0)
     except Exception as e:
@@ -385,7 +385,7 @@ async def scheduled_vwap_trade(context):
                                 rev_daily_budget = float(await asyncio.to_thread(cfg.get_seed, t) or 0.0) * 0.15
                                 q_data = await asyncio.to_thread(queue_ledger.get_queue, t)
                                 await asyncio.to_thread(
-                                     strategy_rev.ensure_failsafe_snapshot,
+                                    strategy_rev.ensure_failsafe_snapshot,
                                     t, curr_p, prev_c, rev_daily_budget, q_data, total_kis_qty, avwap_qty
                                 )
                             elif version == "V14" and is_manual_vwap and hasattr(strategy, 'v14_vwap_plugin'):
@@ -465,7 +465,7 @@ async def scheduled_vwap_trade(context):
                                 
                         if prev_c_live > 0:
                             vwap_cache[f"REV_{t}_anchor_prev_c"] = prev_c_live
-                            
+                             
                     prev_c = float(vwap_cache.get(f"REV_{t}_anchor_prev_c") or 0.0)
 
                     if curr_p <= 0 or prev_c <= 0: continue
@@ -825,6 +825,27 @@ async def scheduled_vwap_trade(context):
                             t, curr_p, prev_c, current_weight, min_idx, v14_alloc_cash, pure_qty_v14, actual_avg
                         )
                         target_orders = plan.get('orders', [])
+
+                    # 🚨 MODIFIED: [V66.09 V-REV VWAP 런타임 엑스레이 추적망 이식]
+                    if version == "V_REV":
+                        if not vwap_cache.get(f"REV_{t}_xray_count"):
+                            vwap_cache[f"REV_{t}_xray_count"] = 0
+                            
+                        vwap_cache[f"REV_{t}_xray_count"] += 1
+                        
+                        # 스팸 방지를 위해 15:30 부터 처음 5분간만 타전
+                        if vwap_cache[f"REV_{t}_xray_count"] <= 5:
+                            diag_msg = f"🐛 <b>[{t} VWAP 엔진 런타임 엑스레이 (타격 직전)]</b>\n"
+                            diag_msg += f"▫️ 현재가(curr_p): ${curr_p:.2f}\n"
+                            diag_msg += f"▫️ 가중치(current_weight): {current_weight:.4f}\n"
+                            if hasattr(strategy_rev, 'executed') and hasattr(strategy_rev, 'residual'):
+                                rem_bdg = rev_daily_budget - float(strategy_rev.executed.get('BUY_BUDGET', {}).get(t, 0.0))
+                                b_shared = float(strategy_rev.residual.get('BUY_SHARED', {}).get(t, 0.0))
+                                diag_msg += f"▫️ 잔여 예산: ${rem_bdg:.2f}\n"
+                                diag_msg += f"▫️ <b>누적 잔차(BUY_SHARED)</b>: ${b_shared:.2f}\n"
+                            diag_msg += f"▫️ 0주 팩트: {is_zero_start_session}\n"
+                            diag_msg += f"▫️ 산출된 지시서: <code>{target_orders}</code>\n"
+                            await context.bot.send_message(chat_id=chat_id, text=diag_msg, parse_mode='HTML')
 
                     for o in target_orders:
                         slice_qty = o['qty']
