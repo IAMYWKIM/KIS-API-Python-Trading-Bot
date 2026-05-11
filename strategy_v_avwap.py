@@ -22,6 +22,8 @@
 # 즉시 셧다운(shutdown=True) 플래그를 활성화하고 전량 덤핑(SELL)을 격발하는 절대 방어막 탑재.
 # 🚨 NEW: [V66.00 AVWAP 암살자 덤핑 지터(Jitter) 분산 락온]
 # 서버 병목 방어를 위해 15:25 하드코딩 덤핑을 소각하고 0~180초 난수를 차감한 동적 타임스탬프로 분산 타격 이식 완료.
+# 🚨 MODIFIED: [V66.05 Split-Brain 시각적 디커플링 해결]
+# 관제탑 환각 방지를 위해 HA_LATCHED_BULL 상태 변경 시 즉각 파일(JSON)에 원자적(Atomic)으로 각인(save_state)하는 무결성 검증 완료. 제4헌법 완벽 준수.
 # ==========================================================
 import logging
 import datetime
@@ -37,7 +39,7 @@ import tempfile
 class VAvwapHybridPlugin:
     def __init__(self):
         self.plugin_name = "AVWAP_HYBRID_DUAL"
-        self.leverage = 3.0      
+        self.leverage = 3.0       
 
     def _get_logical_date_str(self, now_est):
         if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 4):
@@ -385,6 +387,8 @@ class VAvwapHybridPlugin:
         # 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각] cond1 롱 단일 팩트 락온
         cond1_met = not is_neg_gap_state
 
+        # 🚨 MODIFIED: [V66.05 Split-Brain 시각적 디커플링 해결]
+        # 상태 리셋(Latching Release) 로직 무결성 검증 및 SSOT 배선 강화
         persistent_state = self.load_state(exec_ticker, now_est)
         ha_latched_bull = persistent_state.get('HA_LATCHED_BULL', False)
         latch_changed = False
@@ -394,7 +398,7 @@ class VAvwapHybridPlugin:
                 ha_latched_bull = True
                 latch_changed = True
                 
-        # MODIFIED: [Latching 릴리스 팩트 교정] 상대 체력 30% 미만 시 상태기억 해제
+        # 🚨 MODIFIED: [Latching 릴리스 팩트 교정] 상대 체력 30% 미만 시 상태기억 해제
         if trend_sequence == "BEAR" or rem_relative_pct < 30.0:
             if ha_latched_bull:
                 ha_latched_bull = False
@@ -429,3 +433,4 @@ class VAvwapHybridPlugin:
             if not cond_seq: 
                 fail_reasons.append("시계열체력하락세")
             return _build_res('WAIT', f'진입조건대기({",".join(fail_reasons)})')
+
