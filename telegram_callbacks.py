@@ -27,6 +27,7 @@
 # 1) SET_VER 및 SET_VER_CONFIRM 콜백 내 SOXS 락다운 방어막 텍스트를 시스템 영구 폐기 경고로 오버라이드 완료.
 # 2) TICKER 액션 내 SOXS 경고문 교정 및 '듀얼 모멘텀' 텍스트를 '싱글 모멘텀'으로 팩트 교정 완료.
 # NEW: [AVWAP 수동 개입 엣지 케이스 방어] 수동 매도 후 유령 물량을 0주로 강제 동기화하는 SYNC_ZERO 라우터 신설
+# 🚨 MODIFIED: [V61.06 런타임 붕괴 방어] MODE 및 INPUT 라우터 내 IndentationError(들여쓰기) 팩트 완벽 교정
 # ==========================================================
 import logging
 import datetime
@@ -84,7 +85,7 @@ class TelegramCallbacks:
 
         # NEW: [VWAP 엑스레이(Dry-Run) 진단 엔진 라우터 신설]
         # 장부 상태(Residual)를 오염시키지 않기 위해 코어 엔진을 호출하지 않고
-        # 내부에서 15:30 EST 기준 수학적 섀도우 연산을 수행하여 팩트만 타전합니다.
+        # 내부에서 15:30 EST 기준 수학적 섀도 연산을 수행하여 팩트만 타전합니다.
         if action == "XRAY":
             await query.answer("🔍 엑스레이 진단 엔진 가동 중... (Read-Only)", show_alert=False)
             if sub == "VWAP":
@@ -132,7 +133,7 @@ class TelegramCallbacks:
                     b1_budget = shared_bucket * 0.5
                     b2_budget = shared_bucket * 0.5
                     
-                    # 절대 타점(Anchor) 섀도우 연산
+                    # 절대 타점(Anchor) 섀도 연산
                     p1_trigger = round(prev_c * 1.15, 2) if is_zero_start else round(prev_c * 0.995, 2)
                     p2_trigger = round(prev_c * 0.999, 2) if is_zero_start else round(prev_c * 0.9725, 2)
                     
@@ -845,7 +846,8 @@ class TelegramCallbacks:
                 await context.bot.send_message(chat_id, f"🚨 {current_ver} 모드에서는 로직 충돌 방지를 위해 상방 스나이퍼를 켤 수 없습니다!")
                 return
 
-             await asyncio.to_thread(self.cfg.set_upward_sniper_mode, ticker, mode_val == "ON")
+            # MODIFIED: [V61.06 런타임 붕괴 방어] MODE 라우터 내 IndentationError 팩트 완벽 교정
+            await asyncio.to_thread(self.cfg.set_upward_sniper_mode, ticker, mode_val == "ON")
             await query.edit_message_text(f"✅ <b>[{ticker}]</b> 상방 스나이퍼 모드 변경 완료: {'🎯 ON (가동중)' if mode_val == 'ON' else '⚪ OFF (대기중)'}", parse_mode='HTML')
             
         elif action == "TICKER":
@@ -862,7 +864,7 @@ class TelegramCallbacks:
                 msg_txt = " + ".join(target_tickers) + " 싱글 모멘텀"
             else:
                 if sub == "SOXS":
-                     await context.bot.send_message(chat_id, "⚠️ [V61.00 절대 헌법] 숏(SOXS) 운용은 시스템 전역에서 100% 영구 소각되었습니다.")
+                    await context.bot.send_message(chat_id, "⚠️ [V61.00 절대 헌법] 숏(SOXS) 운용은 시스템 전역에서 100% 영구 소각되었습니다.")
                     return
                 target_tickers = [sub]
                 msg_txt = sub + " 전용"
@@ -876,7 +878,8 @@ class TelegramCallbacks:
             controller.user_states[chat_id] = f"SEED_{sub}_{ticker}"
             await context.bot.send_message(chat_id, f"💵 [{ticker}] 시드머니 금액 입력:", parse_mode='HTML')
             
-         elif action == "INPUT":
+        # MODIFIED: [V61.06 런타임 붕괴 방어] INPUT 라우터 내 IndentationError 팩트 완벽 교정
+        elif action == "INPUT":
             await query.answer()
             ticker = data[2]
             controller.user_states[chat_id] = f"CONF_{sub}_{ticker}"
@@ -884,13 +887,13 @@ class TelegramCallbacks:
             if sub == "SPLIT":
                 ko_name = "분할 횟수"
             elif sub == "TARGET":
-                 ko_name = "목표 수익률(%)"
+                ko_name = "목표 수익률(%)"
             elif sub == "COMPOUND":
                 ko_name = "자동 복리율(%)"
             elif sub == "STOCK_SPLIT":
                 ko_name = "액면 분할/병합 비율 (예: 10분할은 10, 10병합은 0.1)"
             elif sub == "FEE":
-                 ko_name = "증권사 수수료율(%)"
+                ko_name = "증권사 수수료율(%)"
             else:
                 ko_name = "값"
             
