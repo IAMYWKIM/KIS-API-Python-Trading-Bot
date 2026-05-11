@@ -26,6 +26,7 @@
 # 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각 작전 지시서 적용]
 # 1) SET_VER 및 SET_VER_CONFIRM 콜백 내 SOXS 락다운 방어막 텍스트를 시스템 영구 폐기 경고로 오버라이드 완료.
 # 2) TICKER 액션 내 SOXS 경고문 교정 및 '듀얼 모멘텀' 텍스트를 '싱글 모멘텀'으로 팩트 교정 완료.
+# NEW: [AVWAP 수동 개입 엣지 케이스 방어] 수동 매도 후 유령 물량을 0주로 강제 동기화하는 SYNC_ZERO 라우터 신설
 # ==========================================================
 import logging
 import datetime
@@ -161,11 +162,11 @@ class TelegramCallbacks:
                         if curr_p <= p2_trigger:
                             msg += f"  👉 현재가(${curr_p:.2f})가 타점 이하이므로 <b>시장가 스윕 타격이 정상 격발</b>됩니다.\n"
                         else:
-                            msg += f"  👉 현재가(${curr_p:.2f})가 타점을 초과하여 <b>매수 스킵(예산 다음분 이월)</b> 처리됩니다.\n"
+                             msg += f"  👉 현재가(${curr_p:.2f})가 타점을 초과하여 <b>매수 스킵(예산 다음분 이월)</b> 처리됩니다.\n"
                     
                     await context.bot.send_message(chat_id=query.message.chat_id, text=msg, parse_mode='HTML')
                     return
-                    
+             
                 except Exception as e:
                     await context.bot.send_message(chat_id=query.message.chat_id, text=f"🚨 엑스레이 진단 중 에러 발생: {e}", parse_mode='HTML')
                     return
@@ -185,7 +186,7 @@ class TelegramCallbacks:
                         # MODIFIED: [V44.56 데몬 재가동 코루틴 대기] 코루틴 체인 파괴로 인한 좀비 프로세스 맹점 원천 차단
                         await updater.restart_daemon()
                     else:
-                        await query.edit_message_text(f"❌ <b>[업데이트 실패]</b>\n▫️ 사유: {safe_msg}", parse_mode='HTML')
+                        await query.edit_message_text(f"❌ <b>[동기화 실패]</b>\n▫️ 사유: {safe_msg}", parse_mode='HTML')
                 except Exception as e:
                     import html
                     safe_err = html.escape(str(e))
@@ -390,7 +391,7 @@ class TelegramCallbacks:
                             os.replace(tmp_path, backup_file)
                         except Exception:
                             pass
-                            
+                             
                 await asyncio.to_thread(_process_reset_files)
                 
                 # 🚨 [V55.00 오퍼레이션 SSOT] 큐 장부 다이렉트 파일 I/O 찌꺼기 전면 소각 및 락온
@@ -514,7 +515,7 @@ class TelegramCallbacks:
                 
             if holdings is None:
                 return await query.edit_message_text("❌ API 통신 오류로 주문을 실행할 수 없습니다.")
-                
+                 
             active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
             _, allocated_cash = await asyncio.to_thread(controller._calculate_budget_allocation, cash, active_tickers)
             h = holdings.get(t, {'qty':0, 'avg':0})
@@ -538,7 +539,7 @@ class TelegramCallbacks:
                     logging.debug(f"YF 정규장 종가 롤오버 스캔 실패 ({t}): {e}")
                 if curr_p > 0 and prev_c == 0.0:
                     prev_c = curr_p
-            
+             
             ma_5day = await asyncio.to_thread(self.broker.get_5day_ma, t)
             
             logic_qty_v14 = safe_qty
@@ -614,7 +615,7 @@ class TelegramCallbacks:
 
             async with self.tx_lock:
                 _, holdings = await asyncio.to_thread(self.broker.get_account_balance)
-                
+                 
             if holdings is None:
                 await context.bot.send_message(chat_id, "🚨 API 통신 지연으로 잔고를 확인할 수 없어 전환을 차단합니다. 잠시 후 다시 시도해 주세요.")
                 return
@@ -636,7 +637,7 @@ class TelegramCallbacks:
                 msg += "진행 중인 매매 사이클을 전량 익절(0주)로 마무리하신 후 다시 시도해 주십시오."
                 await query.edit_message_text(msg, parse_mode='HTML')
                 return
-            
+             
             if new_ver == "V_REV":
                 if not (os.path.exists("strategy_reversion.py") and os.path.exists("queue_ledger.py")):
                     await context.bot.send_message(chat_id, "🚨 [개봉박두] V-REV 엔진 모듈 파일이 존재하지 않아 전환할 수 없습니다! (업데이트 필요)")
@@ -765,10 +766,50 @@ class TelegramCallbacks:
                     await query.answer("🔄 관제탑 스크린을 최신 팩트로 갱신했습니다.", show_alert=False)
                 except Exception as e:
                     if "Message is not modified" in str(e):
-                        await query.answer("✅ 시장 변화가 없어 최신 상태가 유지 중입니다.", show_alert=False)
+                         await query.answer("✅ 시장 변화가 없어 최신 상태가 유지 중입니다.", show_alert=False)
                     else:
                         await query.answer(f"갱신 에러: {e}", show_alert=True)
             
+            # NEW: [AVWAP 수동 개입 엣지 케이스 방어] 수동 매도 후 유령 물량을 0주로 강제 동기화하는 라우터 신설
+            elif action_type == "SYNC_ZERO":
+                try:
+                    est = ZoneInfo('America/New_York')
+                    now_est = datetime.datetime.now(est)
+                    
+                    # 1. 인메모리(tracking_cache) 팩트 강제 덮어쓰기 (15:25 덤핑 뇌관 해체)
+                    tracking_cache[f"AVWAP_QTY_{ticker}"] = 0
+                    tracking_cache[f"AVWAP_BOUGHT_{ticker}"] = False
+                    tracking_cache[f"AVWAP_SHUTDOWN_{ticker}"] = True
+                    tracking_cache[f"AVWAP_AVG_{ticker}"] = 0.0
+
+                    # 2. 파일 시스템(상태 파일) 제1/제4 헌법 기반 비동기 원자적 쓰기 타격
+                    if hasattr(self.strategy, 'v_avwap_plugin'):
+                        state_data = {
+                            'bought': False,
+                            'shutdown': True,
+                            'qty': 0,
+                            'avg_price': 0.0,
+                            'strikes': tracking_cache.get(f"AVWAP_STRIKES_{ticker}", 0),
+                            'daily_bought_qty': tracking_cache.get(f"AVWAP_DAILY_BOUGHT_{ticker}", 0),
+                            'daily_sold_qty': tracking_cache.get(f"AVWAP_DAILY_SOLD_{ticker}", 0),
+                            'first_scan_done': tracking_cache.get(f"AVWAP_FIRST_SCAN_DONE_{ticker}", False),
+                            'first_scan_passed': tracking_cache.get(f"AVWAP_FIRST_SCAN_PASSED_{ticker}", False),
+                            'dump_jitter_sec': tracking_cache.get(f"AVWAP_DUMP_JITTER_{ticker}", 0)
+                        }
+                        await asyncio.to_thread(self.strategy.v_avwap_plugin.save_state, ticker, now_est, state_data)
+                    
+                    # 3. 관제탑 UI 최신화
+                    from telegram_avwap_console import AvwapConsolePlugin
+                    plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
+                    msg, markup = await plugin.get_console_message(render_app_data)
+                    await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
+                    
+                    # 4. 완료 브리핑 타전
+                    await query.answer(f"🧯 [{ticker}] 암살자 수동 청산 동기화 완료! 당일 영구 동결(Shutdown) 상태로 전환됩니다.", show_alert=True)
+                except Exception as e:
+                    logging.error(f"🚨 암살자 수동 청산 동기화 에러: {e}")
+                    await query.answer(f"동기화 에러: {e}", show_alert=True)
+                    
             # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] TARGET_MANUAL, TARGET_AUTO, EARLY, MULTI 콜백 파이프라인 100% 소각 완료
 
         elif action == "MODE":
@@ -804,7 +845,7 @@ class TelegramCallbacks:
                 await context.bot.send_message(chat_id, f"🚨 {current_ver} 모드에서는 로직 충돌 방지를 위해 상방 스나이퍼를 켤 수 없습니다!")
                 return
 
-            await asyncio.to_thread(self.cfg.set_upward_sniper_mode, ticker, mode_val == "ON")
+             await asyncio.to_thread(self.cfg.set_upward_sniper_mode, ticker, mode_val == "ON")
             await query.edit_message_text(f"✅ <b>[{ticker}]</b> 상방 스나이퍼 모드 변경 완료: {'🎯 ON (가동중)' if mode_val == 'ON' else '⚪ OFF (대기중)'}", parse_mode='HTML')
             
         elif action == "TICKER":
@@ -821,7 +862,7 @@ class TelegramCallbacks:
                 msg_txt = " + ".join(target_tickers) + " 싱글 모멘텀"
             else:
                 if sub == "SOXS":
-                    await context.bot.send_message(chat_id, "⚠️ [V61.00 절대 헌법] 숏(SOXS) 운용은 시스템 전역에서 100% 영구 소각되었습니다.")
+                     await context.bot.send_message(chat_id, "⚠️ [V61.00 절대 헌법] 숏(SOXS) 운용은 시스템 전역에서 100% 영구 소각되었습니다.")
                     return
                 target_tickers = [sub]
                 msg_txt = sub + " 전용"
@@ -835,7 +876,7 @@ class TelegramCallbacks:
             controller.user_states[chat_id] = f"SEED_{sub}_{ticker}"
             await context.bot.send_message(chat_id, f"💵 [{ticker}] 시드머니 금액 입력:", parse_mode='HTML')
             
-        elif action == "INPUT":
+         elif action == "INPUT":
             await query.answer()
             ticker = data[2]
             controller.user_states[chat_id] = f"CONF_{sub}_{ticker}"
@@ -843,13 +884,13 @@ class TelegramCallbacks:
             if sub == "SPLIT":
                 ko_name = "분할 횟수"
             elif sub == "TARGET":
-                ko_name = "목표 수익률(%)"
+                 ko_name = "목표 수익률(%)"
             elif sub == "COMPOUND":
                 ko_name = "자동 복리율(%)"
             elif sub == "STOCK_SPLIT":
                 ko_name = "액면 분할/병합 비율 (예: 10분할은 10, 10병합은 0.1)"
             elif sub == "FEE":
-                ko_name = "증권사 수수료율(%)"
+                 ko_name = "증권사 수수료율(%)"
             else:
                 ko_name = "값"
             

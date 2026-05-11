@@ -33,6 +33,7 @@
 # 암살자 상태 및 작전 텍스트에 ATR5 동적 하드스탑 감시 팩트를 다이내믹하게 인젝션하여 시각적 디커플링 해체 완료.
 # 🚨 NEW: [V66.00 AVWAP 암살자 덤핑 지터(Jitter) 분산 락온]
 # 관제탑 렌더링 시 하드코딩된 15:25 덤핑 텍스트를 소각하고, 캐시에 저장된 지터 초를 반영한 동적 타임스탬프로 시각적 팩트 교정 완료.
+# NEW: [AVWAP 수동 개입 엣지 케이스 방어] 수동 매도 후 유령 물량을 0주로 강제 동기화하는 관제탑 전용 뷰포트 신설
 # ==========================================================
 import logging
 import datetime
@@ -183,7 +184,7 @@ class AvwapConsolePlugin:
                                 df_5m['HA_Open'] = pd.Series(ha_open, index=df_5m.index)
                                 df_5m['HA_High'] = df_5m[['high', 'HA_Open', 'HA_Close']].max(axis=1)
                                 df_5m['HA_Low'] = df_5m[['low', 'HA_Open', 'HA_Close']].min(axis=1)
-                        
+                         
                                 # 0.01$ 갭 필터링
                                 df_5m['No_Lower_Wick'] = (df_5m['HA_Open'] - df_5m['HA_Low']) <= 0.01
                                 df_5m['Is_Bullish'] = df_5m['HA_Close'] >= df_5m['HA_Open']
@@ -469,6 +470,10 @@ class AvwapConsolePlugin:
                     logging.debug(f"AVWAP 상태 텍스트 추출 에러: {e}")
 
             msg += f"▫️ 상태: <b>{status_txt}</b>\n"
+            
+            # NEW: [AVWAP 수동 개입 엣지 케이스 방어] 수동 매도 후 유령 물량을 0주로 강제 동기화하는 관제탑 전용 뷰포트 신설
+            if avwap_qty > 0:
+                keyboard.append([InlineKeyboardButton(f"🧯 {t} 암살자 수동 청산 (0주 락온)", callback_data=f"AVWAP_SET:SYNC_ZERO:{t}")])
 
         keyboard.append([
             InlineKeyboardButton("🔄 관제탑 새로고침", callback_data="AVWAP_SET:REFRESH:NONE"),
