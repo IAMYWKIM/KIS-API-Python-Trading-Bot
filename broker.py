@@ -16,6 +16,7 @@
 # 🚨 MODIFIED: [V71.05 KIS VWAP 30분 압축 타격 및 예약 주문 파이프라인 정밀 수술]
 # - KIS 명세에 따라 VWAP 주문 시 ORD_DVSN="36" 및 ALGO_ORD_TMD_DVSN_CD="00"(시간지정) 락온.
 # - 153000~155500 압축 타격 시간 인젝션 및 시장가 집행을 위한 단가 "0" 강제 형변환 적용.
+# 🚨 MODIFIED: [V71.06 런타임 즉사 방어] SyntaxError를 유발하던 렌더링 마커 누수 전면 소각 완료.
 # ==========================================================
 
 import requests
@@ -91,7 +92,7 @@ class KoreaInvestmentBroker:
                 if dir_name and not os.path.exists(dir_name):
                     os.makedirs(dir_name, exist_ok=True)
               
-                fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True) # 🚨 [제4헌법] 원자적 쓰기
+                fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
                 try:
                     with os.fdopen(fd, 'w', encoding='utf-8') as f:
                         json.dump({'token': self.token, 'expire': expire_str}, f)
@@ -211,7 +212,7 @@ class KoreaInvestmentBroker:
         return price_cd if target_api == "PRICE" else order_cd
 
     def get_account_balance(self):
-        [span_3](start_span)""" 🚨 [제3경고] API 잔고 응답 중복 합산 절대 방어 락온[span_3](end_span) """
+        """ 🚨 [제3경고] API 잔고 응답 중복 합산 절대 방어 락온 """
         cash = 0.0
         holdings = {}
         api_success = False 
@@ -261,7 +262,6 @@ class KoreaInvestmentBroker:
                                 holdings[ticker] = {'qty': qty, 'ord_psbl_qty': ord_psbl_qty, 'avg': avg}
                             else:
                                 prev = holdings[ticker]
-                                # [span_4](start_span)💡 [멱등성 가드] 동일 수량/평단가 중복 응답 무시[span_4](end_span)
                                 if prev['qty'] == qty and abs(prev['avg'] - avg) < 0.001: continue 
                                 total_qty = prev['qty'] + qty
                                 new_avg = ((prev['avg'] * prev['qty']) + (avg * qty)) / total_qty if total_qty > 0 else avg
@@ -288,7 +288,7 @@ class KoreaInvestmentBroker:
             df = stock.history(period="5d", interval="1m", prepost=False, timeout=10)
             if df.empty: return 0.0, 0.0
             df = _flatten_columns(df)
-            [span_5](start_span)est = ZoneInfo('America/New_York') # 🚨 [제3헌법] EST 락온[span_5](end_span)
+            est = ZoneInfo('America/New_York')
             if df.index.tz is None: df.index = df.index.tz_localize('UTC').tz_convert(est)
             else: df.index = df.index.tz_convert(est)
 
@@ -436,7 +436,7 @@ class KoreaInvestmentBroker:
         return 0.0
 
     def get_1min_candles_df(self, ticker):
-        [span_6](start_span)""" 🚨 [제5경고] 하이킨아시 연산을 위한 open 컬럼 강제 보존 리턴[span_6](end_span) """
+        """ 🚨 [제5경고] 하이킨아시 연산을 위한 open 컬럼 강제 보존 리턴 """
         try:
             stock = yf.Ticker(ticker)
             df = stock.history(period="1d", interval="1m", prepost=True, timeout=5)
@@ -448,7 +448,7 @@ class KoreaInvestmentBroker:
             df = df.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'})
             df['time_est'] = df.index.strftime('%H%M00')
             
-            # [span_7](start_span)NEW: [V47 시계열 체력 측정 로직] 당일 고가/저가 타임스탬프 영속화[span_7](end_span)
+            # NEW: [V47 시계열 체력 측정 로직] 당일 고가/저가 타임스탬프 영속화
             try:
                 max_high, min_low = float(df['high'].max()), float(df['low'].min())
                 time_high_idx, time_low_idx = df['high'].astype(float).idxmax(), df['low'].astype(float).idxmin()
@@ -584,7 +584,7 @@ class KoreaInvestmentBroker:
         final_price = str(self._ceil_2(price))
         ord_dvsn = "00" # 기본 지정가
         
-        # [span_8](start_span)NEW: [제16경고] 변수 스코프 전진 배치 (Scope Lifting)[span_8](end_span)
+        # NEW: [제16경고] 변수 스코프 전진 배치 (Scope Lifting)
         algo_ord_tmd = "02" 
         
         body = {
@@ -595,7 +595,7 @@ class KoreaInvestmentBroker:
         # 🚨 [팩트 패치] KIS 명세에 따른 알고리즘 예약 주문 시간 지정 락온
         if order_type == "VWAP":
             body["ORD_DVSN"] = "36" # 36: VWAP 지원
-            [span_9](start_span)body["FT_ORD_UNPR3"] = "0" # 시장가 집행 원칙[span_9](end_span)
+            body["FT_ORD_UNPR3"] = "0" # 시장가 집행 원칙
             
             if start_time and end_time:
                 # ※ 분할주문 시간 직접입력 시 '00'으로 값 설정
@@ -697,7 +697,7 @@ class KoreaInvestmentBroker:
             ret.is_panic, ret.gap_pct = False, 0.0; return ret
 
     def get_day_high_low(self, ticker):
-        [span_10](start_span)""" 🚨 [제3헌법] 정규장 데이터 슬라이싱 디커플링[span_10](end_span) """
+        """ 🚨 [제3헌법] 정규장 데이터 슬라이싱 디커플링 """
         try:
             hist = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True, timeout=5)
             if not hist.empty:
