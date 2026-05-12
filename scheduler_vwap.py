@@ -141,7 +141,7 @@ async def scheduled_vwap_init_and_cancel(context):
     try:
         await asyncio.wait_for(_do_init(), timeout=45.0)
     except Exception as e:
-        logging.error(f"🚨 Fail-Safe 타임아웃 에러: {e}", exc_info=True)
+         logging.error(f"🚨 Fail-Safe 타임아웃 에러: {e}", exc_info=True)
 
 
 async def scheduled_vwap_trade(context):
@@ -262,7 +262,7 @@ async def scheduled_vwap_trade(context):
                                     
                                     gap_pct = ((base_curr_p - base_vwap) / base_vwap * 100.0) if base_vwap > 0 else 0.0
                                     gap_thresh = await asyncio.to_thread(getattr(cfg, 'get_vrev_gap_threshold', lambda x: -0.67), t)
-                                    
+                                
                                     if gap_pct <= gap_thresh:
                                         logging.info(f"⚡ [{t}] Gap Hijack Triggered! gap: {gap_pct:.2f}%, thresh: {gap_thresh}%")
                                         
@@ -277,10 +277,10 @@ async def scheduled_vwap_trade(context):
                                                 odno = req.get('odno')
                                                 ord_dt = req.get('ord_dt', d_str)
                                                 if odno:
-                                                    try:
-                                                        await asyncio.to_thread(broker.cancel_reservation_order, ord_dt, odno)
-                                                        nuked_count += 1
-                                                    except Exception as e:
+                                                     try:
+                                                         await asyncio.to_thread(broker.cancel_reservation_order, ord_dt, odno)
+                                                         nuked_count += 1
+                                                     except Exception as e:
                                                         logging.error(f"🚨 [{t}] 예약 덫 취소 실패: {e}")
                                             logging.info(f"⚡ [{t}] KIS 실원장 스캔: 예약 덫 {nuked_count}건 팩트 파기 완료.")
                                         except Exception as e:
@@ -316,7 +316,7 @@ async def scheduled_vwap_trade(context):
                                             # 💡 갭 하이재킹은 즉각적인 스윕(Sweep) 타격을 위해 지정가(LIMIT)를 사용함. (일반주문 명세 100% 부합)
                                             res = await asyncio.to_thread(broker.send_order, t, "BUY", buy_qty, exec_price, "LIMIT")
                                             odno = res.get('odno', '') if isinstance(res, dict) else ''
-                                            
+
                                             if res and res.get('rt_cd') == '0' and odno:
                                                 vwap_cache[f"REV_{t}_gap_hijack_fired"] = True
                                                 msg = f"⚡ <b>[{t}] 🤖 모멘텀 자율주행 (Gap Hijack) 섀도우 오버라이드 격발!</b>\n"
@@ -324,7 +324,7 @@ async def scheduled_vwap_trade(context):
                                                 msg += f"▫️ KIS 예약 덫({nuked_count}건)을 즉각 파기(Nuke)하고, 잔여 예산 100%를 매도 1호가로 일괄 스윕(Sweep) 타격했습니다!\n"
                                                 msg += f"▫️ 스윕 수량: <b>{buy_qty}주</b> (단가: ${exec_price:.2f})"
                                                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
-                                                
+                                                 
                                                 if hasattr(strategy, 'v_rev_plugin'):
                                                     await asyncio.to_thread(strategy.v_rev_plugin.record_execution, t, "BUY", buy_qty, exec_price)
                                                 if queue_ledger:

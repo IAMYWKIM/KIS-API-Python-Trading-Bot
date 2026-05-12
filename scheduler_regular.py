@@ -230,7 +230,7 @@ async def scheduled_regular_trade(context):
                     chat_id=context.job.chat_id, 
                     text=f"⚠️ <b>[API 통신 지연 감지]</b>\n한투 서버 불안정. 1분 뒤 재시도합니다! 🛡️\n<code>사유: {fail_reason}</code>", 
                     parse_mode='HTML'
-                )
+                 )
 
         if attempt < MAX_RETRIES:
             if attempt != 1 and attempt % 5 == 0:

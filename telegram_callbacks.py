@@ -184,7 +184,7 @@ class TelegramCallbacks:
                     
                     if res.get('rt_cd') == '0':
                         await asyncio.to_thread(self.queue_ledger.pop_lots, ticker, emergency_qty)
-              
+               
                         msg = f"🚨 <b>[{ticker}] 수동 긴급 수혈 (Emergency MOC) 격발 완료!</b>\n"
                         msg += f"▫️ 포트폴리오 매니저의 승인 하에 최근 로트 <b>{emergency_qty}주</b>를 시장가(MOC)로 강제 청산했습니다.\n"
                         await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
@@ -235,12 +235,12 @@ class TelegramCallbacks:
                     final_q = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) if getattr(self, 'queue_ledger', None) else []
                     msg, markup = self.view.get_queue_management_menu(ticker, final_q)
                     await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                
+            
                 elif action == "EDIT_Q":
                     await query.answer("✏️ 수정 모드 진입", show_alert=False)
                     short_date = target_date[:10]
                     controller.user_states[chat_id] = f"EDITQ_{ticker}_{target_date}"
-                    
+                     
                     prompt = f"✏️ <b>[{ticker} 지층 수정 모드]</b>\n"
                     prompt += f"선택하신 <b>[{short_date}]</b> 지층을 재설정합니다.\n\n"
                     prompt += "새로운 <b>[수량]</b>과 <b>[평단가]</b>를 띄어쓰기로 입력하세요.\n"
@@ -311,7 +311,7 @@ class TelegramCallbacks:
                     await asyncio.to_thread(self.queue_ledger.clear_queue, ticker)
             
                 await query.edit_message_text(f"✅ <b>[{ticker}] 삼위일체 소각(Nuke) 및 초기화 완료!</b>\n▫️ 본장부, 백업장부, 큐(Queue), 에스크로의 찌꺼기 데이터가 100% 영구 삭제되었습니다.\n▫️ 다음 매수 진입 시 0주 새출발 디커플링 타점 모드로 완벽히 재시작합니다.", parse_mode='HTML')
-           
+       
             elif sub == "CANCEL":
                  await query.edit_message_text("❌ 닫았습니다.", parse_mode='HTML')
 

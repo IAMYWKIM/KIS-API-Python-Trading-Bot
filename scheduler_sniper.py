@@ -36,6 +36,9 @@
 # 🚨 NEW: [V71.09 전투 사령부 자전거래 락다운 및 덫 복원 라우팅 수술]
 # - 본진 덫 취소 시 로컬 JSON 의존성을 전면 소각하고 KIS 실원장(get_reservation_orders) 팩트 스캔을 통한 취소로 역배선 완료.
 # - 덤핑 직후 즉시 덫을 장전하던 하극상 철거. 15:25 EST 정각까지 비동기 디커플링 대기 후 예약주문(send_reservation_order)으로 팩트 지연 재장전 락다운 이식.
+# 🚨 MODIFIED: [V71.14 지정가 VWAP 일반주문 역배선 팩트 락온]
+# - 본진 덫 지연 복원 시 VWAP 주문 파라미터 충돌(TypeError)을 유발하던 send_reservation_order 맹독성 오호출 영구 소각.
+# - VWAP(36)은 KIS 명세에 따라 send_order로 직결하도록 팩트 라우팅 분기 처리 완료.
 # ==========================================================
 import logging
 import datetime
@@ -65,7 +68,7 @@ async def scheduled_sniper_monitor(context):
     
     est = ZoneInfo('America/New_York')
     now_est = datetime.datetime.now(est)
-    
+ 
     if context.job.data.get('tx_lock') is None:
         logging.warning("⚠️ [sniper_monitor] tx_lock 미초기화. 이번 사이클 스킵.")
         return
@@ -196,7 +199,7 @@ async def scheduled_sniper_monitor(context):
                         tracking_cache[f"AVWAP_INIT_{t}"] = True
           
                     if tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"): continue
-            
+             
                     target_base = base_map.get(t, t) 
   
                     ctx_data = tracking_cache.get(f"AVWAP_CTX_{t}")
@@ -264,7 +267,7 @@ async def scheduled_sniper_monitor(context):
                         atr_task = asyncio.to_thread(broker.get_atr_data, t)
                         df_t_task = asyncio.to_thread(broker.get_1min_candles_df, t)
                         df_base_task = asyncio.to_thread(broker.get_1min_candles_df, target_base)
-                        
+                       
                         res_prev, res_atr, res_df_t, res_df_base = await asyncio.wait_for(
                             asyncio.gather(prev_c_task, atr_task, df_t_task, df_base_task, return_exceptions=True),
                             timeout=10.0
@@ -404,7 +407,7 @@ async def scheduled_sniper_monitor(context):
                                     if ccld_qty < qty:
                                         msg += f"\n▫️ 미체결 {qty - ccld_qty}주는 안전을 위해 즉각 취소(Nuke)되었습니다."
                                     await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
-                            
+          
                                     old_qty = tracking_cache.get(f"AVWAP_QTY_{t}", 0)
                                     old_avg = tracking_cache.get(f"AVWAP_AVG_{t}", 0.0)
                                     new_qty = old_qty + ccld_qty
@@ -466,7 +469,7 @@ async def scheduled_sniper_monitor(context):
 
                             res = await asyncio.to_thread(broker.send_order, t, "SELL", qty, exec_price, "LIMIT")
                             odno = res.get('odno', '') if isinstance(res, dict) else ''
-                            
+                             
                             if res and res.get('rt_cd') == '0' and odno:
                                 ccld_qty = 0
                                 for _ in range(4):
@@ -507,9 +510,9 @@ async def scheduled_sniper_monitor(context):
                                         shutdown_flag = True
                                         new_avg = 0.0
                                         avwap_free_cash += (ccld_qty * exec_price)
-                                     
+                                      
                                         # 🚨 NEW: [V71.09 전투 사령부 자전거래 락다운 및 덫 복원 라우팅 수술]
-                                        # 15:25 EST 정각까지 비동기 대기 후 send_reservation_order 기반 지연 재장전
+                                        # 15:25 EST 정각까지 비동기 대기 후 send_reservation_order 및 일반주문(VWAP) 기반 지연 재장전
                                         async def _delayed_restore_resv_orders(b_inst, tk, strat_inst, n_est):
                                             try:
                                                 target_time = datetime.time(15, 25, 0)
@@ -530,24 +533,32 @@ async def scheduled_sniper_monitor(context):
                                                 target_orders = plan.get('core_orders', plan.get('orders', [])) + plan.get('bonus_orders', [])
                                                 restored_cnt = 0
                                                 for o in target_orders:
-                                                    r_res = await asyncio.to_thread(
-                                                        b_inst.send_reservation_order, 
-                                                        tk, o['side'], o['qty'], o['price'], o['type'],
-                                                        start_time="152500", end_time="155500"
-                                                    )
+                                                    # 🚨 MODIFIED: [V71.14 지정가 VWAP 일반주문 역배선 팩트 락온]
+                                                    if o['type'] == "VWAP":
+                                                        r_res = await asyncio.to_thread(
+                                                            b_inst.send_order, 
+                                                            tk, o['side'], o['qty'], o['price'], o['type'],
+                                                            start_time="152500", end_time="155500"
+                                                        )
+                                                    else:
+                                                        r_res = await asyncio.to_thread(
+                                                            b_inst.send_reservation_order, 
+                                                            tk, o['side'], o['qty'], o['price'], o['type']
+                                                        )
+                                                    
                                                     if r_res.get('rt_cd') == '0' and r_res.get('odno'):
                                                         restored_cnt += 1
                                                     await asyncio.sleep(0.2)
                                                 
-                                                logging.info(f"🔄 [{tk}] 15:25 EST 도달: 본진의 예약 덫(VWAP/LOC) {restored_cnt}건 무결점 재장전(Restore) 완료.")
+                                                logging.info(f"🔄 [{tk}] 15:25 EST 도달: 본진의 예약/일반 덫(VWAP/LOC) {restored_cnt}건 무결점 재장전(Restore) 완료.")
                                             except Exception as e:
                                                 logging.error(f"🚨 [{tk}] 본진 예약 덫 재장전 중 에러: {e}")
 
                                         # 백그라운드 비동기 태스크로 격발시켜 90초 전역 타임아웃 방어
                                         asyncio.create_task(_delayed_restore_resv_orders(broker, t, strategy, now_est))
                                         
-                                        msg += f"\n🛡️ <b>본진 예약 덫 복원</b>: 15:25 EST KIS 예약주문 지연 재장전(디커플링 대기 중)"
-                                            
+                                        msg += f"\n🛡️ <b>본진 예약 덫 복원</b>: 15:25 EST KIS 예약/일반주문 지연 재장전(디커플링 대기 중)"
+                                        
                                     else:
                                         msg += f"\n⚠️ 잔량 {new_qty}주 발생 (미체결 강제 취소됨, 다음 1분봉 루프에서 재시도)"
                                         shutdown_flag = True
@@ -769,7 +780,7 @@ async def scheduled_sniper_monitor(context):
                                         if ex.get('sll_buy_dvsn_cd') == side_code and ex.get('odno') == target_odno:
                                             p = float(ex.get('ft_ccld_unpr3', '0'))
                                             if p > 0: return p
-                                            
+
                                     target_recs = [ex for ex in history if ex.get('sll_buy_dvsn_cd') == side_code]
                                     for ex in target_recs:
                                         p = float(ex.get('ft_ccld_unpr3', '0'))

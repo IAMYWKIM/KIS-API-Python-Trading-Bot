@@ -96,11 +96,12 @@ class KoreaInvestmentBroker:
                     os.makedirs(dir_name, exist_ok=True)
    
                 fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
+               
                 try:
                     with os.fdopen(fd, 'w', encoding='utf-8') as f:
                         json.dump({'token': self.token, 'expire': expire_str}, f)
                         f.flush()
-                        os.fsync(f.fileno())
+                    os.fsync(f.fileno())
                     shutil.move(temp_path, self.token_file)
                 finally:
                     if os.path.exists(temp_path):
@@ -205,7 +206,7 @@ class KoreaInvestmentBroker:
                         dynamic_success = True
                         break
         except Exception as e:
-            print(f"⚠️ [Broker] 거래소 동적 획득 실패: {ticker} - {e}")
+            print(f"⚠️ [Broker] 거래소 동 동적 획득 실패: {ticker} - {e}")
 
         if not dynamic_success:
             if ticker == "SOXL": price_cd, order_cd = "AMS", "AMEX"
@@ -222,19 +223,20 @@ class KoreaInvestmentBroker:
         
         params = {"CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "WCRC_FRCR_DVSN_CD": "02", "NATN_CD": "840", "TR_MKET_CD": "00", "INQR_DVSN_CD": "00"}
         res = self._call_api("CTRP6504R", "/uapi/overseas-stock/v1/trading/inquire-present-balance", "GET", params=params)
-      
+   
         if res.get('rt_cd') == '0':
             api_success = True
             o2 = res.get('output2', {})
             if isinstance(o2, list): o2 = o2[0] if len(o2) > 0 else {}
             
-            dncl_amt = self._safe_float(o2.get('frcr_dncl_amt_2', 0))       
+            dncl_amt = self._safe_float(o2.get('frcr_dncl_amt_2', 0))     
             sll_amt = self._safe_float(o2.get('frcr_sll_amt_smtl', 0))      
             buy_amt = self._safe_float(o2.get('frcr_buy_amt_smtl', 0))      
             raw_bp = dncl_amt + sll_amt - buy_amt
             cash = max(0.0, math.floor((raw_bp * 0.9945) * 100) / 100.0)
 
         target_excgs = ["NASD", "AMEX", "NYSE"] 
+  
         for excg in target_excgs:
             fk200, nk200 = "", ""
             for attempt in range(20): 
@@ -670,6 +672,7 @@ class KoreaInvestmentBroker:
         for attempt in range(10): 
             params = {"CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "PDNO": ticker, "ORD_STRT_DT": start_date, "ORD_END_DT": end_date, "SLL_BUY_DVSN": "00", "CCLD_NCCS_DVSN": "00", "OVRS_EXCG_CD": excg_cd, "SORT_SQN": "DS", "CTX_AREA_FK200": "", "CTX_AREA_NK200": ""}
             res, resp_json = self._api_request("GET", f"{self.base_url}/uapi/overseas-stock/v1/trading/inquire-ccnl", self._get_header("TTTS3035R"), params=params)
+ 
             if res and resp_json.get('rt_cd') == '0':
                 output = resp_json.get('output', [])
                 if isinstance(output, dict): output = [output] 
