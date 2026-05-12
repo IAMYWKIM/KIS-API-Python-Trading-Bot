@@ -29,6 +29,7 @@
 # 🚨 NEW: [KIS VWAP 알고리즘 대통합 수술] 수동 VWAP 한투 앱 직접 세팅 관련 경고문 전면 소각 및 17:05 KST 자동 예약 장전 팩트 기반 렌더링으로 100% 교정 완료.
 # 🚨 MODIFIED: [V71.02 XRAY 엔진 렌더링 영구 소각]
 # KIS 자체 VWAP 알고리즘 위임에 따라 1분 단위 시뮬레이션의 의미가 상실된 런타임 엑스레이(Dry-Run) 진단 버튼을 통합 지시서, 장부 조회, 큐 관리 뷰포트에서 전면 적출 완료.
+# 🚨 MODIFIED: [V71.03 런타임 즉사 방어] SyntaxError(is 키워드 누락) 팩트 무결점 교정 완료.
 # ==========================================================
 import os
 import math
@@ -203,7 +204,6 @@ class TelegramView:
         msg += "최근 매수한 <b>1지층</b>을 시장가(MOC)로 강제 덤핑하여 가용 예산을 확보합니다."
 
         keyboard.append([InlineKeyboardButton("🩸 1지층 수동 긴급 수혈 (MOC)", callback_data=f"EMERGENCY_REQ:{ticker}")])
-        # MODIFIED: [V71.02 XRAY 엔진 렌더링 영구 소각] KIS VWAP 위임에 따라 엑스레이 진단 버튼 철거
         keyboard.append([InlineKeyboardButton("🔄 대시보드 새로고침", callback_data=f"QUEUE:VIEW:{ticker}")])
         
         return msg, InlineKeyboardMarkup(keyboard)
@@ -225,7 +225,7 @@ class TelegramView:
         msg = f"🚨 <b>[{ticker} 비상 수혈 최종 승인 대기]</b> 🚨\n\n"
         msg += f"가장 최근에 매수한 <b>1지층 {emergency_qty}주</b> (평단 <b>${emergency_price:.2f}</b>)를 KIS 서버로 즉각 시장가(MOC) 강제 매도 전송합니다.\n\n"
         msg += "⚠️ <b>포트폴리오 매니저 경고:</b>\n"
-        msg += "1. 이 작업은 즉각 격발되며 취소할 수 없습니다.\n"
+        msg += "1. 이 작업은 즉각 격발되며 취소할 수 풀 수 없습니다.\n"
         msg += "2. 정규장/프리장 운영 시간에만 격발이 승인됩니다.\n"
         msg += "3. 체결 즉시 해당 지층 기록은 큐(Queue)에서 영구 소각됩니다.\n"
         
@@ -365,12 +365,10 @@ class TelegramView:
                 body_msg += "🛡️ <b>가동 조치:</b> 마이너스 호가 차단용 절대 하한선($0.01) 방어막 가동 중!\n\n"
 
             if v_mode == "V_REV":
-                # MODIFIED: [KIS VWAP 알고리즘 대통합 수술] 수동/자율 텍스트 소각 및 팩트 렌더링
                 v_mode_display = "V_REV 역추세 (VWAP 자동예약)"
                 main_icon = "⚖️"
                 bdg_txt = f"1회(1배수) 예산: ${safe_one_portion:,.0f}"
             else:
-                # MODIFIED: [KIS VWAP 알고리즘 대통합 수술]
                 v_mode_display = "무매4 (VWAP 자동예약)" if is_manual_vwap else "무매4 (LOC)"
                 main_icon = "💎"
                 bdg_txt = f"당일 예산: ${safe_one_portion:,.0f}"
@@ -460,7 +458,6 @@ class TelegramView:
                             body_msg += f"🎯 상방 스나이퍼: ${sn_target:.2f} 이상 대기\n"
             elif v_mode == "V_REV":
                 body_msg += "⚖️ <b>역추세 LIFO 큐(Queue) 엔진 스탠바이</b>\n"
-                # MODIFIED: [KIS VWAP 권한 위임] 수동 덫 장전 안내 소각 및 17:05 예약 장전 팩트 렌더링
                 body_msg += "⏱️ <b>VWAP 스케줄:</b> 17:05 KST 증권사 VWAP 자동 예약 덫 장전 ➔ 장막판 갭 하이재킹 관망\n"
             
             if v_mode == "V_REV":
@@ -480,7 +477,6 @@ class TelegramView:
 
             else:
                 if is_manual_vwap and not is_rev_logic:
-                    # MODIFIED: [KIS VWAP 권한 위임]
                     body_msg += "⏱️ <b>VWAP 스케줄:</b> 17:05 KST 증권사 VWAP 자동 예약 덫 장전 ➔ KIS 알고리즘 체결 위임\n"
                 
                 plan_info = t_info.get('plan', {})
@@ -524,9 +520,6 @@ class TelegramView:
                     body_msg += " 💤 주문 없음 (관망/예산소진)\n"
                 
             body_msg += "\n"
-            
-            # MODIFIED: [V71.02 XRAY 엔진 렌더링 영구 소각] KIS VWAP 위임에 따라 엑스레이 진단 버튼 철거
-            # (XRAY 버튼 삭제됨)
 
         final_msg = header_msg + body_msg
         
@@ -534,7 +527,6 @@ class TelegramView:
         is_dst = bool(datetime.datetime.now(est_tz).dst())
 
         if not is_trade_active:
-            # 🚨 MODIFIED: [V66.04 런타임 붕괴 방어] create_sync_report 내 IndentationError(들여쓰기) 팩트 무결점 교정 완료.
             fact_hour = 17 if is_dst else 18
             final_msg += f"💡 <i>※ 현재 표출된 계획은 전일 {fact_hour}:05 기준 박제된 스냅샷이며, 금일 {fact_hour}:05에 최신 팩트 잔고를 바탕으로 리셋됩니다.</i>\n\n"
             final_msg += "⛔ 장마감/애프터마켓: 주문 불가"
@@ -545,7 +537,8 @@ class TelegramView:
         return final_msg, InlineKeyboardMarkup(keyboard) if keyboard else None
 
     def get_settlement_message(self, active_tickers, config, atr_data, tracking_cache=None):
-        if tracking_cache None: tracking_cache = {}
+        # MODIFIED: [V71.03 런타임 즉사 방어] SyntaxError(is 키워드 누락) 팩트 무결점 교정 완료
+        if tracking_cache is None: tracking_cache = {}
         
         msg = "⚙️ <b>[ 현재 설정 및 복리 상태 ]</b>\n\n"
         keyboard = []
@@ -557,10 +550,10 @@ class TelegramView:
             
             if ver == "V_REV":
                 icon = "⚖️"
-                ver_display = "V_REV 역추세 (VWAP 자동예약)" # MODIFIED: [KIS VWAP 알고리즘 대통합] 팩트 교정
+                ver_display = "V_REV 역추세 (VWAP 자동예약)" 
             else:
                 icon = "💎"
-                ver_display = "무매4 (VWAP 자동예약)" if is_manual_vwap else "무매4 (LOC)" # MODIFIED: [KIS VWAP 알고리즘 대통합] 팩트 교정
+                ver_display = "무매4 (VWAP 자동예약)" if is_manual_vwap else "무매4 (LOC)"
                 
             split_cnt = int(config.get_split_count(t))
             target_profit = config.get_target_profit(t)
@@ -582,12 +575,10 @@ class TelegramView:
                     msg += f"▫️ AVWAP 암살자: <b>{avwap_status_txt}</b>\n"
                     
                 msg += "⚖️ <b>역추세(Reversion) 하이브리드 엔진 스탠바이:</b>\n"
-                # MODIFIED: [KIS VWAP 알고리즘 대통합] 17:05 팩트 락온 텍스트 교정
                 msg += "▫️ 17:05 KST KIS VWAP 자동 예약 장전 및 갭 하이재킹 관망 중\n\n"
             else:
                 msg += f"▫️ 분할: {split_cnt}회\n▫️ 목표: {target_profit}%\n▫️ 자동복리: {comp_rate}%\n"
                 msg += f"▫️ 증권사 수수료: <b>{fee_rate}%</b>\n"
-                # MODIFIED: [KIS VWAP 알고리즘 대통합]
                 v14_mode_txt = "🕒 KIS VWAP 알고리즘 예약 주문 자동 장전" if is_manual_vwap else "📉 LOC 단일 타격 (초안정성)"
                 msg += f"▫️ 집행: <b>{v14_mode_txt}</b>\n\n"
         
@@ -644,7 +635,6 @@ class TelegramView:
         return msg, InlineKeyboardMarkup(keyboard)
 
     def get_vrev_mode_selection_menu(self, ticker):
-        # MODIFIED: [KIS VWAP 권한 위임] 수동/자동 분기 텍스트 및 콜백 100% 영구 소각, 단일 팩트 승인창 개통
         msg = f"⚠️ <b>[{ticker} V-REV 역추세 모드 전환]</b>\n\n"
         msg += "V-REV 전략은 장 마감 전 KIS 자체 VWAP 알고리즘 예약 주문을 통해 1일치 예산을 집행합니다.\n\n"
         msg += "<b>🤖 KIS VWAP 자동 예약 덫 장전 (자율주행)</b>\n"
@@ -664,7 +654,6 @@ class TelegramView:
         msg += "<b>1. 📉 LOC 방식 (기본)</b>\n"
         msg += "▫️ 17:05 KST 정규장 주문 시 전량 장마감시지정가(LOC)로 일괄 전송\n"
         msg += "▫️ 호가창 슬리피지 최소화 및 초안정성 지향\n\n"
-        # MODIFIED: [KIS VWAP 권한 위임] 
         msg += "<b>2. 🕒 VWAP 방식 (KIS 알고리즘 위임)</b>\n"
         msg += "▫️ 17:05 KST에 KIS VWAP 예약 주문을 자동 장전하여 증권사 알고리즘에 위임\n"
         msg += "▫️ 분 분할 타임 슬라이싱의 슬리피지를 없애고 증권사 알고리즘의 평균가 체결을 보장합니다.\n\n"
@@ -737,9 +726,6 @@ class TelegramView:
             keyboard.append([InlineKeyboardButton(f"🔄 {other} 장부 조회", callback_data=f"REC:VIEW:{other}")])
             keyboard.append([InlineKeyboardButton(f"🗄️ {ticker} V-REV 큐(Queue) 정밀 관리", callback_data=f"QUEUE:VIEW:{ticker}")])
             
-            # MODIFIED: [V71.02 XRAY 엔진 렌더링 영구 소각] KIS VWAP 위임에 따라 엑스레이 진단 버튼 철거
-            # (XRAY 버튼 삭제됨)
-                
             keyboard.append([InlineKeyboardButton("🔙 장부 대시보드 업데이트", callback_data=f"REC:SYNC:{ticker}")])
         else:
             if history_id is not None:
