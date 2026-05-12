@@ -9,15 +9,13 @@
 # 삼위일체 소각(/reset) 시 V_REV 모드라면 is_active를 False로 끄지 않고 True로 보존하여 '0주 새출발' 상태를 100% 팩트 락온.
 # 모드 스위칭(SET_VER_CONFIRM) 시에도 version과 is_active 플래그가 완벽히 동기화되도록 디커플링 배선 정밀 교정 완료.
 # 🚨 MODIFIED: [V55.00 오퍼레이션 SSOT - 텔레그램 다이렉트 I/O 병목 및 동시성 오염 원천 차단]
-# DEL_Q(삭제), CLEAR_Q(초기화), RESET(삼위일체 소각) 격발 시 존재하던 
-# 지저분한 다이렉트 파일 I/O(open, json, tempfile) 찌꺼기를 100% 영구 소각하고,
+# DEL_Q(삭제), CLEAR_Q(초기화), RESET(삼위일체 소각) 격발 시 존재하던 지저분한 다이렉트 파일 I/O(open, json, tempfile) 찌꺼기를 100% 영구 소각하고,
 # QueueLedger의 스레드 세이프(Thread-safe) 코어 메서드(delete_lot, clear_queue)로 직결(Lock-on) 완료.
 # 🚨 MODIFIED: [V56.00 차세대 AVWAP 실전 암살자 전면 재가동 락온]
 # - Phantom Radar 암살자 제어 메뉴 영구 봉인 락다운 전면 해체.
 # - MODE 라우터 내 AVWAP_WARN, AVWAP_ON, AVWAP_OFF 팩트 제어 로직 100% 복구 완료.
 # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 
-# 15:25 전량 덤핑 헌법에 따라 의미를 상실한 AVWAP_SET 라우터 내 TARGET_MANUAL, TARGET_AUTO, EARLY, MULTI 
-# 제어 콜백 파이프라인(데드코드)을 전면 철거하고 REFRESH 기능만 보존 완료.
+# 15:25 전량 덤핑 헌법에 따라 의미를 상실한 AVWAP_SET 라우터 내 TARGET_MANUAL, TARGET_AUTO, EARLY, MULTI 제어 콜백 파이프라인(데드코드)을 전면 철거하고 REFRESH 기능만 보존 완료.
 # 🚨 MODIFIED: [V59.03 관제탑 진입 배선 복구] 
 # settlement 메뉴에서 '관제탑' 버튼 클릭 시 cmd_avwap을 정상 호출하도록 AVWAP:MENU 라우팅 배선 복구 완료.
 # NEW: [V59.06] VWAP 런타임 엑스레이(Dry-Run) 진단 엔진 라우터 이식 완료 (순수 Read-Only 섀도우 연산)
@@ -36,9 +34,9 @@
 # KIS 자체 VWAP 알고리즘 위임에 따라 1분 단위 시뮬레이션의 의미가 상실된 런타임 엑스레이(Dry-Run) 진단 콜백 라우터를 전면 적출 완료.
 # 🚨 MODIFIED: [V71.14 지정가 VWAP 일반주문 역배선 팩트 락온]
 # 🚨 MODIFIED: [V71.15 V-REV 수동 격발 렌더링 증발(Silent Skip) 버그 수술]
-# 🚨 MODIFIED: [V71.19 KST 타임 하드코딩 팩트 락온]
-# - KIS 서버 타임존 컨버터(_est_to_kst_str)의 복잡성을 소각.
-# - 포트폴리오 매니저(승승장군님)의 지시에 따라 서머타임 기준 KST '042500', '045500'을 다이렉트 하드코딩 인젝션 완료.
+# 🚨 MODIFIED: [V71.20 서머타임 동적 감지 및 KST 타임라인 락온]
+# - 포트폴리오 매니저(승승장군님)의 지시에 따라 서머타임 여부를 실시간 스캔하여 KST '032500' / '042500' 등 분기 주입 완료.
+# - 제16경고 준수: 타임 변수 스코프를 루프 외부로 전진 배치하여 런타임 무결성 확보.
 # ==========================================================
 import logging
 import datetime
@@ -93,7 +91,6 @@ class TelegramCallbacks:
         data = query.data.split(":")
         action, sub = data[0], data[1] if len(data) > 1 else ""
 
-        # MODIFIED: [V71.02 XRAY 엔진 렌더링 영구 소각] 엑스레이(XRAY) 콜백 라우터 및 하위 연산 블록 전면 철거 완료
         if action == "UPDATE":
             await query.answer()
             if sub == "CONFIRM":
@@ -139,7 +136,7 @@ class TelegramCallbacks:
             if not getattr(self, 'queue_ledger', None):
                 from queue_ledger import QueueLedger
                 self.queue_ledger = QueueLedger()
-             
+            
             q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
             total_q = sum(item.get("qty", 0) for item in q_data)
             
@@ -159,13 +156,13 @@ class TelegramCallbacks:
             status_code, _ = await controller._get_market_status()
             
             if status_code not in ["PRE", "REG"]:
-               await query.answer("❌ [격발 차단] 현재 장운영시간(정규장/프리장)이 아닙니다.", show_alert=True)
+                await query.answer("❌ [격발 차단] 현재 장운영시간(정규장/프리장)이 아닙니다.", show_alert=True)
                return
              
             if not getattr(self, 'queue_ledger', None):
                 from queue_ledger import QueueLedger
                 self.queue_ledger = QueueLedger()
-          
+     
             q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
             if not q_data:
                  await query.answer("⚠️ 큐(Queue)가 텅 비어있어 수혈할 잔여 물량이 없습니다.", show_alert=True)
@@ -232,7 +229,7 @@ class TelegramCallbacks:
                     final_q = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) if getattr(self, 'queue_ledger', None) else []
                     msg, markup = self.view.get_queue_management_menu(ticker, final_q)
                     await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                   
+                
                 elif action == "EDIT_Q":
                     await query.answer("✏️ 수정 모드 진입", show_alert=False)
                     short_date = target_date[:10]
@@ -245,7 +242,7 @@ class TelegramCallbacks:
                     prompt += "<i>(입력을 취소하려면 숫자 이외의 문자를 보내주세요)</i>"
                     await query.edit_message_text(prompt, parse_mode='HTML')
             except Exception as e:
-                 await query.answer(f"❌ 처리 중 에러 발생: {e}", show_alert=True)
+                await query.answer(f"❌ 처리 중 에러 발생: {e}", show_alert=True)
 
         elif action == "VERSION":
             await query.answer()
@@ -303,7 +300,7 @@ class TelegramCallbacks:
                             pass
                              
                 await asyncio.to_thread(_process_reset_files)
-                
+            
                 if getattr(self, 'queue_ledger', None):
                     await asyncio.to_thread(self.queue_ledger.clear_queue, ticker)
             
@@ -320,7 +317,7 @@ class TelegramCallbacks:
                 await self.sync_engine._display_ledger(data[2], chat_id, context, query=query, pre_fetched_holdings=holdings)
             elif sub == "SYNC": 
                 ticker = data[2]
-                
+          
                 if ticker not in self.sync_engine.sync_locks:
                     self.sync_engine.sync_locks[ticker] = asyncio.Lock()
                      
@@ -347,7 +344,7 @@ class TelegramCallbacks:
                               t_rec['side'] = 'BUY'
                       
                     qty, avg, invested, sold = await asyncio.to_thread(self.cfg.calculate_holdings, target['ticker'], safe_trades)
-                    
+  
                     try:
                         msg, markup = self.view.create_ledger_dashboard(target['ticker'], qty, avg, invested, sold, safe_trades, 0, 0, is_history=True, history_id=hid)
                     except TypeError:
@@ -390,7 +387,7 @@ class TelegramCallbacks:
                         end_date=target_hist['end_date']
                     )
             
-                    if os.path.exists(img_path):
+                    if img_path and os.path.exists(img_path):
                         with open(img_path, 'rb') as f_out:
                             if img_path.lower().endswith('.gif'):
                                 await context.bot.send_animation(chat_id=chat_id, animation=f_out)
@@ -403,7 +400,7 @@ class TelegramCallbacks:
                     logging.error(f"📸 👑 졸업 이미지 생성/발송 실패: {e}")
                     await query.edit_message_text("❌ 이미지 생성 중 오류가 발생했습니다.", parse_mode='HTML')
             
-        # 🚨 MODIFIED: [V71.19 KST 타임 하드코딩 팩트 락온]
+        # 🚨 MODIFIED: [V71.20 서머타임 동적 감지 및 KST 타임라인 락온]
         elif action == "EXEC":
             t = sub
             ver = await asyncio.to_thread(self.cfg.get_version, t)
@@ -417,7 +414,6 @@ class TelegramCallbacks:
             if holdings is None:
                 return await query.edit_message_text("❌ API 통신 오류로 잔고를 확인할 수 없어 실행을 차단합니다. 잠시 후 다시 시도해 주세요.")
                 
-            # 🚨 [스냅샷 팩트 로드 락온] 통합지시서와 100% 동일한 타격 집행을 위해 당일 스냅샷 최우선 로드
             cached_snap = None
             is_manual_vwap = await asyncio.to_thread(getattr(self.cfg, 'get_manual_vwap_mode', lambda x: False), t)
             
@@ -433,7 +429,6 @@ class TelegramCallbacks:
             if cached_snap and 'orders' in cached_snap:
                 plan = cached_snap
             else:
-                # 스냅샷 부재 시 실시간 폴백 연산
                 active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
                 _, allocated_cash = await asyncio.to_thread(controller._calculate_budget_allocation, cash, active_tickers)
                 h = holdings.get(t, {'qty':0, 'avg':0})
@@ -455,7 +450,7 @@ class TelegramCallbacks:
                         logging.debug(f"YF 정규장 종가 롤오버 스캔 실패 ({t}): {e}")
                     if curr_p > 0 and prev_c == 0.0:
                         prev_c = curr_p
-                
+             
                 ma_5day = await asyncio.to_thread(self.broker.get_5day_ma, t)
                 logic_qty_v14 = safe_qty
                 if is_manual_vwap and cached_snap and "total_q" in cached_snap:
@@ -471,16 +466,20 @@ class TelegramCallbacks:
             title = f"💎 <b>[{t}] 예방적 덫 수동 주문 실행</b>\n"
             msg = title
             all_success = True
+       
+            # NEW: [V71.20 서머타임 동적 감지 및 KST 타임라인 락온]
+            # 제3헌법에 의거 EST 기준으로 서머타임을 판별하고, 
+            # KIS 서버가 요구하는 한국 시간(KST) 파라미터를 동적으로 산출하여 서머타임 패러독스를 원천 소각합니다.
+            est_tz = ZoneInfo('America/New_York')
+            is_dst = bool(datetime.datetime.now(est_tz).dst())
             
+            # Rule 16: 변수 스코프 전진 배치
+            kst_st = "032500" if is_dst else "042500"
+            kst_et = "035500" if is_dst else "045500"
+
             target_orders = plan.get('core_orders', plan.get('orders', []))
             
             for o in target_orders:
-                # 🚨 MODIFIED: [V71.19 KST 타임 하드코딩 팩트 락온]
-                # 승승장군님 지시에 따라 복잡한 동적 래핑을 소각하고 
-                # 한국시간 새벽 04:25 ~ 04:55 (042500, 045500)을 다이렉트로 꽂아 넣습니다.
-                kst_st = "042500"
-                kst_et = "045500"
-
                 if o['type'] == "VWAP":
                     res = await asyncio.to_thread(
                         self.broker.send_order, 
@@ -504,10 +503,6 @@ class TelegramCallbacks:
             
             target_bonus = plan.get('bonus_orders', [])
             for o in target_bonus:
-                # 🚨 MODIFIED: [V71.19 KST 타임 하드코딩 팩트 락온]
-                kst_st = "042500"
-                kst_et = "045500"
-
                 if o['type'] == "VWAP":
                     res = await asyncio.to_thread(
                         self.broker.send_order, 
@@ -527,7 +522,7 @@ class TelegramCallbacks:
                 await asyncio.sleep(0.2) 
             
             if len(target_orders) == 0 and len(target_bonus) == 0:
-                msg += "\n💤 <b>장전할 주문이 없습니다 (관망/예산소진)</b>"
+                 msg += "\n💤 <b>장전할 주문이 없습니다 (관망/예산소진)</b>"
             elif all_success and len(target_orders) > 0:
                 await asyncio.to_thread(self.cfg.set_lock, t, "REG")
                 msg += "\n🔒 <b>필수 주문 전송 완료 (잠금 설정됨)</b>"
@@ -587,8 +582,6 @@ class TelegramCallbacks:
                             'first_scan_passed': tracking_cache.get(f"AVWAP_FIRST_SCAN_PASSED_{ticker}", False),
                             'dump_jitter_sec': tracking_cache.get(f"AVWAP_DUMP_JITTER_{ticker}", 0)
                         }
-                        
-                        # 🚨 MODIFIED: [런타임 즉사 방어] IndentationError 팩트 무결점 교정 완료
                         await asyncio.to_thread(self.strategy.v_avwap_plugin.save_state, ticker, now_est, state_data)
                     
                     from telegram_avwap_console import AvwapConsolePlugin
@@ -652,7 +645,7 @@ class TelegramCallbacks:
                     return
                 target_tickers = [sub]
                 msg_txt = sub + " 전용"
-                
+               
             await asyncio.to_thread(self.cfg.set_active_tickers, target_tickers)
             await query.edit_message_text(f"✅ <b>[운용 종목 락온 완료]</b>\n▫️ <b>{msg_txt}</b> 모드로 전환되었습니다.\n▫️ /sync를 눌러 확인하십시오.", parse_mode='HTML')
             
@@ -666,7 +659,7 @@ class TelegramCallbacks:
             await query.answer()
             ticker = data[2]
             controller.user_states[chat_id] = f"CONF_{sub}_{ticker}"
-            
+          
             if sub == "SPLIT":
                 ko_name = "분할 횟수"
             elif sub == "TARGET":
@@ -678,7 +671,7 @@ class TelegramCallbacks:
             elif sub == "FEE":
                 ko_name = "증권사 수수료율(%)"
             else:
-                ko_name = "값"
+                 ko_name = "값"
             
             desc = "숫자만 입력하세요.\n(예: 액면분할 시 1주가 10주가 되었다면 10 입력, 10주가 1주로 병합되었다면 0.1 입력)" if sub == "STOCK_SPLIT" else "숫자만 입력하세요."
             await context.bot.send_message(chat_id, f"✏️ <b>[{ticker}] {ko_name}</b>를 설정합니다.\n{desc}", parse_mode='HTML')
