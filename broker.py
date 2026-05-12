@@ -2,21 +2,17 @@
 # FILE: broker.py
 # ==========================================================
 # MODIFIED: [V28.15 장부 2배 뻥튀기(Double Counting) 원천 차단]
-# KIS API(TTTS3012R) 중복 응답 시 멱등성 가드 이식 완료.
 # MODIFIED: [V28.27 GCP 무한 대기 교착(Deadlock) 및 액면분할 에러 전면 수술]
-# yfinance 타임아웃 족쇄 및 KIS API Fallback 방어막 이식.
 # MODIFIED: [V28.34 17시 잔고 스캔 API 크래시 완벽 방어 및 타입 세이프 쉴드 이식]
-# isinstance 기반의 타입 락온(Lock-on) 방어막으로 AttributeError 원천 차단.
 # MODIFIED: [V29.18 런타임 붕괴 방어 및 페이징 결함 수술]
-# ctx_area_fk200 결측치 Safe Casting 차단 및 tr_cont 헤더 기반 페이징 로직 이식.
-# MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo 도입으로 타임존 무결성 100% 확보.
-# 🚨 MODIFIED: [V44.76 팩트 교정] 당일 고가/저가 스캔 시 프리마켓 진폭 100% 합산 롤백.
+# MODIFIED: [V30.09 핫픽스] pytz 영구 적출 및 ZoneInfo 도입으로 타임존 무결성 100% 확보
+# 🚨 MODIFIED: [V44.76 팩트 교정] 당일 고가/저가 스캔 시 프리마켓 진폭 100% 합산 롤백
 # 🚨 MODIFIED: [V47.00 하이킨아시 파서 open 컬럼 강제 수혈 락온]
-# 🚨 MODIFIED: [V61.01 숏(SOXS) 전면 소각 작전 지시서 적용] 싱글 롱 모멘텀 압축.
+# 🚨 MODIFIED: [V61.01 숏(SOXS) 전면 소각 작전 지시서 적용] 싱글 롱 모멘텀 압축
 # 🚨 MODIFIED: [V71.05 KIS VWAP 30분 압축 타격 및 예약 주문 파이프라인 정밀 수술]
 # - KIS 명세에 따라 VWAP 주문 시 ORD_DVSN="36" 및 ALGO_ORD_TMD_DVSN_CD="00"(시간지정) 락온.
-# - 153000~155500 압축 타격 시간 인젝션 및 시장가 집행을 위한 단가 "0" 강제 형변환 적용.
-# 🚨 MODIFIED: [V71.06 런타임 즉사 방어] SyntaxError를 유발하던 렌더링 마커 누수 전면 소각 완료.
+# 🚨 MODIFIED: [V71.06 지정가 VWAP(Limit VWAP) 절대 락온 수술]
+# - 시장가(0) 강제 변환 로직을 전면 소각하고, 지시서에 명시된 지정가를 FT_ORD_UNPR3에 100% 다이렉트 주입하여 '가격 불만족 시 체결 거부' 방어막 확립.
 # ==========================================================
 
 import requests
@@ -262,6 +258,7 @@ class KoreaInvestmentBroker:
                                 holdings[ticker] = {'qty': qty, 'ord_psbl_qty': ord_psbl_qty, 'avg': avg}
                             else:
                                 prev = holdings[ticker]
+                                # 💡 [멱등성 가드] 동일 수량/평단가 중복 응답 무시
                                 if prev['qty'] == qty and abs(prev['avg'] - avg) < 0.001: continue 
                                 total_qty = prev['qty'] + qty
                                 new_avg = ((prev['avg'] * prev['qty']) + (avg * qty)) / total_qty if total_qty > 0 else avg
@@ -288,7 +285,7 @@ class KoreaInvestmentBroker:
             df = stock.history(period="5d", interval="1m", prepost=False, timeout=10)
             if df.empty: return 0.0, 0.0
             df = _flatten_columns(df)
-            est = ZoneInfo('America/New_York')
+            est = ZoneInfo('America/New_York') # 🚨 [제3헌법] EST 락온
             if df.index.tz is None: df.index = df.index.tz_localize('UTC').tz_convert(est)
             else: df.index = df.index.tz_convert(est)
 
@@ -573,29 +570,28 @@ class KoreaInvestmentBroker:
         body = {"CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "OVRS_EXCG_CD": excg_cd, "PDNO": ticker, "ORGN_ODNO": order_id, "RVSE_CNCL_DVSN_CD": "02", "ORD_QTY": str(qty), "OVRS_ORD_UNPR": str(price), "CTAC_TLNO": "", "MGCO_APTM_ODNO": "", "ORD_SVR_DVSN_CD": "0"}
         return self._call_api("TTTS6038U", "/uapi/overseas-stock/v1/trading/daytime-order-rvsecncl", "POST", body=body)
 
-    # 🚨 MODIFIED: [V71.05 KIS VWAP 30분 압축 타격 및 시간 지정 락온]
+    # 🚨 MODIFIED: [V71.06 지정가 VWAP(Limit VWAP) 절대 락온 수술]
     def send_reservation_order(self, ticker, side, qty, price, order_type="LIMIT", start_time=None, end_time=None):
-        """ 💡 KIS 명세에 따라 VWAP 주문 시 ORD_DVSN '36' 및 시간 직접입력('00') 지원 """
+        """ 💡 KIS 명세에 따라 VWAP 주문 시 ORD_DVSN '36' 및 지정가 가격 락온 지원 """
         try: order_qty = int(float(qty))
         except: return {'rt_cd': '999', 'msg1': '수량 오류'}
         
         tr_id = "TTTT3014U" if side == "BUY" else "TTTT3016U"
         excg_cd = self._get_exchange_code(ticker, target_api="ORDER")
         final_price = str(self._ceil_2(price))
-        ord_dvsn = "00" # 기본 지정가
-        
-        # NEW: [제16경고] 변수 스코프 전진 배치 (Scope Lifting)
-        algo_ord_tmd = "02" 
         
         body = {
             "CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "PDNO": ticker,
             "OVRS_EXCG_CD": excg_cd, "FT_ORD_QTY": str(order_qty)
         }
         
-        # 🚨 [팩트 패치] KIS 명세에 따른 알고리즘 예약 주문 시간 지정 락온
+        # 🚨 [팩트 패치] 지정가 VWAP (Limit VWAP) 락온
         if order_type == "VWAP":
             body["ORD_DVSN"] = "36" # 36: VWAP 지원
-            body["FT_ORD_UNPR3"] = "0" # 시장가 집행 원칙
+            
+            # 💡 [핵심 락온] 시장가("0")가 아닌 포트폴리오 매니저가 지시한 '지정가(Limit Price)' 100% 강제 주입!
+            # 이를 통해 지정한 가격 이상(매수 시) 또는 이하(매도 시)일 때 체결을 거부하는 방어막 형성.
+            body["FT_ORD_UNPR3"] = final_price 
             
             if start_time and end_time:
                 # ※ 분할주문 시간 직접입력 시 '00'으로 값 설정
