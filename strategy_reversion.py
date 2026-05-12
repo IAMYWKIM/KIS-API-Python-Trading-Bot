@@ -36,6 +36,10 @@
 # 🚨 MODIFIED: [V72.00 줍줍 전면 소각 및 VWAP 10주 제약 LOC 우회 락온]
 # - 줍줍 데드코드 100% 소각 및 매수 0.5회분 강제 분할 보장 로직.
 # - KIS 지정가 VWAP 10주 미만 리젝 방어를 위해 qty < 10인 VWAP 주문을 LOC로 동적 오버라이드.
+# 🚨 MODIFIED: [V72.01 V-REV 1회 예산(15%) 하드 마진 캡(Cap) 락온]
+# - 외부 라우터에서 비정상적으로 거대한 예산(alloc_cash)이 유입되더라도, 
+#   절대 당일 1일 할당량(시드의 15%) 잔여분을 초과할 수 없도록 
+#   수학적 하드 마진 클램핑 이식 완료.
 # ==========================================================
 import math
 import os
@@ -263,7 +267,15 @@ class ReversionStrategy:
         orders = []
 
         total_spent = float(self.executed["BUY_BUDGET"].get(ticker, 0.0))
-        rem_budget = max(0.0, float(alloc_cash) - total_spent)
+        
+        # 🚨 MODIFIED: [V72.01 V-REV 1회 예산(15%) 하드 마진 캡(Cap) 락온]
+        # 외부에서 거대 예산(alloc_cash)이 유입되더라도 절대 당일 1회 할당량(시드의 15%)
+        # 잔여분을 초과할 수 없도록 수학적 하드 마진 클램핑 이식 완료.
+        seed_val = float(self.cfg.get_seed(ticker) or 0.0)
+        daily_limit = seed_val * 0.15
+        
+        safe_alloc_cash = min(float(alloc_cash), daily_limit) if daily_limit > 0 else float(alloc_cash)
+        rem_budget = max(0.0, safe_alloc_cash - total_spent)
         
         if rem_budget > 0:
             # 🚨 MODIFIED: [V72.00] 1회 예산을 무조건 0.5회분씩 하드 분할 (예산 초과 금지)

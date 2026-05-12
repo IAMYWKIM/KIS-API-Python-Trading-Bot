@@ -18,7 +18,7 @@
 # 15:25 전량 덤핑 헌법에 따라 의미를 상실한 AVWAP_SET 라우터 내 TARGET_MANUAL, TARGET_AUTO, EARLY, MULTI 제어 콜백 파이프라인(데드코드)을 전면 철거하고 REFRESH 기능만 보존 완료.
 # 🚨 MODIFIED: [V59.03 관제탑 진입 배선 복구] 
 # settlement 메뉴에서 '관제탑' 버튼 클릭 시 cmd_avwap을 정상 호출하도록 AVWAP:MENU 라우팅 배선 복구 완료.
-# NEW: [V59.06] VWAP 런타임 엑스레이(Dry-Run) 진단 엔진 라우터 이식 완료 (순수 Read-Only 섀도우 연산)
+# NEW: [V59.06] VWAP 런타임 엑스레이(Dry-Run) 진단 엔진 라우터 이식 완료 (순수 Read-Only 섀도 연산)
 # 🚨 MODIFIED: [V60.00 옴니 매트릭스 락다운 데드코드 전면 폐기]
 # XRAY 진단 엔진 내부에서 매수 방아쇠를 강제로 잠그던 옴니 매트릭스 스캔 블록 및 시각적 브리핑 요소를 영구 소각함.
 # 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 작전 지시서 적용]
@@ -45,6 +45,9 @@
 # - EXEC 격발 시 텔레그램 내부의 낡은 예산 할당 함수(_calculate_budget_allocation)가 V-REV 예산을 $0.0으로 
 #   강제 오판하여 매수 지시서가 공중 증발하던 치명적 하극상 맹점 원천 차단.
 # - 코어 엔진(scheduler_core)의 get_budget_allocation으로 다이렉트 배선을 교체하여 매수 타점 100% 장전 락온.
+# 🚨 MODIFIED: [V72.01 V-REV 수동 주문(EXEC) 시각적 디커플링 해체]
+# - 수동 주문 실행 시 V-REV 모드임에도 V14 고유의 '💎' 아이콘이 하드코딩되어 
+#   표출되던 시각적 환각(UI 디커플링) 현상을 모드별 맞춤 아이콘('⚖️' / '💎')으로 100% 팩트 교정 완료.
 # ==========================================================
 import logging
 import datetime
@@ -482,7 +485,9 @@ class TelegramCallbacks:
                     if o['side'] == 'BUY' and 'Buy1' in o.get('desc', ''):
                         o['price'] = round(prev_c * 1.15, 2)
 
-            title = f"💎 <b>[{t}] 예방적 덫 수동 주문 실행</b>\n"
+            # 🚨 MODIFIED: [V72.01 V-REV 수동 주문(EXEC) 시각적 디커플링 해체]
+            icon = "⚖️" if ver == "V_REV" else "💎"
+            title = f"{icon} <b>[{t}] 예방적 덫 수동 주문 실행</b>\n"
             msg = title
             all_success = True
        
