@@ -35,9 +35,9 @@
 # 🚨 MODIFIED: [V71.14 지정가 VWAP 일반주문 역배선 팩트 락온]
 # 🚨 MODIFIED: [V71.15 V-REV 수동 격발 렌더링 증발(Silent Skip) 버그 수술]
 # 🚨 MODIFIED: [V71.20 서머타임 동적 감지 및 KST 타임라인 락온]
-# - 포트폴리오 매니저(승승장군님)의 지시에 따라 서머타임 여부를 실시간 스캔하여 KST '032500' / '042500' 등 분기 주입 완료.
-# - 제16경고 준수: 타임 변수 스코프를 루프 외부로 전진 배치하여 런타임 무결성 확보.
-# 🚨 NEW: [런타임 좀비화 방어] EMERGENCY_EXEC, DEL_Q 라우터 내 IndentationError 팩트 무결점 교정 완료.
+# 🚨 NEW: [V71.21 타임 시프트 자동 재시도 (Time-Shift Auto Retry) 엔진 탑재]
+# - 승승장군님의 통찰력 있는 지시에 따라, KIS 서버에서 '시간' 관련 리젝(Reject)을 반환할 경우 포기하지 않고 ±1~3시간 단위로 동적 롤백/전진하여 재타격하는 집요한 사냥 로직 이식 완료.
+# - 제16경고 준수: 루프 내 선언 변수 스코프 전진 배치 완료.
 # ==========================================================
 import logging
 import datetime
@@ -401,7 +401,7 @@ class TelegramCallbacks:
                     logging.error(f"📸 👑 졸업 이미지 생성/발송 실패: {e}")
                     await query.edit_message_text("❌ 이미지 생성 중 오류가 발생했습니다.", parse_mode='HTML')
             
-        # 🚨 MODIFIED: [V71.20 서머타임 동적 감지 및 KST 타임라인 락온]
+        # 🚨 MODIFIED: [V71.21 타임 시프트 자동 재시도 (Time-Shift Auto Retry) 엔진 탑재]
         elif action == "EXEC":
             t = sub
             ver = await asyncio.to_thread(self.cfg.get_version, t)
@@ -476,46 +476,94 @@ class TelegramCallbacks:
             kst_st = "032500" if is_dst else "042500"
             kst_et = "035500" if is_dst else "045500"
 
+            # NEW: [VWAP 시간 입력 오류 시 1시간 단위 동적 롤백/전진 재시도 (Time-Shift Auto Retry) 엔진 탑재]
+            # KIS 서버가 ALGO 시간 에러를 뱉을 경우, -1, +1, -2, +2, -3, +3 시간 단위로 오프셋을 적용해 집요하게 재타격합니다.
+            time_offsets = [0, -1, 1, -2, 2, -3, 3]
+
             target_orders = plan.get('core_orders', plan.get('orders', []))
             
             for o in target_orders:
-                if o['type'] == "VWAP":
-                    res = await asyncio.to_thread(
-                        self.broker.send_order, 
-                        t, o['side'], o['qty'], o['price'], o['type'],
-                        start_time=kst_st, end_time=kst_et
-                    )
-                else:
-                    res = await asyncio.to_thread(
-                        self.broker.send_reservation_order, 
-                        t, o['side'], o['qty'], o['price'], o['type']
-                    )
+                is_success = False
+                res = {}
+                err_msg = ""
+                adj_kst_st = kst_st
+                adj_kst_et = kst_et
                 
-                is_success = res.get('rt_cd') == '0'
+                for offset in time_offsets:
+                    # 팩트 기반 시간 조절 (Wrap-around 안전 처리 포함)
+                    adj_kst_st = (datetime.datetime.strptime(kst_st, "%H%M%S") + datetime.timedelta(hours=offset)).strftime("%H%M%S")
+                    adj_kst_et = (datetime.datetime.strptime(kst_et, "%H%M%S") + datetime.timedelta(hours=offset)).strftime("%H%M%S")
+
+                    if o['type'] == "VWAP":
+                        res = await asyncio.to_thread(
+                            self.broker.send_order, 
+                            t, o['side'], o['qty'], o['price'], o['type'],
+                            start_time=adj_kst_st, end_time=adj_kst_et
+                        )
+                    else:
+                        res = await asyncio.to_thread(
+                            self.broker.send_reservation_order, 
+                            t, o['side'], o['qty'], o['price'], o['type']
+                        )
+                    
+                    is_success = res.get('rt_cd') == '0'
+                    if is_success:
+                        if offset != 0:
+                            msg += f"💡 <b>시간 오차 자동 교정:</b> {offset}시간 시프트 타격 성공\n"
+                        break
+                    
+                    err_msg = res.get('msg1', '오류')
+                    # 에러 사유가 '시간'이나 'ALGO', '시작' 등과 관련되어 있을 때만 오프셋을 변경하여 재시도합니다.
+                    if o['type'] == "VWAP" and ("시간" in err_msg or "ALGO" in err_msg or "시작" in err_msg):
+                        await asyncio.sleep(0.3)
+                        continue
+                    else:
+                        break
+                
                 if not is_success:
                     all_success = False
                 
-                err_msg = res.get('msg1', '오류')
                 status_icon = '✅' if is_success else f'❌({err_msg})'
                 msg += f"└ 1차 필수: {o['desc']} {o['qty']}주: {status_icon}\n"
                 await asyncio.sleep(0.2) 
             
             target_bonus = plan.get('bonus_orders', [])
             for o in target_bonus:
-                if o['type'] == "VWAP":
-                    res = await asyncio.to_thread(
-                        self.broker.send_order, 
-                        t, o['side'], o['qty'], o['price'], o['type'],
-                        start_time=kst_st, end_time=kst_et
-                    )
-                else:
-                    res = await asyncio.to_thread(
-                        self.broker.send_reservation_order, 
-                        t, o['side'], o['qty'], o['price'], o['type']
-                    )
+                is_success = False
+                res = {}
+                err_msg = ""
+                adj_kst_st = kst_st
+                adj_kst_et = kst_et
                 
-                is_success = res.get('rt_cd') == '0'
-                err_msg = res.get('msg1', '잔금패스')
+                for offset in time_offsets:
+                    adj_kst_st = (datetime.datetime.strptime(kst_st, "%H%M%S") + datetime.timedelta(hours=offset)).strftime("%H%M%S")
+                    adj_kst_et = (datetime.datetime.strptime(kst_et, "%H%M%S") + datetime.timedelta(hours=offset)).strftime("%H%M%S")
+
+                    if o['type'] == "VWAP":
+                        res = await asyncio.to_thread(
+                            self.broker.send_order, 
+                            t, o['side'], o['qty'], o['price'], o['type'],
+                            start_time=adj_kst_st, end_time=adj_kst_et
+                        )
+                    else:
+                        res = await asyncio.to_thread(
+                            self.broker.send_reservation_order, 
+                            t, o['side'], o['qty'], o['price'], o['type']
+                        )
+                    
+                    is_success = res.get('rt_cd') == '0'
+                    if is_success:
+                        if offset != 0:
+                            msg += f"💡 <b>시간 오차 자동 교정:</b> {offset}시간 시프트 타격 성공\n"
+                        break
+                    
+                    err_msg = res.get('msg1', '잔금패스')
+                    if o['type'] == "VWAP" and ("시간" in err_msg or "ALGO" in err_msg or "시작" in err_msg):
+                        await asyncio.sleep(0.3)
+                        continue
+                    else:
+                        break
+                        
                 status_icon = '✅' if is_success else f'❌({err_msg})'
                 msg += f"└ 2차 보너스: {o['desc']} {o['qty']}주: {status_icon}\n"
                 await asyncio.sleep(0.2) 
