@@ -13,11 +13,10 @@
 # - V-REV/V14 공용 수동 주문 격발 버튼 복원 (스냅샷 기반)
 # - 제16경고 준수: 변수 스코프 최상단 전진 배치로 런타임 붕괴 예방
 # 🚨 NEW: [V72.00 줍줍 텍스트 삭제 및 UI 렌더링 팩트 교정]
-# - 줍줍 기능 소각으로 인해 무의미해진 줍줍 가이던스(🧹) 렌더링 로직 전면 삭제.
-# - 구형 파이썬 호환성 방어를 위해 f-string 내부 백슬래시 문법 회피 래핑 적용.
 # 🚨 MODIFIED: [V72.05 장마감 실시간 팩트 스캔 및 스냅샷 디커플링 해제]
-# - 장마감 및 애프터마켓 구간(CLOSE/AFTER) 진입 시 무의미한 낡은 스냅샷 경고 텍스트 영구 소각.
-# - 뷰포트 하단에 오직 "⛔ 장마감/애프터마켓: 주문 불가" 팩트만 진공 압축 렌더링하여 UI 환각 해체 완료.
+# 🚨 MODIFIED: [V72.07 통합 지시서 UI 여백 압축 렌더링 팩트 교정]
+# - 과거 스냅샷 경고 문구가 삭제된 자리에 불필요하게 남아있던 다중 개행(줄바꿈 \n) 찌꺼기 100% 소각.
+# - 뷰포트 조립 전 `strip()`을 강제하여 빈 공간을 진공 압축하고 팩트만 밀착 렌더링하도록 아키텍처 개조 완료.
 # ==========================================================
 import os
 import math
@@ -435,14 +434,13 @@ class TelegramView:
                 raw_guidance = t_info.get('v_rev_guidance', " (가이던스 대기 중)")
                 if is_zero_start:
                     raw_guidance = '\n'.join([line for line in raw_guidance.split('\n') if "잭팟" not in line and "상위층" not in line])
-                body_msg += raw_guidance.replace(" (LOC)", "").replace(" (VWAP)", "").replace("[가상격리] ", "").replace("[가상 ", "[").replace("가상 ", "") + "\n\n"
+                body_msg += raw_guidance.replace(" (LOC)", "").replace(" (VWAP)", "").replace("[가상격리] ", "").replace("[가상 ", "[").replace("가상 ", "") + "\n"
             else:
                 if is_manual_vwap and not is_rev_logic:
                     body_msg += "⏱️ <b>스케줄:</b> 17:05 KST KIS VWAP 예약 덫 장전 ➔ 알고리즘 위임\n"
                 body_msg += f"📋 <b>[주문 계획 - {proc_status}]</b>\n"
                 plan_orders = t_info.get('plan', {}).get('orders', [])
                 if plan_orders:
-                    # 🚨 MODIFIED: [V72.00 줍줍(Sweep) 보너스 주문 영구 소각 렌더링 팩트 압축]
                     for o in plan_orders:
                         ico = "🔴" if o['side'] == 'BUY' else "🔵"
                         desc = o['desc'].replace("🩸", "")
@@ -457,12 +455,11 @@ class TelegramView:
                     body_msg += " (✅ 금일 주문 완료/잠금)\n"
                 else:
                     keyboard.append([InlineKeyboardButton(f"🚀 {t} 수동 주문 실행", callback_data=f"EXEC:{t}")])
-            body_msg += "\n"
-
-        final_msg = header_msg + body_msg
+            
+        # 🚨 MODIFIED: [V72.07 통합 지시서 UI 여백 압축 렌더링 팩트 교정]
+        # 불필요한 \n\n 들을 모두 제거하고 strip()으로 공백을 100% 진공 압축 후 밀착 조립.
+        final_msg = header_msg + body_msg.strip()
         
-        # 🚨 MODIFIED: [V72.05 장마감 실시간 팩트 스캔 및 스냅샷 디커플링 해제]
-        # 장마감 이후 표출되던 무의미한 낡은 스냅샷 경고 텍스트를 영구 소각하고 "주문 불가" 팩트만 진공 압축 렌더링.
         if not is_trade_active:
             final_msg += "\n\n⛔ 장마감/애프터마켓: 주문 불가"
             
