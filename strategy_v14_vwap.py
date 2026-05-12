@@ -11,11 +11,14 @@
 # 🚨 MODIFIED: [치명적 경고 19] UnboundLocalError 원천 봉쇄를 위한 변수 스코프 전진 배치 수술 완료.
 # 🚨 NEW: [KIS VWAP 알고리즘 대통합 수술] 1분 단위 타임 슬라이싱 연산 및 잔차 버킷 파편화 궤적을 100% 영구 소각하고, 할당된 1회분 총 예산을 단일 KIS VWAP 덫 예약 주문 플랜으로 통짜 스냅샷 산출하여 반환하도록 아키텍처 대수술 완료.
 # 🚨 MODIFIED: [V71.09 30분 압축 타임라인 팩트 교정]
-# - V14 VWAP의 덫 주문 시 start_time("152500")과 end_time("155500") 파라미터가 누락된 데이터 기아 현상 해결 및 종일 타격 패러독스 원천 차단.
+# - V14 VWAP의 덫 주문 시 start_time("152500")과 end_time("155500") 파라미터를 누락한 데이터 기아 현상 해결 및 종일 타격 패러독스 원천 차단.
 # - 코드 내부의 들여쓰기 붕괴(IndentationError) 팩트 교정.
 # 🚨 MODIFIED: [V71.25 KST 타임라인 동적 래핑 수술]
 # - KIS 서버의 알고리즘 시간 요구사항(KST)에 맞춰 EST를 강제하던 맹점(152500)을 100% 영구 소각.
 # - 서머타임(DST) 적용 여부를 스캔하여 042500/045500 또는 052500/055500을 동적으로 주입하는 무결점 아키텍처 이식.
+# 🚨 NEW: [V72.00 1회 예산 0.5 분할 락온 및 VWAP 10주 제약 우회 로직 이식]
+# - 매수 예산을 1회분 기준 무조건 0.5 분할하여 2개로 쪼개어 장전 보장 (예산 초과 금지).
+# - KIS 지정가 VWAP 10주 미만 리젝 방어를 위해 qty < 10인 VWAP 주문을 LOC로 동적 오버라이드.
 # ==========================================================
 import math
 import logging
@@ -28,7 +31,6 @@ from zoneinfo import ZoneInfo
 class V14VwapStrategy:
     def __init__(self, config):
         self.cfg = config
-        # MODIFIED: [잔차 버킷 파편화 궤적 영구 소각] 1분 단위 슬라이싱용 잔차 버킷 철거 완료
         self.residual = {}
         self.executed = {"BUY_BUDGET": {}, "SELL_QTY": {}}
         self.state_loaded = {}
@@ -76,7 +78,7 @@ class V14VwapStrategy:
         state_file = self._get_state_file(ticker)
         data = {
             "date": today_str,
-            "residual": {}, # MODIFIED: 잔차 버킷 소각에 따른 빈 딕셔너리 락온
+            "residual": {},
             "executed": {
                 "BUY_BUDGET": float(self.executed.get("BUY_BUDGET", {}).get(ticker, 0.0)),
                 "SELL_QTY": int(self.executed.get("SELL_QTY", {}).get(ticker, 0))
@@ -100,7 +102,6 @@ class V14VwapStrategy:
                 except OSError: pass
 
     def refund_residual(self, ticker, bucket, refund_value):
-        # MODIFIED: 잔차 버킷 소각에 따라 환불 로직 바이패스 락온
         pass
 
     def save_daily_snapshot(self, ticker, plan_data):
@@ -179,7 +180,6 @@ class V14VwapStrategy:
     def _floor(self, val): return math.floor(val * 100) / 100.0
 
     def reset_residual(self, ticker):
-        # MODIFIED: 잔차 버킷 소각에 따라 리셋 로직 바이패스 락온
         pass
 
     def record_execution(self, ticker, side, qty, exec_price):
@@ -214,37 +214,66 @@ class V14VwapStrategy:
         process_status = "예방적방어선"
         is_zero_start_fact = False
         
-        # 🚨 MODIFIED: [V71.25 KST 타임라인 동적 래핑 수술]
-        # KIS 서버의 알고리즘 시간 요구사항(KST)에 맞춰 EST를 강제하던 맹점(152500)을 100% 영구 소각.
-        # 서머타임(DST) 적용 여부를 스캔하여 042500/045500 또는 052500/055500을 동적으로 주입하는 무결점 아키텍처 이식.
         est_tz_check = ZoneInfo('America/New_York')
         is_dst_active = bool(datetime.now(est_tz_check).dst())
         start_t = "042500" if is_dst_active else "052500"
         end_t = "045500" if is_dst_active else "055500"
 
-        # MODIFIED: [KIS VWAP 알고리즘 대통합 수술] 1분 단위 타임 슬라이싱 연산을 소각하고 단일 KIS VWAP 덫 예약 주문(type: "VWAP") 플랜으로 통짜 반환
         if qty == 0:
             is_zero_start_fact = True
             p_buy = self._ceil(prev_close * 1.15)
             buy_star_price = p_buy 
             
-            q_buy = math.floor(dynamic_budget / p_buy) if p_buy > 0 else 0
-            if q_buy > 0: core_orders.append({"side": "BUY", "price": p_buy, "qty": q_buy, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "🆕새출발(VWAP)"})
+            b1_budget = dynamic_budget * 0.5
+            b2_budget = dynamic_budget * 0.5
+            q1 = math.floor(b1_budget / p_buy) if p_buy > 0 else 0
+            q2 = math.floor(b2_budget / p_buy) if p_buy > 0 else 0
+            
+            if q1 > 0: 
+                o_type = "VWAP" if q1 >= 10 else "LOC"
+                desc = f"🆕새출발1({o_type})"
+                core_orders.append({"side": "BUY", "price": p_buy, "qty": q1, "type": o_type, "start_time": start_t if o_type == "VWAP" else None, "end_time": end_t if o_type == "VWAP" else None, "desc": desc})
+            if q2 > 0:
+                o_type = "VWAP" if q2 >= 10 else "LOC"
+                desc = f"🆕새출발2({o_type})"
+                core_orders.append({"side": "BUY", "price": p_buy, "qty": q2, "type": o_type, "start_time": start_t if o_type == "VWAP" else None, "end_time": end_t if o_type == "VWAP" else None, "desc": desc})
             process_status = "✨새출발"
         else:
             p_avg = self._ceil(avg_price)
             if t_val < (split / 2):
-                q_avg = math.floor((dynamic_budget * 0.5) / p_avg) if p_avg > 0 else 0
-                q_star = math.floor((dynamic_budget * 0.5) / buy_star_price) if buy_star_price > 0 else 0
-                if q_avg > 0: core_orders.append({"side": "BUY", "price": p_avg, "qty": q_avg, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "⚓평단매수(VWAP)"})
-                if q_star > 0: core_orders.append({"side": "BUY", "price": buy_star_price, "qty": q_star, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "💫별값매수(VWAP)"})
+                b1_budget = dynamic_budget * 0.5
+                b2_budget = dynamic_budget * 0.5
+                q_avg = math.floor(b1_budget / p_avg) if p_avg > 0 else 0
+                q_star = math.floor(b2_budget / buy_star_price) if buy_star_price > 0 else 0
+                
+                if q_avg > 0: 
+                    o_type = "VWAP" if q_avg >= 10 else "LOC"
+                    desc = f"⚓평단매수({o_type})"
+                    core_orders.append({"side": "BUY", "price": p_avg, "qty": q_avg, "type": o_type, "start_time": start_t if o_type == "VWAP" else None, "end_time": end_t if o_type == "VWAP" else None, "desc": desc})
+                if q_star > 0: 
+                    o_type = "VWAP" if q_star >= 10 else "LOC"
+                    desc = f"💫별값매수({o_type})"
+                    core_orders.append({"side": "BUY", "price": buy_star_price, "qty": q_star, "type": o_type, "start_time": start_t if o_type == "VWAP" else None, "end_time": end_t if o_type == "VWAP" else None, "desc": desc})
             else:
-                q_star = math.floor(dynamic_budget / buy_star_price) if buy_star_price > 0 else 0
-                if q_star > 0: core_orders.append({"side": "BUY", "price": buy_star_price, "qty": q_star, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "💫별값매수(VWAP)"})
+                b1_budget = dynamic_budget * 0.5
+                b2_budget = dynamic_budget * 0.5
+                q1 = math.floor(b1_budget / buy_star_price) if buy_star_price > 0 else 0
+                q2 = math.floor(b2_budget / buy_star_price) if buy_star_price > 0 else 0
+                
+                if q1 > 0: 
+                    o_type = "VWAP" if q1 >= 10 else "LOC"
+                    desc = f"💫별값매수1({o_type})"
+                    core_orders.append({"side": "BUY", "price": buy_star_price, "qty": q1, "type": o_type, "start_time": start_t if o_type == "VWAP" else None, "end_time": end_t if o_type == "VWAP" else None, "desc": desc})
+                if q2 > 0:
+                    o_type = "VWAP" if q2 >= 10 else "LOC"
+                    desc = f"💫별값매수2({o_type})"
+                    core_orders.append({"side": "BUY", "price": buy_star_price, "qty": q2, "type": o_type, "start_time": start_t if o_type == "VWAP" else None, "end_time": end_t if o_type == "VWAP" else None, "desc": desc})
             
             q_sell = math.ceil(qty / 4)
             if q_sell > 0:
-                core_orders.append({"side": "SELL", "price": star_price, "qty": q_sell, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "🌟별값매도(VWAP)"})
+                o_type = "VWAP" if q_sell >= 10 else "LOC"
+                desc = f"🌟별값매도({o_type})"
+                core_orders.append({"side": "SELL", "price": star_price, "qty": q_sell, "type": o_type, "start_time": start_t if o_type == "VWAP" else None, "end_time": end_t if o_type == "VWAP" else None, "desc": desc})
             if qty - q_sell > 0:
                 core_orders.append({"side": "SELL", "price": target_price, "qty": qty - q_sell, "type": "LIMIT", "desc": "🎯목표매도(V)"})
 
@@ -270,7 +299,6 @@ class V14VwapStrategy:
     def get_dynamic_plan(self, ticker, current_price, prev_close, current_weight, min_idx, alloc_cash, qty, avg_price, market_type="REG"):
         self._load_state_if_needed(ticker)
         
-        # NEW: [치명적 경고 19] UnboundLocalError 원천 봉쇄를 위한 변수 스코프 전진 배치
         alloc_qty = 0
         spent_b = 0.0
         exact_s_qty = 0.0
@@ -281,8 +309,6 @@ class V14VwapStrategy:
         
         cached_plan = self.load_daily_snapshot(ticker)
         
-        # MODIFIED: [치명적 경고 3] 텔레그램 지시서 조회(min_idx < 0) 시 스냅샷 반환 디커플링 및 실시간 타격 분리 락온
-        # MODIFIED: [KIS VWAP 알고리즘 대통합 수술] 1분 단위 타임 슬라이싱 연산을 소각하고 단일 KIS VWAP 덫 예약 주문 플랜으로 통짜 반환
         if cached_plan:
             return cached_plan
         else:

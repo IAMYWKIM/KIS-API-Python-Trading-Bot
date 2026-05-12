@@ -20,6 +20,9 @@
 # NEW: [AVWAP 수동 개입 엣지 케이스 방어] 계좌 실잔고 == 본대 큐 장부 수량 감지 시 자동 핀셋 소각(Self-Healing) 방어막 이식
 # 🚨 MODIFIED: [V71.02 XRAY 엔진 렌더링 영구 소각]
 # KIS 자체 VWAP 알고리즘 위임에 따라 _display_ledger 내부에 하드코딩되어 있던 런타임 엑스레이(Dry-Run) 진단 버튼을 100% 영구 적출 완료.
+# 🚨 NEW: [V72.00 줍줍 가이던스 렌더링 소각 및 VWAP->LOC 스위칭 팩트 반영]
+# - 줍줍 기능이 코어에서 소각됨에 따라 UI 가이던스 렌더링 코드 또한 영구 소각.
+# - V-REV 가이던스 출력 시 수량이 10주 미만일 경우 `(VWAP)` 꼬리표를 `(LOC)`로 동적 스위칭하여 시각적 디커플링 해체 완료.
 # ==========================================================
 import logging
 import datetime
@@ -44,7 +47,6 @@ class TelegramSyncEngine:
         self.tx_lock = tx_lock
         self.sync_locks = sync_locks
 
-    # 🚨 [비동기 래핑] 파일 I/O 데드락 방어를 위한 async 전환
     async def _sync_escrow_cash(self, ticker):
         rev_state = await asyncio.to_thread(self.cfg.get_reverse_state, ticker)
         is_rev = rev_state.get("is_active", False)
@@ -57,7 +59,6 @@ class TelegramSyncEngine:
         target_recs = []
         for r in reversed(ledger):
             if r.get('ticker') == ticker:
-                # 🚨 MODIFIED: [V47.01 런타임 즉사 방어] 들여쓰기 팩트 100% 교정 완료
                 if r.get('is_reverse', False):
                     target_recs.append(r)
                 else:
@@ -129,7 +130,6 @@ class TelegramSyncEngine:
                 actual_qty = int(float(holdings.get(ticker, {'qty': 0}).get('qty') or 0))
                 actual_avg = float(holdings.get(ticker, {'avg': 0}).get('avg') or 0.0)
 
-                # 🚨 [비동기 래핑] 장부 파일 I/O 데드락 방어
                 full_ledger = await asyncio.to_thread(self.cfg.get_ledger)
                 recs_for_check = [r for r in full_ledger if r['ticker'] == ticker]
                 ledger_qty_for_check, _, _, _ = await asyncio.to_thread(self.cfg.calculate_holdings, ticker, recs_for_check)
@@ -215,7 +215,6 @@ class TelegramSyncEngine:
                 exec_today_buy = sum(int(float(ex.get('ft_ccld_qty') or '0')) for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "02")
                 exec_today_sell = sum(int(float(ex.get('ft_ccld_qty') or '0')) for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01")
                 
-                # 🚨 MODIFIED: [V47.00 AVWAP 오버나이트 홀딩 락온] 체결 원장 디커플링 (AVWAP 당일 체결량 차감)
                 avwap_daily_buy = 0
                 avwap_daily_sell = 0
                 try:
@@ -346,16 +345,11 @@ class TelegramSyncEngine:
                     vrev_ledger_qty = sum(int(float(item.get("qty") or 0)) for item in q_data_before)
                     
                     sold_today_vrev = sum(int(float(ex.get('ft_ccld_qty') or '0')) for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01") if target_execs else 0
-                    
-                    # 🚨 MODIFIED: [V47.00 AVWAP 오버나이트 홀딩 락온] 체결 원장 디커플링 (AVWAP 당일 체결량 차감)
                     sold_today_vrev = max(0, sold_today_vrev - avwap_daily_sell)
                     
                     avwap_qty_global = 0
                     tracking_cache_global = None
                     try:
-                        # 🚨 MODIFIED: [V46.02 엣지 케이스 핫픽스: AVWAP 물량 납치 패러독스 완벽 해체]
-                        # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막]
-                        # job_data 의존성을 100% 소각하고 bot_data 다이렉트 락온 및 self.strategy를 강제 참조합니다.
                         app_data = context.bot_data.get('app_data', {})
                         tracking_cache_global = app_data.get('sniper_tracking', {})
                         avwap_qty_global = tracking_cache_global.get(f"AVWAP_QTY_{ticker}", 0)
@@ -367,7 +361,6 @@ class TelegramSyncEngine:
                     except Exception as e:
                         logging.error(f"🚨 AVWAP 글로벌 캐시 팩트 스캔 에러: {e}")
                     
-                    # NEW: [AVWAP 수동 개입 엣지 케이스 방어] 계좌 실잔고 == 본대 큐 장부 수량 감지 시 자동 핀셋 소각(Self-Healing)
                     if actual_qty == vrev_ledger_qty and avwap_qty_global > 0:
                         logging.warning(f"🚨 [{ticker}] 계좌 실잔고와 본대 장부 수량({vrev_ledger_qty}주) 일치! 수동 핀셋 매도로 판독하여 AVWAP 유령 물량({avwap_qty_global}주)을 즉각 영구 소각(Self-Healing)합니다.")
                         try:
@@ -408,7 +401,6 @@ class TelegramSyncEngine:
                                     tracking_cache_global[f"AVWAP_BOUGHT_{ticker}"] = False
                                     tracking_cache_global[f"AVWAP_SHUTDOWN_{ticker}"] = True
 
-                                # 🚨 MODIFIED: [V46.02 엣지 케이스 핫픽스] job_data.get('strategy') 소각, self.strategy 직접 참조
                                 if hasattr(self.strategy, 'v_avwap_plugin'):
                                     state_data = {
                                         'bought': False,
@@ -446,7 +438,6 @@ class TelegramSyncEngine:
                                     if tot_q > 0:
                                         actual_clear_price = round(tot_amt / tot_q, 4)
                             
-                            # NEW: [V49.02 런타임 붕괴 방어] 스코프 전진 배치
                             last_sell_dt = "당일"
 
                             if actual_clear_price == 0.0:
@@ -461,7 +452,6 @@ class TelegramSyncEngine:
                                         if tot_q > 0:
                                             actual_clear_price = round(tot_amt / tot_q, 4)
                                         
-                                        # MODIFIED: [V49.02] 로깅 구문 팩트 종속화 (실제 폴백 발동 시에만 기록)
                                         logging.info(f"🔍 [{ticker}] 과거 4일치 광역 스캔 및 최근일({last_sell_dt}) 추출 폴백으로 매도 단가(${actual_clear_price})를 복원했습니다.")
 
                             if tot_q > vrev_ledger_qty:
@@ -502,8 +492,6 @@ class TelegramSyncEngine:
                                })
                                 vrev_ledger_qty = tot_q
                                 
-                                # MODIFIED: [V55.00 오퍼레이션 SSOT - 텔레그램 다이렉트 I/O 병목 및 동시성 오염 원천 차단]
-                                # 기존 _write_q_file 등 다이렉트 파일 조작 코드를 100% 소각하고 QueueLedger의 스레드 세이프 코어 메서(overwrite_queue)로 락온 완료.
                                 try:
                                     await asyncio.to_thread(self.queue_ledger.overwrite_queue, ticker, q_data_before)
                                     logging.info(f"🔧 [{ticker}] 미동기화 수동 매수 물량({missing_qty}주, 진성단가 ${missing_price})을 졸업 큐에 다이렉트 영속화하여 PnL 오차 교정 및 스냅샷 충돌 방어 완료.")
@@ -667,8 +655,6 @@ class TelegramSyncEngine:
                                 "exec_id": f"MANUAL_BUY_{int(time.time())}"
                             })
                             
-                            # MODIFIED: [V55.00 오퍼레이션 SSOT - 텔레그램 다이렉트 I/O 병목 및 동시성 오염 원천 차단]
-                            # 수동 매수(MANUAL_BUY) 파이프라인의 파일 I/O 찌꺼기를 도려내고 overwrite_queue 코어 메서드로 직결.
                             try:
                                 await asyncio.to_thread(self.queue_ledger.overwrite_queue, ticker, q_data)
                                 logging.info(f"🔧 [{ticker}] 수동 매수 감지! KIS 실잔고에 맞춰 LIFO 큐에 신규 지층({gap_qty}주, 진성단가 ${real_buy_price}) 다이렉트 편입 및 파일 영속화 완료.")
@@ -684,8 +670,6 @@ class TelegramSyncEngine:
                 # ==========================================================
                 if not is_rev:
                     sold_today_v14 = sum(int(float(ex.get('ft_ccld_qty') or '0')) for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01") if target_execs else 0
-                    
-                    # 🚨 MODIFIED: [V47.00 AVWAP 오버나이트 홀딩 락온] 체결 원장 디커플링 (AVWAP 당일 체결량 차감)
                     sold_today_v14 = max(0, sold_today_v14 - avwap_daily_sell)
                     
                     if actual_qty == 0 and (ledger_qty > 0 or sold_today_v14 > 0):
@@ -805,7 +789,6 @@ class TelegramSyncEngine:
         v_mode = await asyncio.to_thread(self.cfg.get_version, ticker)
         if v_mode == "V_REV":
             keyboard.append([InlineKeyboardButton(f"🗄️ {ticker} V-REV 큐(Queue) 정밀 관리", callback_data=f"QUEUE:VIEW:{ticker}")])
-            # MODIFIED: [V71.02 XRAY 엔진 렌더링 영구 소각] 런타임 엑스레이 버튼 철거 완료
             
         row = [InlineKeyboardButton(f"🔄 {t} 장부 업데이트", callback_data=f"REC:SYNC:{t}") for t in active_tickers]
         keyboard.append(row)

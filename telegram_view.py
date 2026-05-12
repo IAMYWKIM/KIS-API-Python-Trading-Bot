@@ -12,6 +12,9 @@
 # 🚨 MODIFIED: [V71.04 수동 주문 버튼 복원 및 스코프 전진 배치]
 # - V-REV/V14 공용 수동 주문 격발 버튼 복원 (스냅샷 기반)
 # - 제16경고 준수: 변수 스코프 최상단 전진 배치로 런타임 붕괴 예방
+# 🚨 NEW: [V72.00 줍줍 텍스트 삭제 및 UI 렌더링 팩트 교정]
+# - 줍줍 기능 소각으로 인해 무의미해진 줍줍 가이던스(🧹) 렌더링 로직 전면 삭제.
+# - 구형 파이썬 호환성 방어를 위해 f-string 내부 백슬래시 문법 회피 래핑 적용.
 # ==========================================================
 import os
 import math
@@ -246,7 +249,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V71.04 무결점 방탄 에디션</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V72.00 줍줍 영구 소각 에디션</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -284,7 +287,6 @@ class TelegramView:
         return msg, InlineKeyboardMarkup(keyboard)
 
     def create_sync_report(self, status_text, dst_text, cash, rp_amount, ticker_data, is_trade_active, p_trade_data=None, exchange_rate=None):
-        # NEW: [제16경고] 변수 스코프 전진 배치 (Scope Lifting)
         total_locked = 0.0
         header_msg = ""
         body_msg = ""
@@ -292,7 +294,6 @@ class TelegramView:
         real_cash = 0.0
         krw_profit = 0.0
         
-        # 1. 헤더 생성
         total_locked = sum(t_info.get('escrow', 0.0) for t_info in ticker_data)
         header_msg = f"📜 <b>[ 통합 지시서 ({status_text}) ]</b>\n📅 <b>{dst_text}</b>\n"
         
@@ -307,9 +308,7 @@ class TelegramView:
         header_msg += f"🏛️ RP 투자권장: ${rp_amount:,.2f}\n"
         header_msg += "----------------------------\n\n"
         
-        # 2. 종목별 본문 생성
         for t_info in ticker_data:
-            # NEW: 루프 내 변수 초기화 (Scope Lifting)
             t = t_info.get('ticker', 'UNK')
             v_mode = t_info.get('version', 'V14')
             is_manual_vwap = t_info.get('is_manual_vwap', False)
@@ -440,22 +439,20 @@ class TelegramView:
                 body_msg += f"📋 <b>[주문 계획 - {proc_status}]</b>\n"
                 plan_orders = t_info.get('plan', {}).get('orders', [])
                 if plan_orders:
-                    for o in [o for o in plan_orders if "줍줍" not in o.get('desc', '')]:
+                    # 🚨 MODIFIED: [V72.00 줍줍(Sweep) 보너스 주문 영구 소각 렌더링 팩트 압축]
+                    for o in plan_orders:
                         ico = "🔴" if o['side'] == 'BUY' else "🔵"
                         desc = o['desc'].replace("🩸", "")
                         if "수혈" in o['desc']: ico = "🩸"
-                        body_msg += f" {ico} {desc}: <b>${o['price']} x {o['qty']}주</b> {f'({o.get('type')})' if o.get('type') != 'LIMIT' else ''}\n"
-                    prices = sorted([o['price'] for o in plan_orders if "줍줍" in o.get('desc', '')], reverse=True)
-                    if prices: body_msg += f" 🧹 줍줍({len(prices)}개): <b>${prices[0]} ~ ${prices[-1]} (LOC)</b>\n"
+                        type_str = f"({o.get('type')})" if o.get('type') != 'LIMIT' else ""
+                        body_msg += f" {ico} {desc}: <b>${o['price']:.2f} x {o['qty']}주</b> {type_str}\n"
                 else:
                     body_msg += " 💤 주문 없음 (관망/예산소진)\n"
 
-            # 🚨 MODIFIED: [V-REV 및 V14 통합 수동 주문 버튼 복원]
             if is_trade_active:
                 if t_info.get('is_locked', False):
                     body_msg += " (✅ 금일 주문 완료/잠금)\n"
                 else:
-                    # 🚨 [격발 락온] 스냅샷 팩트 기반 수동 격발 버튼 활성화
                     keyboard.append([InlineKeyboardButton(f"🚀 {t} 수동 주문 실행", callback_data=f"EXEC:{t}")])
             body_msg += "\n"
 
@@ -470,7 +467,6 @@ class TelegramView:
         return final_msg, InlineKeyboardMarkup(keyboard) if keyboard else None
 
     def get_settlement_message(self, active_tickers, config, atr_data, tracking_cache=None):
-        # NEW: [제16경고] 변수 스코프 전진 배치
         msg = ""
         keyboard = []
         ver = ""
@@ -562,7 +558,6 @@ class TelegramView:
         return msg, InlineKeyboardMarkup(keyboard)
 
     def create_ledger_dashboard(self, ticker, qty, avg, invested, sold, records, t_val, split, is_history=False, is_reverse=False, history_id=None):
-        # NEW: [스코프 전진 배치]
         groups = {}
         agg_list = []
         report = ""
@@ -656,7 +651,6 @@ class TelegramView:
         img = apply_overlay(img)
         fname = f"data/profit_{ticker}.png"
         
-        # 🚨 [제4헌법 준수] 원자적 쓰기 (Atomic Write)
         dir_name = os.path.dirname(fname) or '.'
         fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=False)
         try:

@@ -14,13 +14,15 @@
 # NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어] 런타임 붕괴(AttributeError) 차단 정수 기반 락온
 # MODIFIED: [V44.57 인덴테이션 붕괴 수술] PEP8 규격 강제 및 IndentationError 영구 소각
 # MODIFIED: [V44.58 스냅샷 멱등성 파괴 엣지 케이스 수술] 파일명에 논리적 날짜(today_str) 결속 락온 완료
+# 🚨 NEW: [V72.00 줍줍 전면 소각 및 1회 예산 0.5회분 필수 분할 락온]
+# - 줍줍 기능 불필요 지시에 따라 `bonus_orders`에 삽입되던 모든 줍줍 매수 로직을 100% 영구 소각 완료.
+# - 새출발, 후반전, 리버스 매수 시 예산을 한 번에 쏘지 않고 정확히 0.5회분씩 분할(Buy1, Buy2)하여 덫을 장전하도록 안전 마진 락온.
 # ==========================================================
 import math
 import os
 import json
 import tempfile
 from datetime import datetime, timedelta
-# MODIFIED: [LMT 오차 방어를 위해 pytz를 적출하고 ZoneInfo 도입]
 from zoneinfo import ZoneInfo
 
 class V14Strategy:
@@ -30,30 +32,21 @@ class V14Strategy:
     def _ceil(self, val): return math.ceil(val * 100) / 100.0
     def _floor(self, val): return math.floor(val * 100) / 100.0
 
-    # NEW: [자정 경계 스냅샷/캐시 증발(Cinderella) 타임 패러독스 완벽 방어]
-    # AttributeError 방지를 위해 정수(hour/minute) 단위 비교
     def _get_logical_date_str(self):
         now_est = datetime.now(ZoneInfo('America/New_York'))
-        # MODIFIED: [04:05 EST 논리적 날짜 경계선 붕괴 방어] 04:04:59 조기 격발 오염 방지를 위해 4분으로 축소 교정
         if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 4):
             target_date = now_est - timedelta(days=1)
         else:
             target_date = now_est
         return target_date.strftime("%Y-%m-%d")
 
-    # NEW: [V28.17 스냅샷 엔진 이식] V14 오리지널 모드 스냅샷 저장(Lock-on) 로직
     def save_daily_snapshot(self, ticker, plan_data):
-        # MODIFIED: KST/UTC 의존성 제거 및 EST/EDT 논리적 날짜 락온
         today_str = self._get_logical_date_str()
-        
-        # MODIFIED: [V44.58 스냅샷 멱등성 파괴 엣지 케이스 수술] 파일명에 논리적 날짜(today_str) 결속 락온 완료
         snap_file = f"data/daily_snapshot_V14_{today_str}_{ticker}.json"
         
-        # NEW: [V44.56 스냅샷 멱등성 락온] 당일 1회 생성 원칙 준수 및 무한 덮어쓰기 방어막 주입
         if os.path.exists(snap_file):
             return
         
-        # 🚨 [치명적 경고 1 준수] 세션 간 오염 방지: 당일 날짜로 단 1회만 멱등성 박제
         data = {
             "date": today_str,
             "total_q": int(plan_data.get('total_q', 0)),
@@ -80,12 +73,8 @@ class V14Strategy:
         except Exception:
             pass
 
-    # NEW: [V28.17 스냅샷 엔진 이식] V14 오리지널 모드 스냅샷 로드(Decoupling) 로직
     def load_daily_snapshot(self, ticker):
-        # MODIFIED: KST/UTC 의존성 제거 및 EST/EDT 논리적 날짜 락온
         today_str = self._get_logical_date_str()
-        
-        # MODIFIED: [V44.58 스냅샷 멱등성 파괴 엣지 케이스 수술] 파일명에 논리적 날짜(today_str) 결속 락온 완료
         snap_file = f"data/daily_snapshot_V14_{today_str}_{ticker}.json"
         
         if os.path.exists(snap_file):
@@ -100,7 +89,6 @@ class V14Strategy:
 
     def _mark_quarter_sell_completed(self, ticker):
         flag_file = f"cache_sniper_sell_{ticker}.json"
-        # MODIFIED: KST/UTC 의존성 제거 및 EST/EDT 논리적 날짜 락온
         today_str = self._get_logical_date_str()
         
         if os.path.exists(flag_file):
@@ -151,10 +139,8 @@ class V14Strategy:
 
         return _clean(c_orders), _clean(b_orders)
 
-    # MODIFIED: [V28.17 디커플링 배선] 텔레그램 지시서 조회 시 스냅샷 우선 반환을 위한 is_snapshot_mode 파라미터 추가
     def get_plan(self, ticker, current_price, avg_price, qty, prev_close, ma_5day=0.0, market_type="REG", available_cash=0, is_simulation=False, is_snapshot_mode=False, **kwargs):
         
-        # 🚨 [치명적 경고 3 준수] 텔레그램 지시서 조회(/sync) 등 스냅샷 모드일 경우 박제된 앵커를 최우선으로 반환하여 장중 가격 변동(공수 붕괴) 원천 차단
         if not is_snapshot_mode:
             snap = self.load_daily_snapshot(ticker)
             if snap:
@@ -254,9 +240,16 @@ class V14Strategy:
             if qty == 0:
                 process_status = "✨새출발"
                 buy_price = max(0.01, round(self._ceil(base_price * 1.15) - 0.01, 2))
-                buy_qty = int(math.floor(one_portion_amt / buy_price)) if buy_price > 0 else 0
-                if buy_qty > 0:
-                    core_orders.append({"side": "BUY", "price": buy_price, "qty": buy_qty, "type": "LOC", "desc": "🆕새출발"})
+                
+                half_budget = one_portion_amt * 0.5
+                buy_qty1 = int(math.floor(half_budget / buy_price)) if buy_price > 0 else 0
+                buy_qty2 = int(math.floor((one_portion_amt - half_budget) / buy_price)) if buy_price > 0 else 0
+                
+                if buy_qty1 > 0:
+                    core_orders.append({"side": "BUY", "price": buy_price, "qty": buy_qty1, "type": "LOC", "desc": "🆕새출발1"})
+                if buy_qty2 > 0:
+                    core_orders.append({"side": "BUY", "price": buy_price, "qty": buy_qty2, "type": "LOC", "desc": "🆕새출발2"})
+                    
                 orders = core_orders + bonus_orders
                 return {"orders": orders, "core_orders": core_orders, "bonus_orders": bonus_orders, "total_q": qty, "avg_price": avg_price, "t_val": t_val, "one_portion": one_portion_amt, "process_status": process_status, "is_reverse": False, "star_price": star_price, "star_ratio": star_ratio, "real_cash_used": real_available_cash, "tracking_info": tr_info}
 
@@ -279,27 +272,22 @@ class V14Strategy:
                         core_orders.append({"side": "SELL", "price": 0, "qty": sell_qty, "type": "MOC", "desc": desc_str})
                 else:
                     process_status = f"🔄리버스({rev_day}일차)"
-                    buy_qty = 0
                     buy_price = 0
                     if one_portion_amt > 0 and star_price > 0:
                         buy_price = max(0.01, round(star_price - 0.01, 2))
                         if buy_price > 0: 
-                            buy_qty = int(math.floor(one_portion_amt / buy_price))
-                            if buy_qty > 0:
-                                core_orders.append({"side": "BUY", "price": buy_price, "qty": buy_qty, "type": "LOC", "desc": "⚓잔금매수"})
+                            b1_budget = one_portion_amt * 0.5
+                            b2_budget = one_portion_amt - b1_budget
+                            buy_qty1 = int(math.floor(b1_budget / buy_price))
+                            buy_qty2 = int(math.floor(b2_budget / buy_price))
+                            if buy_qty1 > 0:
+                                core_orders.append({"side": "BUY", "price": buy_price, "qty": buy_qty1, "type": "LOC", "desc": "⚓잔금매수1"})
+                            if buy_qty2 > 0:
+                                core_orders.append({"side": "BUY", "price": buy_price, "qty": buy_qty2, "type": "LOC", "desc": "⚓잔금매수2"})
                      
                     if not lock_s_sell and sell_qty > 0 and star_price > 0:
                         core_orders.append({"side": "SELL", "price": star_price, "qty": sell_qty, "type": "LOC", "desc": "🌟별값매도"})
 
-                    if one_portion_amt > 0 and buy_price > 0:
-                        for i in range(1, 6):
-                            target_qty = buy_qty + i 
-                            raw_jup_price = self._floor(one_portion_amt / target_qty)
-                            capped_jup_price = min(raw_jup_price, buy_price - 0.01)
-                            jup_price = max(0.01, round(capped_jup_price, 2))
-                            if jup_price > 0:
-                                bonus_orders.append({"side": "BUY", "price": jup_price, "qty": int(1), "type": "LOC", "desc": f"🧹리버스줍줍({i})" })
-                
                 if lock_s_sell: process_status = "🔫리버스(명중)"
 
                 core_orders, bonus_orders = self._apply_wash_trade_shield(core_orders, bonus_orders)        
@@ -331,7 +319,6 @@ class V14Strategy:
             
             safe_ceiling = min(avg_price, star_price) if star_price > 0 else avg_price
 
-            N = math.floor(one_portion_amt / avg_price) if avg_price > 0 else 0
             p_avg = max(0.01, round(min(self._ceil(avg_price) - 0.01, safe_ceiling - 0.01), 2))
             
             if can_buy:
@@ -339,11 +326,8 @@ class V14Strategy:
 
                 if t_val < (split / 2):
                     half_amt = one_portion_amt * 0.5
-                    q_avg_init = math.floor(half_amt / p_avg) if p_avg > 0 else 0
-                    q_star = math.floor(half_amt / p_star) if p_star > 0 else 0
-                    total_basic = q_avg_init + q_star
-                    if total_basic < N: q_avg = int(q_avg_init + (N - total_basic))
-                    else: q_avg = int(q_avg_init)
+                    q_avg = math.floor(half_amt / p_avg) if p_avg > 0 else 0
+                    q_star = math.floor((one_portion_amt - half_amt) / p_star) if p_star > 0 else 0
                     
                     if q_avg > 0:
                         core_orders.append({"side": "BUY", "price": p_avg, "qty": q_avg, "type": "LOC", "desc": "⚓평단매수"})
@@ -351,19 +335,13 @@ class V14Strategy:
                         core_orders.append({"side": "BUY", "price": p_star, "qty": int(q_star), "type": "LOC", "desc": "💫별값매수"})
                 else: 
                     if p_star > 0:
-                        q_star = int(math.floor(one_portion_amt / p_star))
-                        if q_star > 0:
-                            core_orders.append({"side": "BUY", "price": p_star, "qty": q_star, "type": "LOC", "desc": "💫별값매수"})
-
-            if one_portion_amt > 0 and (is_simulation or not is_money_short):
-                base_qty_for_jup = math.floor(one_portion_amt / avg_price) if avg_price > 0 else 0
-                if base_qty_for_jup > 0:
-                    for i in range(1, 6):
-                        jup_price = self._floor(one_portion_amt / (base_qty_for_jup + i))
-                        capped_jup_price = round(min(jup_price, avg_price - 0.01), 2)
-                        if capped_jup_price > 0:
-                            safe_jup_price = max(0.01, capped_jup_price)
-                            bonus_orders.append({"side": "BUY", "price": safe_jup_price, "qty": int(1), "type": "LOC", "desc": f"🧹줍줍({i})"})
+                        half_amt = one_portion_amt * 0.5
+                        q_star1 = int(math.floor(half_amt / p_star))
+                        q_star2 = int(math.floor((one_portion_amt - half_amt) / p_star))
+                        if q_star1 > 0:
+                            core_orders.append({"side": "BUY", "price": p_star, "qty": q_star1, "type": "LOC", "desc": "💫별값매수1"})
+                        if q_star2 > 0:
+                            core_orders.append({"side": "BUY", "price": p_star, "qty": q_star2, "type": "LOC", "desc": "💫별값매수2"})
 
             if qty > 0:
                 if lock_s_sell:

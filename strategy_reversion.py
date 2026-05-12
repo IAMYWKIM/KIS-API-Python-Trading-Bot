@@ -33,6 +33,9 @@
 # - 서머타임(DST) 적용 여부를 스캔하여 042500/045500 또는 052500/055500을 동적으로 주입하는 무결점 아키텍처 이식.
 # 🚨 MODIFIED: [V71.27 런타임 붕괴 수술]
 # - `for n in range(1, max_n + 1):` 라인에 침투한 IndentationError(들여쓰기) 불일치 팩트 교정 완료.
+# 🚨 MODIFIED: [V72.00 줍줍 전면 소각 및 VWAP 10주 제약 LOC 우회 락온]
+# - 줍줍 데드코드 100% 소각 및 매수 0.5회분 강제 분할 보장 로직.
+# - KIS 지정가 VWAP 10주 미만 리젝 방어를 위해 qty < 10인 VWAP 주문을 LOC로 동적 오버라이드.
 # ==========================================================
 import math
 import os
@@ -263,33 +266,27 @@ class ReversionStrategy:
         rem_budget = max(0.0, float(alloc_cash) - total_spent)
         
         if rem_budget > 0:
+            # 🚨 MODIFIED: [V72.00] 1회 예산을 무조건 0.5회분씩 하드 분할 (예산 초과 금지)
             b1_budget = rem_budget * 0.5
-            b2_budget = rem_budget - b1_budget
+            b2_budget = rem_budget * 0.5
             
             q1 = math.floor(b1_budget / p1_trigger) if p1_trigger > 0 else 0
             q2 = math.floor(b2_budget / p2_trigger) if p2_trigger > 0 else 0
             
-            # 🚨 MODIFIED: [V71.25 KST 타임라인 동적 래핑 수술]
             est_tz_check = ZoneInfo('America/New_York')
             is_dst_active = bool(datetime.now(est_tz_check).dst())
             start_t = "042500" if is_dst_active else "052500"
             end_t = "045500" if is_dst_active else "055500"
             
-            if q1 > 0: orders.append({"side": "BUY", "qty": q1, "price": p1_trigger, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "VWAP매수(Buy1)"})
-            if q2 > 0: orders.append({"side": "BUY", "qty": q2, "price": p2_trigger, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "VWAP매수(Buy2)"})
-            
-            if total_q > 0:
-                max_n = 5
-                if curr_p > 0:
-                    required_n = math.ceil(b2_budget / curr_p) - q2
-                    if required_n > 5:
-                        max_n = min(required_n, 50)
-                
-                for n in range(1, max_n + 1):
-                    if (q2 + n) > 0:
-                        grid_p2 = round(b2_budget / (q2 + n), 2)
-                        if grid_p2 >= 0.01 and grid_p2 < p2_trigger:
-                            orders.append({"side": "BUY", "qty": 1, "price": grid_p2, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": f"VWAP줍줍({n})"})
+            # 🚨 MODIFIED: [V72.00] 10주 미만 시 LOC 스위칭 락온 적용
+            if q1 > 0:
+                ord_type = "VWAP" if q1 >= 10 else "LOC"
+                desc_str = "VWAP매수(Buy1)" if ord_type == "VWAP" else "LOC매수(Buy1)"
+                orders.append({"side": "BUY", "qty": q1, "price": p1_trigger, "type": ord_type, "start_time": start_t if ord_type == "VWAP" else None, "end_time": end_t if ord_type == "VWAP" else None, "desc": desc_str})
+            if q2 > 0:
+                ord_type = "VWAP" if q2 >= 10 else "LOC"
+                desc_str = "VWAP매수(Buy2)" if ord_type == "VWAP" else "LOC매수(Buy2)"
+                orders.append({"side": "BUY", "qty": q2, "price": p2_trigger, "type": ord_type, "start_time": start_t if ord_type == "VWAP" else None, "end_time": end_t if ord_type == "VWAP" else None, "desc": desc_str})
             
         rem_qty_total = max(0, int(total_q) - int(self.executed["SELL_QTY"].get(ticker, 0)))
         
@@ -302,12 +299,16 @@ class ReversionStrategy:
             available_l1 = min(l1_qty, rem_qty_total)
             l1_queued = 0
             if available_l1 > 0 and trigger_l1 > 0:
-                orders.append({"side": "SELL", "qty": available_l1, "price": trigger_l1, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "Pop1(VWAP)"})
+                ord_type = "VWAP" if available_l1 >= 10 else "LOC"
+                desc_str = "Pop1(VWAP)" if ord_type == "VWAP" else "Pop1(LOC)"
+                orders.append({"side": "SELL", "qty": available_l1, "price": trigger_l1, "type": ord_type, "start_time": start_t if ord_type == "VWAP" else None, "end_time": end_t if ord_type == "VWAP" else None, "desc": desc_str})
                 l1_queued = available_l1
                 
             available_upper = min(upper_qty, rem_qty_total - l1_queued)
             if available_upper > 0 and trigger_upper > 0:
-                orders.append({"side": "SELL", "qty": available_upper, "price": trigger_upper, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "Pop2(VWAP)"})
+                ord_type = "VWAP" if available_upper >= 10 else "LOC"
+                desc_str = "Pop2(VWAP)" if ord_type == "VWAP" else "Pop2(LOC)"
+                orders.append({"side": "SELL", "qty": available_upper, "price": trigger_upper, "type": ord_type, "start_time": start_t if ord_type == "VWAP" else None, "end_time": end_t if ord_type == "VWAP" else None, "desc": desc_str})
         
         plan_result = {
              "orders": orders, 
