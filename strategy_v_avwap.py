@@ -24,6 +24,8 @@
 # 서버 병목 방어를 위해 15:25 하드코딩 덤핑을 소각하고 0~180초 난수를 차감한 동적 타임스탬프로 분산 타격 이식 완료.
 # 🚨 MODIFIED: [V66.05 Split-Brain 시각적 디커플링 해결]
 # 관제탑 환각 방지를 위해 HA_LATCHED_BULL 상태 변경 시 즉각 파일(JSON)에 원자적(Atomic)으로 각인(save_state)하는 무결성 검증 완료. 제4헌법 완벽 준수.
+# 🚨 NEW: [V71.01 시계열 체력 예외 허용 엔진(V-Turn Intercept) 이식]
+# 하락 추세(Time_High < Time_Low) 판독 시에도, 진폭이 ATR5의 50% 이상 도달 및 현재가가 당일 미드포인트 이상 회복 시 V자 반등으로 판별하여 예외적으로 롱(SOXL) 진입을 허용하는 디커플링 아키텍처 대수술 완료.
 # ==========================================================
 import logging
 import datetime
@@ -414,9 +416,17 @@ class VAvwapHybridPlugin:
         cond3_met = True
 
         # 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각] cond_seq 롱 단일 팩트 락온
+        # 🚨 NEW: [V71.01 시계열 체력 예외 허용 엔진(V-Turn Intercept) 이식]
+        # 하락 추세(Time_High < Time_Low)라도 진폭이 5일 평균 진폭(ATR5)의 50% 이상이고, 
+        # 현재가가 당일 고점/저점의 중간값(Mid-point) 이상 회복 시 V자 반등으로 판별하여 롱 진입 강제 허가.
         cond_seq = True
         if trend_sequence == "BEAR":
             cond_seq = False
+            mid_point = 0.0
+            if day_high > 0 and day_low > 0:
+                mid_point = (day_high + day_low) / 2.0
+            if atr5 > 0 and actual_gap_pct >= (atr5 * 0.5) and exec_curr_p >= mid_point:
+                cond_seq = True
 
         if cond1_met and cond2_met and cond3_met and cond_seq:
             if avwap_alloc_cash > 0:
