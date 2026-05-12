@@ -27,6 +27,8 @@
 # NEW: [V66.02 원격 로그 핀셋 추출 엔진 탑재] 텔레그램 4096자 렌더링 쉴드 및 시간 정순 정렬 아키텍처 이식 완료.
 # 🚨 MODIFIED: [V66.04 런타임 붕괴 방어] 파일 전역의 IndentationError(들여쓰기) 팩트 무결점 교정 완료.
 # 🚨 NEW: [KIS VWAP 알고리즘 대통합 수술] 수동 VWAP 한투 앱 직접 세팅 관련 경고문 전면 소각 및 17:05 KST 자동 예약 장전 팩트 기반 렌더링으로 100% 교정 완료.
+# 🚨 MODIFIED: [V71.02 XRAY 엔진 렌더링 영구 소각]
+# KIS 자체 VWAP 알고리즘 위임에 따라 1분 단위 시뮬레이션의 의미가 상실된 런타임 엑스레이(Dry-Run) 진단 버튼을 통합 지시서, 장부 조회, 큐 관리 뷰포트에서 전면 적출 완료.
 # ==========================================================
 import os
 import math
@@ -201,7 +203,7 @@ class TelegramView:
         msg += "최근 매수한 <b>1지층</b>을 시장가(MOC)로 강제 덤핑하여 가용 예산을 확보합니다."
 
         keyboard.append([InlineKeyboardButton("🩸 1지층 수동 긴급 수혈 (MOC)", callback_data=f"EMERGENCY_REQ:{ticker}")])
-        keyboard.append([InlineKeyboardButton(f"🔍 {ticker} VWAP 런타임 엑스레이 (Dry-Run)", callback_data=f"XRAY:VWAP:{ticker}")])
+        # MODIFIED: [V71.02 XRAY 엔진 렌더링 영구 소각] KIS VWAP 위임에 따라 엑스레이 진단 버튼 철거
         keyboard.append([InlineKeyboardButton("🔄 대시보드 새로고침", callback_data=f"QUEUE:VIEW:{ticker}")])
         
         return msg, InlineKeyboardMarkup(keyboard)
@@ -499,7 +501,7 @@ class TelegramView:
                         
                         if "수혈" in desc: 
                             ico = "🩸"
-                        desc = desc.replace("🩸", "")
+                            desc = desc.replace("🩸", "")
                         
                         type_str = "" if o['type'] == 'LIMIT' else f"({o['type']})"
                         type_disp = f" {type_str}" if type_str else ""
@@ -523,8 +525,8 @@ class TelegramView:
                 
             body_msg += "\n"
             
-            if v_mode == "V_REV":
-                keyboard.append([InlineKeyboardButton(f"🔍 {t} VWAP 런타임 엑스레이 (Dry-Run)", callback_data=f"XRAY:VWAP:{t}")])
+            # MODIFIED: [V71.02 XRAY 엔진 렌더링 영구 소각] KIS VWAP 위임에 따라 엑스레이 진단 버튼 철거
+            # (XRAY 버튼 삭제됨)
 
         final_msg = header_msg + body_msg
         
@@ -543,7 +545,7 @@ class TelegramView:
         return final_msg, InlineKeyboardMarkup(keyboard) if keyboard else None
 
     def get_settlement_message(self, active_tickers, config, atr_data, tracking_cache=None):
-        if tracking_cache is None: tracking_cache = {}
+        if tracking_cache None: tracking_cache = {}
         
         msg = "⚙️ <b>[ 현재 설정 및 복리 상태 ]</b>\n\n"
         keyboard = []
@@ -735,8 +737,8 @@ class TelegramView:
             keyboard.append([InlineKeyboardButton(f"🔄 {other} 장부 조회", callback_data=f"REC:VIEW:{other}")])
             keyboard.append([InlineKeyboardButton(f"🗄️ {ticker} V-REV 큐(Queue) 정밀 관리", callback_data=f"QUEUE:VIEW:{ticker}")])
             
-            if is_reverse:
-                keyboard.append([InlineKeyboardButton(f"🔍 {ticker} VWAP 런타임 엑스레이 (Dry-Run)", callback_data=f"XRAY:VWAP:{ticker}")])
+            # MODIFIED: [V71.02 XRAY 엔진 렌더링 영구 소각] KIS VWAP 위임에 따라 엑스레이 진단 버튼 철거
+            # (XRAY 버튼 삭제됨)
                 
             keyboard.append([InlineKeyboardButton("🔙 장부 대시보드 업데이트", callback_data=f"REC:SYNC:{ticker}")])
         else:
@@ -857,4 +859,3 @@ class TelegramView:
             body = "… (글자 수 제한으로 이전 로그 생략) …\n" + truncated_body
             
         return header + body + footer
-

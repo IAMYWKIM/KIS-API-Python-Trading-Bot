@@ -32,6 +32,8 @@
 # 엑스레이 진단 시 무조건 낡은 인메모리 상태를 강제 폐기(None)하고 최신 JSON 팩트 파일을 로드하도록 배선 교정 완료.
 # 🚨 NEW: [KIS VWAP 알고리즘 대통합 수술] 수동 VWAP 설정(AUTO/MANUAL) 텔레그램 콜백 라우팅을 전면 소각하고 단일 KIS VWAP 예약 장전 모드로 팩트 락온 완료.
 # 🚨 MODIFIED: [런타임 즉사 방어] SYNC_ZERO 콜백 라우터 내 IndentationError 팩트 무결점 4배수 교정 완료.
+# 🚨 MODIFIED: [V71.02 XRAY 엔진 라우팅 영구 소각]
+# KIS 자체 VWAP 알고리즘 위임에 따라 1분 단위 시뮬레이션의 의미가 상실된 런타임 엑스레이(Dry-Run) 진단 콜백 라우터를 전면 적출 완료.
 # ==========================================================
 import logging
 import datetime
@@ -86,97 +88,7 @@ class TelegramCallbacks:
         data = query.data.split(":")
         action, sub = data[0], data[1] if len(data) > 1 else ""
 
-        if action == "XRAY":
-            await query.answer("🔍 엑스레이 진단 엔진 가동 중... (Read-Only)", show_alert=False)
-            if sub == "VWAP":
-                ticker = data[2]
-                
-                try:
-                    curr_p = await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=5.0)
-                    prev_c = await asyncio.wait_for(asyncio.to_thread(self.broker.get_previous_close, ticker), timeout=5.0)
-                    
-                    if curr_p is None: curr_p = 0.0
-                    if prev_c is None: prev_c = 0.0
-                    
-                    q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) if getattr(self, 'queue_ledger', None) else []
-                    total_q = sum(int(item.get("qty", 0)) for item in q_data)
-                    
-                    safe_seed = await asyncio.to_thread(self.cfg.get_seed, ticker)
-                    alloc_cash = safe_seed * 0.15
-                    
-                    strategy_rev = self.strategy.v_rev_plugin
-                    
-                    # 🚨 MODIFIED: [V66.07 XRAY 환각 소각] 
-                    # 엑스레이 버튼을 누를 때마다 무조건 인메모리(state_loaded)를 파괴하고 최신 JSON 파일을 읽어오도록 SSOT 락온 이식
-                    strategy_rev.state_loaded[ticker] = None
-                    await asyncio.to_thread(strategy_rev._load_state_if_needed, ticker)
-                    
-                    total_spent = float(strategy_rev.executed.get("BUY_BUDGET", {}).get(ticker, 0.0))
-                    rem_budget = max(0.0, alloc_cash - total_spent)
-                    
-                    cached_plan = await asyncio.to_thread(strategy_rev.load_daily_snapshot, ticker)
-                    if cached_plan:
-                        is_zero_start = cached_plan.get("is_zero_start", cached_plan.get("total_q", -1) == 0)
-                    else:
-                        is_zero_start = (total_q == 0)
-                        
-                    profile = await asyncio.to_thread(self.cfg.get_vwap_profile, ticker)
-                    target_keys = [f"15:{str(m).zfill(2)}" for m in range(27, 57)]
-                    total_target_vol = sum(profile.get(k, 0.0) for k in target_keys)
-                    
-                    est = ZoneInfo('America/New_York')
-                    now_est = datetime.datetime.now(est)
-                    time_str = now_est.strftime('%H:%M')
-                    
-                    # 실시간 시간에 맞춰 가중치 연산 (장운영 시간이 아니면 15:30으로 가정)
-                    if time_str in target_keys:
-                        raw_weight = profile.get(time_str, 0.0)
-                    else:
-                        raw_weight = profile.get("15:30", 0.0)
-                        time_str = "15:30 (가상)"
-                        
-                    current_weight = (raw_weight / total_target_vol) if total_target_vol > 0 else (1.0 / len(target_keys))
-                    
-                    slice_budget = alloc_cash * current_weight
-                    shared_bucket = float(strategy_rev.residual.get("BUY_SHARED", {}).get(ticker, 0.0)) + slice_budget
-                    
-                    b1_budget = shared_bucket * 0.5
-                    b2_budget = shared_bucket * 0.5
-                    
-                    p1_trigger = round(prev_c * 1.15, 2) if is_zero_start else round(prev_c * 0.995, 2)
-                    p2_trigger = round(prev_c * 0.999, 2) if is_zero_start else round(prev_c * 0.9725, 2)
-                    
-                    msg = f"🔍 <b>[ {ticker} V-REV 런타임 엑스레이 진단 ]</b>\n"
-                    msg += f"▫️ <b>기준 시간</b> : {time_str} EST\n"
-                    msg += f"▫️ <b>현재가</b> : ${curr_p:.2f} / <b>전일종가</b> : ${prev_c:.2f}\n"
-                    msg += f"▫️ <b>0주 새출발</b> : {'True' if is_zero_start else 'False'}\n"
-                    msg += f"▫️ <b>이번 분 할당 예산</b> : ${slice_budget:.2f} (총 예산의 {current_weight*100:.1f}%)\n"
-                    msg += f"▫️ <b>누적 잔여 예산(버킷)</b> : ${shared_bucket:.2f}\n\n"
-                    
-                    msg += "🎯 <b>[ 봇의 내부 판단 (Action) ]</b>\n"
-                    
-                    if rem_budget <= 0:
-                        msg += "👉 <b>예산 고갈 (Budget Empty)</b> : 할당된 1일치 예산(15%)이 모두 소진되어 타격을 종료합니다.\n"
-                    else:
-                        msg += f"🔴 <b>매수 타점(Buy1)</b> : ${p1_trigger:.2f} (가용 예산: ${b1_budget:.2f})\n"
-                        if curr_p <= p1_trigger:
-                            msg += f"  👉 현재가(${curr_p:.2f})가 타점 이하이므로 <b>시장가 스윕 타격 조건 충족</b>\n"
-                        else:
-                            msg += f"  👉 현재가(${curr_p:.2f})가 타점을 초과하여 <b>매수 스킵(예산 다음분 이월)</b>\n"
-                            
-                        msg += f"🔴 <b>매수 타점(Buy2)</b> : ${p2_trigger:.2f} (가용 예산: ${b2_budget:.2f})\n"
-                        if curr_p <= p2_trigger:
-                            msg += f"  👉 현재가(${curr_p:.2f})가 타점 이하이므로 <b>시장가 스윕 타격 조건 충족</b>\n"
-                        else:
-                            msg += f"  👉 현재가(${curr_p:.2f})가 타점을 초과하여 <b>매수 스킵(예산 다음분 이월)</b>\n"
-                    
-                    await context.bot.send_message(chat_id=query.message.chat_id, text=msg, parse_mode='HTML')
-                    return
-             
-                except Exception as e:
-                    await context.bot.send_message(chat_id=query.message.chat_id, text=f"🚨 엑스레이 진단 중 에러 발생: {e}", parse_mode='HTML')
-                    return
-
+        # MODIFIED: [V71.02 XRAY 엔진 렌더링 영구 소각] 엑스레이(XRAY) 콜백 라우터 및 하위 연산 블록 전면 철거 완료
         if action == "UPDATE":
             await query.answer()
             if sub == "CONFIRM":
@@ -406,7 +318,7 @@ class TelegramCallbacks:
                 
                 if ticker not in self.sync_engine.sync_locks:
                     self.sync_engine.sync_locks[ticker] = asyncio.Lock()
-                    
+                     
                 if not self.sync_engine.sync_locks[ticker].locked():
                     await query.edit_message_text(f"🔄 <b>[{ticker}] 잔고 기반 대시보드 업데이트 중...</b>", parse_mode='HTML')
                     res = await self.sync_engine.process_auto_sync(ticker, chat_id, context, silent_ledger=True)
@@ -528,7 +440,7 @@ class TelegramCallbacks:
                     logging.debug(f"YF 정규장 종가 롤오버 스캔 실패 ({t}): {e}")
                 if curr_p > 0 and prev_c == 0.0:
                     prev_c = curr_p
-             
+            
             ma_5day = await asyncio.to_thread(self.broker.get_5day_ma, t)
             
             logic_qty_v14 = safe_qty
@@ -640,7 +552,7 @@ class TelegramCallbacks:
             if hasattr(self.cfg, 'set_avwap_hybrid_mode'):
                 await asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, ticker, False)
             if hasattr(self.cfg, 'set_manual_vwap_mode'):
-                await asyncio.to_thread(self.cfg.set_manual_vwap_mode, ticker, False)
+                 await asyncio.to_thread(self.cfg.set_manual_vwap_mode, ticker, False)
             
             await query.edit_message_text(f"✅ <b>[{ticker}]</b> 퀀트 엔진이 <b>V14 무매4</b> 모드로 전환되었습니다.\n▫️ /sync 명령어에서 변경된 지시서를 확인하세요.", parse_mode='HTML')
 
@@ -717,14 +629,14 @@ class TelegramCallbacks:
         elif action == "AVWAP_SET":
             action_type = sub
             ticker = data[2]
-             
+            
             if 'app_data' not in context.bot_data:
                 context.bot_data['app_data'] = {}
             render_app_data = context.bot_data['app_data']
             
             if context.job_queue:
                  for job in context.job_queue.jobs():
-                    if job.data is not None:
+                     if job.data is not None:
                         render_app_data = job.data
             
             tracking_cache = render_app_data.setdefault('sniper_tracking', {})
@@ -773,7 +685,7 @@ class TelegramCallbacks:
                     plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
                     msg, markup = await plugin.get_console_message(render_app_data)
                     await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                    
+        
                     await query.answer(f"🧯 [{ticker}] 암살자 수동 청산 동기화 완료! 당일 영구 동결(Shutdown) 상태로 전환됩니다.", show_alert=True)
                 except Exception as e:
                     logging.error(f"🚨 암살자 수동 청산 동기화 에러: {e}")
@@ -860,4 +772,3 @@ class TelegramCallbacks:
             
             desc = "숫자만 입력하세요.\n(예: 액면분할 시 1주가 10주가 되었다면 10 입력, 10주가 1주로 병합되었다면 0.1 입력)" if sub == "STOCK_SPLIT" else "숫자만 입력하세요."
             await context.bot.send_message(chat_id, f"✏️ <b>[{ticker}] {ko_name}</b>를 설정합니다.\n{desc}", parse_mode='HTML')
-
