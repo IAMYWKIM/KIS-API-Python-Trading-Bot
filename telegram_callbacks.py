@@ -21,7 +21,7 @@
 # NEW: [V59.06] VWAP 런타임 엑스레이(Dry-Run) 진단 엔진 라우터 이식 완료 (순수 Read-Only 섀도우 연산)
 # 🚨 MODIFIED: [V60.00 옴니 매트릭스 락다운 데드코드 전면 폐기]
 # XRAY 진단 엔진 내부에서 매수 방아쇠를 강제로 잠그던 옴니 매트릭스 스캔 블록 및 시각적 브리핑 요소를 영구 소각함.
-# 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각 작전 지시서 적용]
+# 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 작전 지시서 적용]
 # 1) SET_VER 및 SET_VER_CONFIRM 콜백 내 SOXS 락다운 방어막 텍스트를 시스템 영구 폐기 경고로 오버라이드 완료.
 # 2) TICKER 액션 내 SOXS 경고문 교정 및 '듀얼 모멘텀' 텍스트를 '싱글 모멘텀'으로 팩트 교정 완료.
 # NEW: [AVWAP 수동 개입 엣지 케이스 방어] 수동 매도 후 유령 물량을 0주로 강제 동기화하는 SYNC_ZERO 라우터 신설
@@ -41,8 +41,10 @@
 # - 수동 주문(EXEC) 라우터 내에 폴백(Fallback)으로 방치되어 있던 '152500' 등 EST 하드코딩 찌꺼기를 100% 영구 소각.
 # - 퀀트 엔진이 서머타임을 판독하여 주입한 KST 팩트 시간만을 다이렉트 패스하도록 무결점 역배선 개통 완료.
 # 🚨 NEW: [V71.28 수동 주문(EXEC) 최신 예산 팩트 스냅샷 강제 갱신 엔진 탑재]
-# - 승승장군님의 지시에 따라, 17:05 KST 당시 예산 부족으로 박제된 옛날 스냅샷(매수 0주)을 수동 주문 시 무조건 소각(Nuke).
-# - 현재 KIS 계좌의 확보된 실시간 잔고(예: 1.5만 달러)를 팩트로 끌어와 매수 덫까지 완벽히 장전된 최신 스냅샷으로 영구 오버라이드.
+# 🚨 MODIFIED: [V71.29 수동 주문 예산 기아(Data Starvation) 맹점 수술]
+# - EXEC 격발 시 텔레그램 내부의 낡은 예산 할당 함수(_calculate_budget_allocation)가 V-REV 예산을 $0.0으로 
+#   강제 오판하여 매수 지시서가 공중 증발하던 치명적 하극상 맹점 원천 차단.
+# - 코어 엔진(scheduler_core)의 get_budget_allocation으로 다이렉트 배선을 교체하여 매수 타점 100% 장전 락온.
 # ==========================================================
 import logging
 import datetime
@@ -441,7 +443,13 @@ class TelegramCallbacks:
             await asyncio.to_thread(_nuke_old_snapshot)
 
             active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
-            _, allocated_cash = await asyncio.to_thread(controller._calculate_budget_allocation, cash, active_tickers)
+            
+            # 🚨 MODIFIED: [V71.29 수동 주문 예산 기아 맹점 수술] 
+            # 텔레그램 보조 함수(_calculate_budget_allocation)가 V-REV 예산을 $0.0으로 
+            # 덮어쓰던 하극상 오류를 적출하고, 실제 코어 엔진으로 배선 직접 연결 완료.
+            from scheduler_core import get_budget_allocation
+            _, allocated_cash = await asyncio.to_thread(get_budget_allocation, cash, active_tickers, self.cfg)
+            
             h = holdings.get(t, {'qty':0, 'avg':0})
             curr_p = float(await asyncio.to_thread(self.broker.get_current_price, t) or 0.0)
             prev_c = float(await asyncio.to_thread(self.broker.get_previous_close, t) or 0.0)
