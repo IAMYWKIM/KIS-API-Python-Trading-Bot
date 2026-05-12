@@ -1,24 +1,11 @@
 # ==========================================================
 # FILE: strategy_v14_vwap.py
 # ==========================================================
-# MODIFIED: [V44.27 0주 스냅샷 환각 락온] 서버 재시작으로 인메모리 스냅샷이 소실되었을 때, 메인 장부에서 당일 날짜(EST)의 거래를 100% 도려내고 오직 어제까지 이월된 순수 과거 물량만을 스캔하여 '0주 새출발' 상태를 완벽히 팩트 복구하는 타임머신 역산 엔진 이식 완료.
-# MODIFIED: [V44.27 AVWAP 잔고 오염 방어] V14_VWAP 런타임 엔진에 KIS 총잔고 대신 암살자 물량이 배제된 pure_qty를 주입하여 동적 플랜 훼손 원천 차단
-# MODIFIED: [V44.25 AVWAP 디커플링] VWAP 기상 전 스냅샷 2중 교차 검증(Fail-Safe) 및 암살자 물량(AVWAP) 100% 격리(Decoupling) 파이프라인 이식 완료.
-# NEW: [VWAP 잔차 증발 방어 롤백 엔진] 주문 거절/미체결 시 삭감된 예산을 버킷 식별자 기반으로 원상 복구(Refund)하는 환불 파이프라인 개통 완료.
-# 🚨 MODIFIED: [V50.02 30분 압축 락온] 타임 윈도우 스캔 범위를 range(27, 60)에서 range(27, 57)로 정밀 교정하여 15:56 타격 종료 완벽 동기화.
-# 🚨 MODIFIED: [V51.01 소형 시드 1주 영끌 타격 락온] 예산이 1주 가격보다 작더라도 장막판 가불을 통해 무조건 1주 베이스캠프 확보 보장.
-# 🚨 MODIFIED: [치명적 경고 3] 텔레그램 지시서 조회(min_idx < 0) 시 스냅샷 반환 디커플링 및 실시간 타격 분리 락온.
-# 🚨 MODIFIED: [치명적 경고 19] UnboundLocalError 원천 봉쇄를 위한 변수 스코프 전진 배치 수술 완료.
-# 🚨 NEW: [KIS VWAP 알고리즘 대통합 수술] 1분 단위 타임 슬라이싱 연산 및 잔차 버킷 파편화 궤적을 100% 영구 소각하고, 할당된 1회분 총 예산을 단일 KIS VWAP 덫 예약 주문 플랜으로 통짜 스냅샷 산출하여 반환하도록 아키텍처 대수술 완료.
-# 🚨 MODIFIED: [V71.09 30분 압축 타임라인 팩트 교정]
-# - V14 VWAP의 덫 주문 시 start_time("152500")과 end_time("155500") 파라미터를 누락한 데이터 기아 현상 해결 및 종일 타격 패러독스 원천 차단.
-# - 코드 내부의 들여쓰기 붕괴(IndentationError) 팩트 교정.
-# 🚨 MODIFIED: [V71.25 KST 타임라인 동적 래핑 수술]
-# - KIS 서버의 알고리즘 시간 요구사항(KST)에 맞춰 EST를 강제하던 맹점(152500)을 100% 영구 소각.
-# - 서머타임(DST) 적용 여부를 스캔하여 042500/045500 또는 052500/055500을 동적으로 주입하는 무결점 아키텍처 이식.
-# 🚨 NEW: [V72.00 1회 예산 0.5 분할 락온 및 VWAP 10주 제약 우회 로직 이식]
-# - 매수 예산을 1회분 기준 무조건 0.5 분할하여 2개로 쪼개어 장전 보장 (예산 초과 금지).
-# - KIS 지정가 VWAP 10주 미만 리젝 방어를 위해 qty < 10인 VWAP 주문을 LOC로 동적 오버라이드.
+# (상단 주석 생략...)
+# 🚨 MODIFIED: [V72.04 후반전 별값 매수 예산 통합 락온]
+# - 후반전(T >= 분할/2) 진입 시 동일한 가격(별값)임에도 50:50으로 예산을 쪼개어
+#   VWAP 최소 수량(10주) 요건을 스스로 박탈하던 기계적 분할 맹점 원천 차단.
+# - 단일 가격 타격 시에는 예산을 100% 단일 버킷으로 통합하여 VWAP 격발 확률을 극대화함.
 # ==========================================================
 import math
 import logging
@@ -35,6 +22,7 @@ class V14VwapStrategy:
         self.executed = {"BUY_BUDGET": {}, "SELL_QTY": {}}
         self.state_loaded = {}
 
+    # (...중략: _get_logical_date_str ~ record_execution 유지...)
     def _get_logical_date_str(self):
         now_est = datetime.now(ZoneInfo('America/New_York'))
         if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 4):
@@ -255,19 +243,12 @@ class V14VwapStrategy:
                     desc = f"💫별값매수({o_type})"
                     core_orders.append({"side": "BUY", "price": buy_star_price, "qty": q_star, "type": o_type, "start_time": start_t if o_type == "VWAP" else None, "end_time": end_t if o_type == "VWAP" else None, "desc": desc})
             else:
-                b1_budget = dynamic_budget * 0.5
-                b2_budget = dynamic_budget * 0.5
-                q1 = math.floor(b1_budget / buy_star_price) if buy_star_price > 0 else 0
-                q2 = math.floor(b2_budget / buy_star_price) if buy_star_price > 0 else 0
-                
-                if q1 > 0: 
-                    o_type = "VWAP" if q1 >= 10 else "LOC"
-                    desc = f"💫별값매수1({o_type})"
-                    core_orders.append({"side": "BUY", "price": buy_star_price, "qty": q1, "type": o_type, "start_time": start_t if o_type == "VWAP" else None, "end_time": end_t if o_type == "VWAP" else None, "desc": desc})
-                if q2 > 0:
-                    o_type = "VWAP" if q2 >= 10 else "LOC"
-                    desc = f"💫별값매수2({o_type})"
-                    core_orders.append({"side": "BUY", "price": buy_star_price, "qty": q2, "type": o_type, "start_time": start_t if o_type == "VWAP" else None, "end_time": end_t if o_type == "VWAP" else None, "desc": desc})
+                # 🚨 MODIFIED: [V72.04] 후반전 별값 매수 예산 통합 락온
+                q_total = math.floor(dynamic_budget / buy_star_price) if buy_star_price > 0 else 0
+                if q_total > 0: 
+                    o_type = "VWAP" if q_total >= 10 else "LOC"
+                    desc = f"💫별값매수(통합:{o_type})"
+                    core_orders.append({"side": "BUY", "price": buy_star_price, "qty": q_total, "type": o_type, "start_time": start_t if o_type == "VWAP" else None, "end_time": end_t if o_type == "VWAP" else None, "desc": desc})
             
             q_sell = math.ceil(qty / 4)
             if q_sell > 0:
@@ -293,22 +274,11 @@ class V14VwapStrategy:
         }
         
         self.save_daily_snapshot(ticker, plan_result)
-        
         return plan_result
 
     def get_dynamic_plan(self, ticker, current_price, prev_close, current_weight, min_idx, alloc_cash, qty, avg_price, market_type="REG"):
         self._load_state_if_needed(ticker)
-        
-        alloc_qty = 0
-        spent_b = 0.0
-        exact_s_qty = 0.0
-        alloc_s_qty = 0
-        b_budget_slice = 0.0
-        slice_budget = 0.0
-        b_bucket = 0.0
-        
         cached_plan = self.load_daily_snapshot(ticker)
-        
         if cached_plan:
             return cached_plan
         else:
