@@ -8,6 +8,10 @@
 # 🚨 MODIFIED: [V54.02 깡통 스냅샷 붕괴 방어] V-REV 예방 덫 소각 시 생성되는 더미 스냅샷에 prev_c 및 is_zero_start 팩트 다이렉트 주입 락온
 # 🚨 MODIFIED: [V-REV 데이터 기아 방어] 통신 장애로 0.0 폴백 시 루프 조기 탈출(continue) 무시 및 깡통 스냅샷 팩트 박제 락온.
 # 🚨 NEW: [KIS VWAP 알고리즘 권한 위임 수술] V-REV 수동 덫 장전 경고문 및 바이패스 분기를 전면 소각. 17:05 KST 기상 시 산출된 단일 지시서를 KIS VWAP 예약 주문 및 LOC 예약 주문으로 즉각 전송하고 예약 주문 번호(ODNO)를 로컬 캐시에 영속화하는 라우팅 배선 100% 개통 완료.
+# 🚨 MODIFIED: [V71.05 정규장 스케줄러 라이브 주문 런타임 붕괴 수술 및 시간 인젝션]
+# - 17:05 KST에 실시간 주문(send_order)을 발송하여 전량 거절(Reject) 당하던 런타임 맹점 원천 차단.
+# - 예약 주문(send_reservation_order)으로 100% 역배선(Rewiring) 완료.
+# - 지시서의 start_time, end_time 파라미터를 다이렉트 인젝션하여 30분 압축 타임라인 락온.
 # ==========================================================
 import logging
 import datetime
@@ -187,13 +191,17 @@ async def scheduled_regular_trade(context):
                 if t not in plans: continue
                 target_orders = plans[t].get('core_orders', plans[t].get('orders', []))
                 for o in target_orders:
-                    res = await asyncio.to_thread(broker.send_order, t, o['side'], o['qty'], o['price'], o['type'])
+                    # 🚨 [라우팅 수술] send_order -> send_reservation_order 역배선 및 시간 주입
+                    res = await asyncio.to_thread(
+                        broker.send_reservation_order, 
+                        t, o['side'], o['qty'], o['price'], o['type'],
+                        start_time=o.get('start_time'), end_time=o.get('end_time')
+                    )
                     is_success = res.get('rt_cd') == '0'
                     if not is_success: all_success_map[t] = False
                     
                     odno = res.get('odno', '') if isinstance(res, dict) else ''
                     if is_success and odno:
-                        # 🚨 MODIFIED: [제13헌법 철거/재장전을 위한 락온] 예약 주문 번호 ODNO 로컬 캐시 영속화
                         await asyncio.to_thread(_save_resv_odno_sync, t, odno, o['type'], o['side'])
 
                     err_msg = res.get('msg1', '오류')
@@ -205,7 +213,12 @@ async def scheduled_regular_trade(context):
                 if t not in plans: continue
                 target_bonus = plans[t].get('bonus_orders', [])
                 for o in target_bonus:
-                    res = await asyncio.to_thread(broker.send_order, t, o['side'], o['qty'], o['price'], o['type'])
+                    # 🚨 [라우팅 수술] send_order -> send_reservation_order 역배선 및 시간 주입
+                    res = await asyncio.to_thread(
+                        broker.send_reservation_order, 
+                        t, o['side'], o['qty'], o['price'], o['type'],
+                        start_time=o.get('start_time'), end_time=o.get('end_time')
+                    )
                     is_success = res.get('rt_cd') == '0'
                     
                     odno = res.get('odno', '') if isinstance(res, dict) else ''

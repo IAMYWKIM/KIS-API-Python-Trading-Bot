@@ -20,6 +20,8 @@
 # 🚨 MODIFIED: [V51.01 소형 시드 1주 영끌 타격 락온] 예산이 1주 가격보다 작더라도 장막판 가불을 통해 무조건 1주 베이스캠프 확보 보장.
 # 🚨 MODIFIED: [V53.00 무한 재진입 락온] 0주 매수 금지(Daily Buy-Lock) 족쇄 전면 폐기 및 was_holding 데드코드 100% 소각. 전량 익절 후에도 당일 타점 도달 시 100% 재매수 강제 가동.
 # 🚨 NEW: [KIS VWAP 알고리즘 대통합 수술] 1분 단위 타임 슬라이싱 연산 및 잔차 버킷 파편화 궤적을 100% 영구 소각하고, 할당된 1회분 총 예산을 단일 KIS VWAP 덫 예약 주문 플랜으로 통짜 스냅샷 산출하여 반환하도록 아키텍처 대수술 완료.
+# 🚨 MODIFIED: [V71.05 KIS VWAP 30분 압축 타격 타임라인 락온]
+# - 종일 타격 패러독스를 방어하기 위해 지시서 생성 시 start_time(153000), end_time(155500) 파라미터를 팩트 인젝션하여 30분 압축 타임라인 확립 완료.
 # ==========================================================
 import math
 import os
@@ -260,8 +262,11 @@ class ReversionStrategy:
             q1 = math.floor(b1_budget / p1_trigger) if p1_trigger > 0 else 0
             q2 = math.floor(b2_budget / p2_trigger) if p2_trigger > 0 else 0
             
-            if q1 > 0: orders.append({"side": "BUY", "qty": q1, "price": p1_trigger, "type": "VWAP"})
-            if q2 > 0: orders.append({"side": "BUY", "qty": q2, "price": p2_trigger, "type": "VWAP"})
+            # 🚨 MODIFIED: [V71.05 KIS VWAP 30분 압축 타격 타임라인 락온]
+            start_t, end_t = "153000", "155500"
+            
+            if q1 > 0: orders.append({"side": "BUY", "qty": q1, "price": p1_trigger, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "VWAP매수(Buy1)"})
+            if q2 > 0: orders.append({"side": "BUY", "qty": q2, "price": p2_trigger, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "VWAP매수(Buy2)"})
             
             if total_q > 0:
                 max_n = 5
@@ -274,22 +279,26 @@ class ReversionStrategy:
                     if (q2 + n) > 0:
                         grid_p2 = round(b2_budget / (q2 + n), 2)
                         if grid_p2 >= 0.01 and grid_p2 < p2_trigger:
-                            orders.append({"side": "BUY", "qty": 1, "price": grid_p2, "type": "VWAP"})
+                            orders.append({"side": "BUY", "qty": 1, "price": grid_p2, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": f"VWAP줍줍({n})"})
             
         rem_qty_total = max(0, int(total_q) - int(self.executed["SELL_QTY"].get(ticker, 0)))
+        
         if rem_qty_total > 0:
+            # 🚨 MODIFIED: [V71.05 KIS VWAP 30분 압축 타격 타임라인 락온]
+            start_t, end_t = "153000", "155500"
+            
             if curr_p >= trigger_jackpot:
-                orders.append({"side": "SELL", "qty": rem_qty_total, "price": trigger_jackpot, "type": "VWAP"})
+                orders.append({"side": "SELL", "qty": rem_qty_total, "price": trigger_jackpot, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "전량대박익절"})
             else:
                 available_l1 = min(l1_qty, rem_qty_total)
                 l1_queued = 0
                 if available_l1 > 0 and curr_p >= trigger_l1:
-                    orders.append({"side": "SELL", "qty": available_l1, "price": trigger_l1, "type": "VWAP"})
+                    orders.append({"side": "SELL", "qty": available_l1, "price": trigger_l1, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "Pop1(VWAP)"})
                     l1_queued = available_l1
                     
                 available_upper = min(upper_qty, rem_qty_total - l1_queued)
                 if available_upper > 0 and trigger_upper > 0 and curr_p >= trigger_upper:
-                    orders.append({"side": "SELL", "qty": available_upper, "price": trigger_upper, "type": "VWAP"})
+                    orders.append({"side": "SELL", "qty": available_upper, "price": trigger_upper, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "Pop2(VWAP)"})
         
         plan_result = {
             "orders": orders, 
@@ -306,4 +315,3 @@ class ReversionStrategy:
 
         self._save_state(ticker)
         return plan_result
-
