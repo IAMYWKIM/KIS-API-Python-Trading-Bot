@@ -3,9 +3,10 @@
 # ==========================================================
 # (상단 주석 생략...)
 # 🚨 MODIFIED: [V72.06 V-REV 최저가순 매도 타점 통합 및 잭팟 렌더링 대수술]
-# - 코어 엔진에서 산출된 최저가순 정렬 덫(Pop1, 잔여잭팟 등)을 텔레그램 가이던스에 100% 팩트 미러링.
-# - 기존 옵션처럼 뒤에 따로 표출되던 무의미한 `[전체 잭팟] (옵션)` 렌더링 블록을 영구 소각하여 
-#   시각적 디커플링(UI 환각) 완벽 해체 완료.
+# 🚨 MODIFIED: [V72.12 UI 렌더링 팩트 교정 및 LIFO 독립 탈출 미러링]
+# - 잭팟(Jackpot) 강제 병합 및 하향 평준화 데드코드(temp_qty, target_l1_final 등) 전면 적출.
+# - 코어 엔진과 완벽히 동일한 수학적 로직으로 1층(L1)과 상위 층(Upper)을 100% 독립 렌더링 락온.
+# - 낡은 텍스트(Pop1, 잔여잭팟)를 소각하고 '1층탈출', '상위층탈출' 팩트 기반 텍스트로 오버라이드 완료.
 # ==========================================================
 import logging
 import datetime
@@ -48,7 +49,6 @@ class TelegramController:
         self.states_handler = TelegramStates(self.cfg, self.broker, self.queue_ledger, self.sync_engine)
         self.callbacks_handler = TelegramCallbacks(self.cfg, self.broker, self.strategy, self.queue_ledger, self.sync_engine, self.view, self.tx_lock)
 
-    # (...중략: _is_admin ~ _calculate_budget_allocation 유지...)
     def _is_admin(self, update: Update):
         if self.admin_id is None:
             self.admin_id = self.cfg.get_chat_id()
@@ -181,7 +181,6 @@ class TelegramController:
             
         await self.states_handler.handle_message(update, context, self)
 
-    # (...cmd_avwap, cmd_log, cmd_update, cmd_queue, cmd_add_q, cmd_clear_q, cmd_start 생략...)
     async def cmd_avwap(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update): return
         target_msg = update.callback_query.message if update.callback_query else update.message
@@ -218,7 +217,7 @@ class TelegramController:
                 matched_lines = []
                 with open(path, 'r', encoding='utf-8') as f:
                     lines = f.readlines()
-                    for line in reversed(lines):
+                for line in reversed(lines):
                         if any(k in line for k in keywords): matched_lines.append(line.strip())
                         if len(matched_lines) >= limit: break
                 return matched_lines
@@ -241,6 +240,7 @@ class TelegramController:
         status_msg = await update.message.reply_text("⏳ <b>[시스템 업데이트]</b> 깃허브 원격 서버와 통신을 시작합니다...", parse_mode='HTML')
         try:
             success, msg = await updater.pull_latest_code()
+            import html
             safe_msg = html.escape(msg)
             if success:
                 await status_msg.edit_text(f"✅ <b>[동기화 완료]</b> {safe_msg}\n\n🔄 시스템 데몬(pipiosbot)을 OS 단에서 재가동합니다. 다운타임 후 봇이 다시 깨어납니다.", parse_mode='HTML')
@@ -248,6 +248,7 @@ class TelegramController:
             else:
                 await status_msg.edit_text(f"❌ <b>[동기화 실패]</b>\n▫️ 사유: {safe_msg}", parse_mode='HTML')
         except Exception as e:
+            import html
             safe_err = html.escape(str(e))
             await status_msg.edit_text(f"🚨 <b>[치명적 오류]</b> 플러그인 호출 및 프로세스 예외 발생: {safe_err}", parse_mode='HTML')
 
@@ -525,47 +526,28 @@ class TelegramController:
                          upper_avg = upper_invested / upper_qty
                          trigger_upper = round(upper_avg * 1.005, 2)
                          
-                    temp_qty = 0
-                    temp_inv = 0.0
-                    for item in q_list:
-                        item_q = int(float(item.get('qty', 0)))
-                        if item_q == 0: continue
-                        if temp_qty + item_q <= logic_qty:
-                            temp_qty += item_q
-                            temp_inv += item_q * float(item.get('price', 0.0))
-                        else:
-                             rem = logic_qty - temp_qty
-                             if rem > 0:
-                                 temp_qty += rem
-                                 temp_inv += rem * float(item.get('price', 0.0))
-                             break
-                        
-                    pure_queue_avg = temp_inv / temp_qty if temp_qty > 0 else 0.0
-                    trigger_jackpot = round(pure_queue_avg * 1.010, 2) if pure_queue_avg > 0 else 0.0
-                    
-                    target_l1_final = min(trigger_l1, trigger_jackpot) if trigger_l1 > 0 else trigger_jackpot
-                    target_upper_final = min(trigger_upper, trigger_jackpot) if trigger_upper > 0 else trigger_jackpot
-                    
                     available_l1 = min(l1_qty, logic_qty)
                     available_upper = min(upper_qty, logic_qty - available_l1)
                     
+                    # 🚨 MODIFIED: [V72.12 UI 렌더링 팩트 교정 및 LIFO 독립 탈출 미러링]
                     sell_dict = {}
-                    if available_l1 > 0 and target_l1_final > 0:
-                        sell_dict[target_l1_final] = sell_dict.get(target_l1_final, 0) + available_l1
-                    if available_upper > 0 and target_upper_final > 0:
-                        sell_dict[target_upper_final] = sell_dict.get(target_upper_final, 0) + available_upper
+                    if available_l1 > 0 and trigger_l1 > 0:
+                        sell_dict[trigger_l1] = sell_dict.get(trigger_l1, 0) + available_l1
+                    if available_upper > 0 and trigger_upper > 0:
+                        sell_dict[trigger_upper] = sell_dict.get(trigger_upper, 0) + available_upper
                         
-                    sell_idx = 1
                     for price in sorted(sell_dict.keys()):
                         s_qty = sell_dict[price]
-                        if price == trigger_jackpot and s_qty == logic_qty:
-                            desc_str = f"전체잭팟"
-                        elif price == trigger_jackpot:
-                            desc_str = f"잔여잭팟"
+                        
+                        if price == trigger_l1 and price == trigger_upper:
+                            desc_str = "통합탈출"
+                        elif price == trigger_l1:
+                            desc_str = "1층탈출"
+                        elif price == trigger_upper:
+                            desc_str = "상위층탈출"
                         else:
-                            desc_str = f"매도{sell_idx}(Pop{sell_idx})"
+                            desc_str = "잔여탈출"
                         v_rev_guidance += f" 🔵 {desc_str} ${price:.2f} <b>{s_qty}주</b> ({tag})\n"
-                        sell_idx += 1
                 else:
                     v_rev_guidance += " 🔵 매도: 대기 물량 없음 (관망)\n"
                
@@ -584,7 +566,7 @@ class TelegramController:
                         v_rev_guidance += f" 🔴 매수2(Buy2) ${b2_price:.2f} <b>{b2_qty}주</b> ({tag})\n"
                  
                     if is_zero_start_fact:
-                          v_rev_guidance += " 🚫 <code>[0주 새출발] 기준 평단가 부재로 줍줍 생략 (1층 확보에 예산 100% 집중)</code>\n"
+                         v_rev_guidance += " 🚫 <code>[0주 새출발] 기준 평단가 부재로 줍줍 생략 (1층 확보에 예산 100% 집중)</code>\n"
                 else:
                     v_rev_guidance += " 🔴 매수 대기: 타점 연산 대기 중\n"
 
@@ -735,7 +717,6 @@ class TelegramController:
 
         await update.message.reply_text(final_msg, reply_markup=markup, parse_mode='HTML')
 
-    # (...중략: cmd_record ~ cmd_version 기능 유지...)
     async def cmd_record(self, update, context):
         if not self._is_admin(update): return
         chat_id = update.message.chat_id
