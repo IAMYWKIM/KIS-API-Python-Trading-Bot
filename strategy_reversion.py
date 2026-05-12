@@ -28,6 +28,9 @@
 # 🚨 NEW: [V71.14 예약 덫 무조건 장전 헌법 복구 및 족쇄 철거]
 # - 1분 타임 슬라이싱 시절의 잔재인 `curr_p >= trigger_l1` 가격 족쇄를 전면 적출.
 # - 예약 덫(Limit VWAP)이므로 현재가와 무관하게 100% 무조건 KIS 서버에 Pop1, Pop2 매도 덫을 깔아두도록 퀀트 제1헌법 복구 완료.
+# 🚨 MODIFIED: [V71.25 KST 타임라인 동적 래핑 수술]
+# - KIS 서버의 알고리즘 시간 요구사항(KST)에 맞춰 EST를 강제하던 맹점(152500)을 100% 영구 소각.
+# - 서머타임(DST) 적용 여부를 스캔하여 042500/045500 또는 052500/055500을 동적으로 주입하는 무결점 아키텍처 이식.
 # ==========================================================
 import math
 import os
@@ -168,7 +171,7 @@ class ReversionStrategy:
         
         if pure_qty != legacy_q:
             logging.warning(f"⚠️ [{ticker}] V-REV 페일세이프 경고: KIS 순수 본대 수량({pure_qty}주)과 이월 큐 장부 수량({legacy_q}주) 불일치 감지. CALIB 비파괴 보정 또는 수동 동기화 요망.")
-            
+        
         logging.warning(f"🚨 [{ticker}] V_REV 스냅샷 증발 감지! 페일세이프 긴급 복원 가동 (KIS총잔고:{total_kis_qty} - 암살자:{avwap_qty} = 본대:{pure_qty}주 | 이월 큐 장부:{legacy_q}주)")
         
         return self.get_dynamic_plan(
@@ -247,8 +250,8 @@ class ReversionStrategy:
             p2_trigger = round(prev_c * 0.9725, 2)
 
         if total_q > 0:
-            active_sell_targets = [t for t in [trigger_jackpot, trigger_l1, trigger_upper] if t > 0]
-            if active_sell_targets:
+             active_sell_targets = [t for t in [trigger_jackpot, trigger_l1, trigger_upper] if t > 0]
+             if active_sell_targets:
                 min_sell = min(active_sell_targets)
                 if p1_trigger >= min_sell:
                     p1_trigger = max(0.01, round(min_sell - 0.01, 2))
@@ -261,15 +264,19 @@ class ReversionStrategy:
         total_spent = float(self.executed["BUY_BUDGET"].get(ticker, 0.0))
         rem_budget = max(0.0, float(alloc_cash) - total_spent)
         
+        # 🚨 MODIFIED: [V71.25 KST 타임라인 동적 래핑 수술]
+        # KIS 서버가 요구하는 KST 시간에 맞춰 서머타임(DST) 적용 여부를 스캔하고 동적 주입합니다.
+        est_tz_check = ZoneInfo('America/New_York')
+        is_dst_active = bool(datetime.now(est_tz_check).dst())
+        start_t = "042500" if is_dst_active else "052500"
+        end_t = "045500" if is_dst_active else "055500"
+
         if rem_budget > 0:
             b1_budget = rem_budget * 0.5
             b2_budget = rem_budget - b1_budget
             
             q1 = math.floor(b1_budget / p1_trigger) if p1_trigger > 0 else 0
             q2 = math.floor(b2_budget / p2_trigger) if p2_trigger > 0 else 0
-            
-            # 🚨 MODIFIED: [V71.13 런타임 붕괴 방어 및 타임라인 전진 배치 수술]
-            start_t, end_t = "152500", "155500"
             
             if q1 > 0: orders.append({"side": "BUY", "qty": q1, "price": p1_trigger, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "VWAP매수(Buy1)"})
             if q2 > 0: orders.append({"side": "BUY", "qty": q2, "price": p2_trigger, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "VWAP매수(Buy2)"})
@@ -281,7 +288,7 @@ class ReversionStrategy:
                     if required_n > 5:
                         max_n = min(required_n, 50)
                 
-                for n in range(1, max_n + 1):
+                 for n in range(1, max_n + 1):
                     if (q2 + n) > 0:
                         grid_p2 = round(b2_budget / (q2 + n), 2)
                         if grid_p2 >= 0.01 and grid_p2 < p2_trigger:
@@ -290,9 +297,6 @@ class ReversionStrategy:
         rem_qty_total = max(0, int(total_q) - int(self.executed["SELL_QTY"].get(ticker, 0)))
         
         if rem_qty_total > 0:
-            # 🚨 MODIFIED: [V71.13 런타임 붕괴 방어 및 타임라인 전진 배치 수술]
-            start_t, end_t = "152500", "155500"
-            
             # 🚨 MODIFIED: [V71.14 예약 덫 무조건 장전 헌법 복구]
             # 과거 1분 타격 시절의 잔재인 `curr_p >= target` 족쇄 전면 철거.
             # 예약 덫이므로 현재가와 무관하게 무조건 KIS 서버에 Pop1/Pop2 분할로 깔아두어 지정가 도달 시 체결되도록 100% 해방.
@@ -307,7 +311,7 @@ class ReversionStrategy:
                 orders.append({"side": "SELL", "qty": available_upper, "price": trigger_upper, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "Pop2(VWAP)"})
         
         plan_result = {
-            "orders": orders, 
+             "orders": orders, 
             "trigger_loc": False, 
             "total_q": total_q,
             "is_zero_start": is_zero_start_session

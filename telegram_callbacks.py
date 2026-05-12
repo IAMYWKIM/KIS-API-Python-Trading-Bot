@@ -37,6 +37,9 @@
 # 🚨 MODIFIED: [V71.24 일반주문 VWAP 팩트 롤백 대수술]
 # - KST 기반 지연 격발 엔진, 1시간 단위 타임 시프트(Time-Shift), 타임존 변환 데드코드를 전면 소각 완료.
 # - 코어 엔진이 지시서에 주입해준 EST 시간(152500, 155500)을 일반주문망으로 즉시 직결(Direct Pass)하는 팩트 락온 진공 압축.
+# 🚨 MODIFIED: [V71.26 KST 타임라인 동적 래핑 수술]
+# - 수동 주문(EXEC) 라우터 내에 폴백(Fallback)으로 방치되어 있던 '152500' 등 EST 하드코딩 찌꺼기를 100% 영구 소각.
+# - 퀀트 엔진이 서머타임을 판독하여 주입한 KST 팩트 시간만을 다이렉트 패스하도록 무결점 역배선 개통 완료.
 # ==========================================================
 import logging
 import datetime
@@ -400,7 +403,6 @@ class TelegramCallbacks:
                     logging.error(f"📸 👑 졸업 이미지 생성/발송 실패: {e}")
                     await query.edit_message_text("❌ 이미지 생성 중 오류가 발생했습니다.", parse_mode='HTML')
             
-        # 🚨 MODIFIED: [V71.24 일반주문 VWAP 팩트 롤백 대수술]
         elif action == "EXEC":
             t = sub
             ver = await asyncio.to_thread(self.cfg.get_version, t)
@@ -467,17 +469,16 @@ class TelegramCallbacks:
             msg = title
             all_success = True
        
-            # 🚨 MODIFIED: [V71.24 일반주문 VWAP 팩트 롤백 대수술]
-            # 지연 격발(Delayed Execution), 타임 시프트(Time-Shift), KST 동적 변환 등 거대한 데드코드를 흔적도 없이 100% 영구 소각.
-            # 코어 엔진이 지시서(plan)에 담아준 미국 현지 시간(EST)을 추출하여 일반주문망에 다이렉트 패스(Direct Pass)하도록 진공 압축.
             target_orders = plan.get('core_orders', plan.get('orders', []))
             
             for o in target_orders:
+                # 🚨 MODIFIED: [V71.26 KST 타임라인 동적 래핑 수술]
+                # 코어 엔진이 지시서에 주입해준 KST 팩트 타임을 순수하게 다이렉트 패스(Direct Pass)
                 if o['type'] == "VWAP":
                     res = await asyncio.to_thread(
                         self.broker.send_order, 
                         t, o['side'], o['qty'], o['price'], o['type'],
-                        start_time=o.get('start_time', '152500'), end_time=o.get('end_time', '155500')
+                        start_time=o.get('start_time'), end_time=o.get('end_time')
                     )
                 else:
                     res = await asyncio.to_thread(
@@ -496,11 +497,13 @@ class TelegramCallbacks:
             
             target_bonus = plan.get('bonus_orders', [])
             for o in target_bonus:
+                # 🚨 MODIFIED: [V71.26 KST 타임라인 동적 래핑 수술]
+                # 코어 엔진이 지시서에 주입해준 KST 팩트 타임을 순수하게 다이렉트 패스(Direct Pass)
                 if o['type'] == "VWAP":
                     res = await asyncio.to_thread(
                         self.broker.send_order, 
                         t, o['side'], o['qty'], o['price'], o['type'],
-                        start_time=o.get('start_time', '152500'), end_time=o.get('end_time', '155500')
+                        start_time=o.get('start_time'), end_time=o.get('end_time')
                     )
                 else:
                     res = await asyncio.to_thread(

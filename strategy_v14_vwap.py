@@ -13,6 +13,9 @@
 # 🚨 MODIFIED: [V71.09 30분 압축 타임라인 팩트 교정]
 # - V14 VWAP의 덫 주문 시 start_time("152500")과 end_time("155500") 파라미터가 누락된 데이터 기아 현상 해결 및 종일 타격 패러독스 원천 차단.
 # - 코드 내부의 들여쓰기 붕괴(IndentationError) 팩트 교정.
+# 🚨 MODIFIED: [V71.25 KST 타임라인 동적 래핑 수술]
+# - KIS 서버의 알고리즘 시간 요구사항(KST)에 맞춰 EST를 강제하던 맹점(152500)을 100% 영구 소각.
+# - 서머타임(DST) 적용 여부를 스캔하여 042500/045500 또는 052500/055500을 동적으로 주입하는 무결점 아키텍처 이식.
 # ==========================================================
 import math
 import logging
@@ -211,8 +214,13 @@ class V14VwapStrategy:
         process_status = "예방적방어선"
         is_zero_start_fact = False
         
-        # 🚨 MODIFIED: [V71.09 30분 압축 타임라인 팩트 교정] 종일 타격 패러독스 차단을 위한 시간 인젝션
-        start_t, end_t = "152500", "155500"
+        # 🚨 MODIFIED: [V71.25 KST 타임라인 동적 래핑 수술]
+        # KIS 서버의 알고리즘 시간 요구사항(KST)에 맞춰 EST를 강제하던 맹점(152500)을 100% 영구 소각.
+        # 서머타임(DST) 적용 여부를 스캔하여 042500/045500 또는 052500/055500을 동적으로 주입하는 무결점 아키텍처 이식.
+        est_tz_check = ZoneInfo('America/New_York')
+        is_dst_active = bool(datetime.now(est_tz_check).dst())
+        start_t = "042500" if is_dst_active else "052500"
+        end_t = "045500" if is_dst_active else "055500"
 
         # MODIFIED: [KIS VWAP 알고리즘 대통합 수술] 1분 단위 타임 슬라이싱 연산을 소각하고 단일 KIS VWAP 덫 예약 주문(type: "VWAP") 플랜으로 통짜 반환
         if qty == 0:
