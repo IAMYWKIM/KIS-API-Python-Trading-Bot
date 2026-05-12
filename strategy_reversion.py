@@ -3,7 +3,7 @@
 # ==========================================================
 # 🚨 MODIFIED: [V-REV 추세장 LOC 스위칭 침묵 버그 및 상태 증발 완벽 수술]
 # get_dynamic_plan 엔진이 60% 거래량 지배력을 감지하고 LOC 방어선으로 전환(trigger_loc)할 때, 
-# 상태 파일 저장을 누락한 채 루프를 탈출하여 봇이 영구 기절하던 치명적 맹점 원천 차단. 
+# 상태 파일 저장을 누락한 채 루프 탈출하여 봇이 영구 기절하던 치명적 맹점 원천 차단. 
 # return 직전에 self._save_state(ticker)를 강제 주입하여 팩트 박제 및 락온 완료.
 # MODIFIED: [V44.27 0주 스냅샷 환각 락온] 서버 재시작으로 인메모리 스냅샷이 소실되었을 때, VWAP이 장중 매수한 로트를 기보유 물량으로 오판하여 매도를 재개(하극상)하던 맹점 원천 차단. 큐 장부에서 당일 날짜(EST)의 로트를 100% 도려내고 오직 어제까지 이월된 순수 과거 물량만을 스캔하여 '0주 새출발' 상태를 완벽히 팩트 복구하는 타임머신 역산 엔진 이식 완료.
 # MODIFIED: [V44.25 예산 탈취(Stealing) 런타임 붕괴 방어막 이식] Buy1이 Buy2의 미사용 예산을 훔쳐와 무한 타격(34주 체결 등)하는 차원 붕괴를 영구 소각.
@@ -31,6 +31,8 @@
 # 🚨 MODIFIED: [V71.25 KST 타임라인 동적 래핑 수술]
 # - KIS 서버의 알고리즘 시간 요구사항(KST)에 맞춰 EST를 강제하던 맹점(152500)을 100% 영구 소각.
 # - 서머타임(DST) 적용 여부를 스캔하여 042500/045500 또는 052500/055500을 동적으로 주입하는 무결점 아키텍처 이식.
+# 🚨 MODIFIED: [V71.27 런타임 붕괴 수술]
+# - `for n in range(1, max_n + 1):` 라인에 침투한 IndentationError(들여쓰기) 불일치 팩트 교정 완료.
 # ==========================================================
 import math
 import os
@@ -43,7 +45,6 @@ from zoneinfo import ZoneInfo
 class ReversionStrategy:
     def __init__(self, config):
         self.cfg = config
-        # MODIFIED: [잔차 버킷 파편화 궤적 영구 소각] 1분 단위 슬라이싱용 잔차 버킷 철거 완료
         self.residual = {}
         self.executed = {"BUY_BUDGET": {}, "SELL_QTY": {}}
         self.state_loaded = {}
@@ -91,7 +92,7 @@ class ReversionStrategy:
         state_file = self._get_state_file(ticker)
         data = {
             "date": today_str,
-            "residual": {}, # MODIFIED: 잔차 버킷 소각에 따른 빈 딕셔너리 락온
+            "residual": {},
             "executed": {
                 "BUY_BUDGET": float(self.executed.get("BUY_BUDGET", {}).get(ticker, 0.0)),
                 "SELL_QTY": int(self.executed.get("SELL_QTY", {}).get(ticker, 0))
@@ -117,7 +118,6 @@ class ReversionStrategy:
                     pass
 
     def refund_residual(self, ticker, bucket, refund_value):
-        # MODIFIED: 잔차 버킷 소각에 따라 환불 로직 바이패스 락온
         pass
 
     def save_daily_snapshot(self, ticker, plan_data):
@@ -171,7 +171,7 @@ class ReversionStrategy:
         
         if pure_qty != legacy_q:
             logging.warning(f"⚠️ [{ticker}] V-REV 페일세이프 경고: KIS 순수 본대 수량({pure_qty}주)과 이월 큐 장부 수량({legacy_q}주) 불일치 감지. CALIB 비파괴 보정 또는 수동 동기화 요망.")
-        
+            
         logging.warning(f"🚨 [{ticker}] V_REV 스냅샷 증발 감지! 페일세이프 긴급 복원 가동 (KIS총잔고:{total_kis_qty} - 암살자:{avwap_qty} = 본대:{pure_qty}주 | 이월 큐 장부:{legacy_q}주)")
         
         return self.get_dynamic_plan(
@@ -188,7 +188,6 @@ class ReversionStrategy:
         )
 
     def reset_residual(self, ticker):
-        # MODIFIED: 잔차 버킷 소각에 따라 리셋 로직 바이패스 락온
         pass
 
     def record_execution(self, ticker, side, qty, exec_price):
@@ -260,23 +259,21 @@ class ReversionStrategy:
 
         orders = []
 
-        # MODIFIED: [KIS VWAP 알고리즘 대통합 수술] 타임 슬라이싱 분할 블록 소각 및 통짜 플랜 락온
         total_spent = float(self.executed["BUY_BUDGET"].get(ticker, 0.0))
         rem_budget = max(0.0, float(alloc_cash) - total_spent)
         
-        # 🚨 MODIFIED: [V71.25 KST 타임라인 동적 래핑 수술]
-        # KIS 서버가 요구하는 KST 시간에 맞춰 서머타임(DST) 적용 여부를 스캔하고 동적 주입합니다.
-        est_tz_check = ZoneInfo('America/New_York')
-        is_dst_active = bool(datetime.now(est_tz_check).dst())
-        start_t = "042500" if is_dst_active else "052500"
-        end_t = "045500" if is_dst_active else "055500"
-
         if rem_budget > 0:
             b1_budget = rem_budget * 0.5
             b2_budget = rem_budget - b1_budget
             
             q1 = math.floor(b1_budget / p1_trigger) if p1_trigger > 0 else 0
             q2 = math.floor(b2_budget / p2_trigger) if p2_trigger > 0 else 0
+            
+            # 🚨 MODIFIED: [V71.25 KST 타임라인 동적 래핑 수술]
+            est_tz_check = ZoneInfo('America/New_York')
+            is_dst_active = bool(datetime.now(est_tz_check).dst())
+            start_t = "042500" if is_dst_active else "052500"
+            end_t = "045500" if is_dst_active else "055500"
             
             if q1 > 0: orders.append({"side": "BUY", "qty": q1, "price": p1_trigger, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "VWAP매수(Buy1)"})
             if q2 > 0: orders.append({"side": "BUY", "qty": q2, "price": p2_trigger, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "VWAP매수(Buy2)"})
@@ -288,7 +285,7 @@ class ReversionStrategy:
                     if required_n > 5:
                         max_n = min(required_n, 50)
                 
-                 for n in range(1, max_n + 1):
+                for n in range(1, max_n + 1):
                     if (q2 + n) > 0:
                         grid_p2 = round(b2_budget / (q2 + n), 2)
                         if grid_p2 >= 0.01 and grid_p2 < p2_trigger:
@@ -297,9 +294,11 @@ class ReversionStrategy:
         rem_qty_total = max(0, int(total_q) - int(self.executed["SELL_QTY"].get(ticker, 0)))
         
         if rem_qty_total > 0:
-            # 🚨 MODIFIED: [V71.14 예약 덫 무조건 장전 헌법 복구]
-            # 과거 1분 타격 시절의 잔재인 `curr_p >= target` 족쇄 전면 철거.
-            # 예약 덫이므로 현재가와 무관하게 무조건 KIS 서버에 Pop1/Pop2 분할로 깔아두어 지정가 도달 시 체결되도록 100% 해방.
+            est_tz_check = ZoneInfo('America/New_York')
+            is_dst_active = bool(datetime.now(est_tz_check).dst())
+            start_t = "042500" if is_dst_active else "052500"
+            end_t = "045500" if is_dst_active else "055500"
+            
             available_l1 = min(l1_qty, rem_qty_total)
             l1_queued = 0
             if available_l1 > 0 and trigger_l1 > 0:
