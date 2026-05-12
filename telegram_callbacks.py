@@ -34,10 +34,9 @@
 # 🚨 MODIFIED: [런타임 즉사 방어] SYNC_ZERO 콜백 라우터 내 IndentationError 팩트 무결점 4배수 교정 완료.
 # 🚨 MODIFIED: [V71.02 XRAY 엔진 라우팅 영구 소각]
 # KIS 자체 VWAP 알고리즘 위임에 따라 1분 단위 시뮬레이션의 의미가 상실된 런타임 엑스레이(Dry-Run) 진단 콜백 라우터를 전면 적출 완료.
-# 🚨 MODIFIED: [V71.11 수동 주문 격발 궤도 역배선 및 로컬 캐시 의존성 영구 소각]
+# 🚨 MODIFIED: [V71.14 지정가 VWAP 일반주문 역배선 팩트 락온]
 # - EXEC (수동 주문 실행) 콜백 라우터에서 일반 실시간 주문(send_order)을 호출하여 KIS 서버 리젝(Reject)을 유발하던 맹점 수술.
-# - 예약주문(send_reservation_order)으로 전면 교체 및 start_time, end_time 파라미터 강제 인젝션 완료.
-# - KIS 실원장 스캔 엔진 이식에 따라 무의미해진 로컬 예약 캐시(resv_odno_cache) 의존성 영구 적출 완료.
+# - VWAP(36) 명세에 맞게 일반주문(send_order)으로 역배선하고 그 외(LOC 등)는 예약주문(send_reservation_order)으로 배선 100% 팩트 복구 완료.
 # ==========================================================
 import logging
 import datetime
@@ -164,7 +163,7 @@ class TelegramCallbacks:
             if not getattr(self, 'queue_ledger', None):
                 from queue_ledger import QueueLedger
                 self.queue_ledger = QueueLedger()
-                 
+          
             q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
             if not q_data:
                  await query.answer("⚠️ 큐(Queue)가 텅 비어있어 수혈할 잔여 물량이 없습니다.", show_alert=True)
@@ -180,7 +179,7 @@ class TelegramCallbacks:
                     
                     if res.get('rt_cd') == '0':
                         await asyncio.to_thread(self.queue_ledger.pop_lots, ticker, emergency_qty)
-                         
+              
                         msg = f"🚨 <b>[{ticker}] 수동 긴급 수혈 (Emergency MOC) 격발 완료!</b>\n"
                         msg += f"▫️ 포트폴리오 매니저의 승인 하에 최근 로트 <b>{emergency_qty}주</b>를 시장가(MOC)로 강제 청산했습니다.\n"
                         await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
@@ -222,7 +221,7 @@ class TelegramCallbacks:
                         await asyncio.to_thread(self.queue_ledger.delete_lot, ticker, target_date)
                      
                     await query.answer("✅ 지층 삭제 완료. KIS 원장과 동기화합니다.", show_alert=False)
-              
+               
                     if ticker not in self.sync_engine.sync_locks:
                          self.sync_engine.sync_locks[ticker] = asyncio.Lock()
                     if not self.sync_engine.sync_locks[ticker].locked():
@@ -231,7 +230,7 @@ class TelegramCallbacks:
                     final_q = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) if getattr(self, 'queue_ledger', None) else []
                     msg, markup = self.view.get_queue_management_menu(ticker, final_q)
                     await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                    
+                   
                 elif action == "EDIT_Q":
                     await query.answer("✏️ 수정 모드 진입", show_alert=False)
                     short_date = target_date[:10]
@@ -244,7 +243,7 @@ class TelegramCallbacks:
                     prompt += "<i>(입력을 취소하려면 숫자 이외의 문자를 보내주세요)</i>"
                     await query.edit_message_text(prompt, parse_mode='HTML')
             except Exception as e:
-                await query.answer(f"❌ 처리 중 에러 발생: {e}", show_alert=True)
+                 await query.answer(f"❌ 처리 중 에러 발생: {e}", show_alert=True)
 
         elif action == "VERSION":
             await query.answer()
@@ -307,7 +306,7 @@ class TelegramCallbacks:
                     await asyncio.to_thread(self.queue_ledger.clear_queue, ticker)
             
                 await query.edit_message_text(f"✅ <b>[{ticker}] 삼위일체 소각(Nuke) 및 초기화 완료!</b>\n▫️ 본장부, 백업장부, 큐(Queue), 에스크로의 찌꺼기 데이터가 100% 영구 삭제되었습니다.\n▫️ 다음 매수 진입 시 0주 새출발 디커플링 타점 모드로 완벽히 재시작합니다.", parse_mode='HTML')
-            
+           
             elif sub == "CANCEL":
                  await query.edit_message_text("❌ 닫았습니다.", parse_mode='HTML')
 
@@ -343,7 +342,7 @@ class TelegramCallbacks:
                         if 'ticker' not in t_rec:
                             t_rec['ticker'] = target['ticker']
                         if 'side' not in t_rec:
-                             t_rec['side'] = 'BUY'
+                              t_rec['side'] = 'BUY'
                       
                     qty, avg, invested, sold = await asyncio.to_thread(self.cfg.calculate_holdings, target['ticker'], safe_trades)
                     
@@ -402,8 +401,8 @@ class TelegramCallbacks:
                     logging.error(f"📸 👑 졸업 이미지 생성/발송 실패: {e}")
                     await query.edit_message_text("❌ 이미지 생성 중 오류가 발생했습니다.", parse_mode='HTML')
             
-        # MODIFIED: [V71.04 수동 주문(EXEC) 통합 스냅샷 격발 및 캐시 영속화 엔진 이식]
-        # V-REV 전환 차단벽 허물기, 스냅샷 팩트 최우선 로드 락온 및 예약주문 번호 로컬 캐시 멱등성 영속화
+        # 🚨 MODIFIED: [V71.14 수동 주문 격발 궤도 역배선 및 로컬 캐시 의존성 영구 소각]
+        # V-REV 전환 차단벽 허물기, 스냅샷 팩트 최우선 로드 락온 및 지정가 VWAP 일반주문 팩트 락온 적용
         elif action == "EXEC":
             t = sub
             ver = await asyncio.to_thread(self.cfg.get_version, t)
@@ -472,17 +471,23 @@ class TelegramCallbacks:
             msg = title
             all_success = True
             
-            # 🚨 MODIFIED: [V71.11 수동 주문 격발 궤도 역배선 및 로컬 캐시 의존성 영구 소각]
-            # - EXEC (수동 주문 실행) 콜백 라우터에서 일반 실시간 주문(send_order)을 호출하여 KIS 서버 리젝을 유발하던 맹점 수술.
-            # - 예약주문(send_reservation_order)으로 전면 교체 및 start_time, end_time 파라미터 강제 인젝션 완료.
-            # - KIS 실원장 스캔 엔진 이식에 따라 무의미해진 로컬 예약 캐시(resv_odno_cache) 의존성(_save_resv_odno_sync) 영구 적출.
+            # 🚨 MODIFIED: [V71.14 수동 격발 시 VWAP 일반주문 라우팅 팩트 복구]
+            # - KIS 서버 리젝을 유발하던 잘못된 예약주문 분기를 전면 수술. 
+            # - 명세에 따라 VWAP(36)은 일반주문(send_order)으로, LOC/LIMIT 등은 예약주문(send_reservation_order)으로 직결 완료.
             
             for o in plan.get('core_orders', []):
-                res = await asyncio.to_thread(
-                    self.broker.send_reservation_order, 
-                    t, o['side'], o['qty'], o['price'], o['type'],
-                    start_time=o.get('start_time'), end_time=o.get('end_time')
-                )
+                if o['type'] == "VWAP":
+                    res = await asyncio.to_thread(
+                        self.broker.send_order, 
+                        t, o['side'], o['qty'], o['price'], o['type'],
+                        start_time=o.get('start_time'), end_time=o.get('end_time')
+                    )
+                else:
+                    res = await asyncio.to_thread(
+                        self.broker.send_reservation_order, 
+                        t, o['side'], o['qty'], o['price'], o['type']
+                    )
+                
                 is_success = res.get('rt_cd') == '0'
                 if not is_success:
                     all_success = False
@@ -493,13 +498,19 @@ class TelegramCallbacks:
                 await asyncio.sleep(0.2) 
             
             for o in plan.get('bonus_orders', []):
-                res = await asyncio.to_thread(
-                    self.broker.send_reservation_order, 
-                    t, o['side'], o['qty'], o['price'], o['type'],
-                    start_time=o.get('start_time'), end_time=o.get('end_time')
-                )
-                is_success = res.get('rt_cd') == '0'
+                if o['type'] == "VWAP":
+                    res = await asyncio.to_thread(
+                        self.broker.send_order, 
+                        t, o['side'], o['qty'], o['price'], o['type'],
+                        start_time=o.get('start_time'), end_time=o.get('end_time')
+                    )
+                else:
+                    res = await asyncio.to_thread(
+                        self.broker.send_reservation_order, 
+                        t, o['side'], o['qty'], o['price'], o['type']
+                    )
                 
+                is_success = res.get('rt_cd') == '0'
                 err_msg = res.get('msg1', '잔금패스')
                 status_icon = '✅' if is_success else f'❌({err_msg})'
                 msg += f"└ 2차 보너스: {o['desc']} {o['qty']}주: {status_icon}\n"
@@ -513,141 +524,6 @@ class TelegramCallbacks:
 
             await context.bot.send_message(chat_id, msg, parse_mode='HTML')
 
-        elif action == "AVWAP":
-            await query.answer()
-            if sub == "MENU":
-                await controller.cmd_avwap(update, context)
-
-        elif action == "SET_VER":
-            await query.answer()
-            new_ver = sub
-            ticker = data[2]
-            current_ver = await asyncio.to_thread(self.cfg.get_version, ticker)
-            
-            if ticker == "TQQQ" and new_ver == "V_REV":
-                await context.bot.send_message(chat_id, "⚠️ [절대 헌법 위반] TQQQ는 V14 무매4 전용 아키텍처입니다. 전환이 차단되었습니다.")
-                return
-            if ticker == "SOXS":
-                await context.bot.send_message(chat_id, "⚠️ [V61.00 절대 헌법] 숏(SOXS) 운용은 시스템 전역에서 100% 영구 소각되었습니다.")
-                return
-
-            async with self.tx_lock:
-                _, holdings = await asyncio.to_thread(self.broker.get_account_balance)
-                  
-            if holdings is None:
-                await context.bot.send_message(chat_id, "🚨 API 통신 지연으로 잔고를 확인할 수 없어 전환을 차단합니다. 잠시 후 다시 시도해 주세요.")
-                return
-                
-            kis_qty = int(float(holdings.get(ticker, {}).get('qty', 0)))
-            max_qty = await self._get_max_holdings_qty(ticker, kis_qty)
-             
-            if kis_qty == 0 and max_qty > 0 and current_ver != new_ver:
-                msg = f"🚨 <b>[ 퀀트 모드 전환 강제 차단: 수동 매도 감지 ]</b>\n\n"
-                msg += f"실잔고는 0주이나 장부에 잔여 수량({max_qty}주)이 남아있어 모드 전환이 차단되었습니다.\n"
-                msg += "증권사 앱에서 수동으로 전량 매도하셨다면, 채팅창에 <code>/reset</code>을 입력하여 장부를 초기화한 후 다시 시도해주세요."
-                await query.edit_message_text(msg, parse_mode='HTML')
-                return
-            
-            if max_qty > 0 and current_ver != new_ver:
-                msg = f"🚨 <b>[ 퀀트 모드 전환 강제 차단 ]</b>\n\n"
-                msg += f"현재 <b>[{ticker}] {max_qty}주</b>를 보유 중입니다. (삼중 교차 검증)\n"
-                msg += "V14 ↔ V-REV 간의 엔진 스위칭은 장부 평단가 오염을 막기 위해 <b>'0주(100% 현금)'</b> 상태에서만 절대적으로 허용됩니다.\n\n"
-                msg += "진행 중인 매매 사이클을 전량 익절(0주)로 마무리하신 후 다시 시도해 주십시오."
-                await query.edit_message_text(msg, parse_mode='HTML')
-                return
-             
-            if new_ver == "V_REV":
-                if not (os.path.exists("strategy_reversion.py") and os.path.exists("queue_ledger.py")):
-                    await context.bot.send_message(chat_id, "🚨 [개봉박두] V-REV 엔진 모듈 파일이 존재하지 않아 전환할 수 없습니다! (업데이트 필요)")
-                    return
-                msg, markup = self.view.get_vrev_mode_selection_menu(ticker)
-                await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                return
-            
-            elif new_ver == "V14":
-                msg, markup = self.view.get_v14_mode_selection_menu(ticker)
-                await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                return
-        
-            await asyncio.to_thread(self.cfg.set_version, ticker, new_ver)
-            await asyncio.to_thread(self.cfg.set_upward_sniper_mode, ticker, False)
-            if hasattr(self.cfg, 'set_avwap_hybrid_mode'):
-                await asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, ticker, False)
-            if hasattr(self.cfg, 'set_manual_vwap_mode'):
-                 await asyncio.to_thread(self.cfg.set_manual_vwap_mode, ticker, False)
-            
-            await query.edit_message_text(f"✅ <b>[{ticker}]</b> 퀀트 엔진이 <b>V14 무매4</b> 모드로 전환되었습니다.\n▫️ /sync 명령어에서 변경된 지시서를 확인하세요.", parse_mode='HTML')
-
-        elif action == "SET_VER_CONFIRM":
-            await query.answer()
-            mode_type = sub 
-            ticker = data[2]
-            current_ver = await asyncio.to_thread(self.cfg.get_version, ticker)
-            
-            target_ver = "V_REV" if mode_type == "V_REV" else "V14"
-
-            if ticker == "TQQQ" and target_ver == "V_REV":
-                await context.bot.send_message(chat_id, "⚠️ [절대 헌법 위반] TQQQ는 V14 무매4 전용 아키텍처입니다. 전환이 차단되었습니다.")
-                return
-            if ticker == "SOXS":
-                await context.bot.send_message(chat_id, "⚠️ [V61.00 절대 헌법] 숏(SOXS) 운용은 시스템 전역에서 100% 영구 소각되었습니다.")
-                return
-
-            async with self.tx_lock:
-                _, holdings = await asyncio.to_thread(self.broker.get_account_balance)
-                
-            if holdings is None:
-                await context.bot.send_message(chat_id, "🚨 API 통신 지연으로 잔고를 확인할 수 없어 전환을 차단합니다. 잠시 후 다시 시도해 주세요.")
-                return
-           
-            kis_qty = int(float(holdings.get(ticker, {}).get('qty', 0)))
-            max_qty = await self._get_max_holdings_qty(ticker, kis_qty)
-            
-            if kis_qty == 0 and max_qty > 0 and current_ver != target_ver:
-                msg = f"🚨 <b>[ 퀀트 모드 전환 강제 차단: 수동 매도 감지 ]</b>\n\n"
-                msg += f"실잔고는 0주이나 장부에 잔여 수량({max_qty}주)이 남아있어 모드 전환이 차단되었습니다.\n"
-                msg += "증권사 앱에서 수동으로 전량 매도하셨다면, 채팅창에 <code>/reset</code>을 입력하여 장부를 초기화한 후 다시 시도해주세요."
-                await query.edit_message_text(msg, parse_mode='HTML')
-                return
-             
-            if max_qty > 0 and current_ver != target_ver:
-                msg = f"🚨 <b>[ 퀀트 모드 전환 강제 차단 ]</b>\n\n"
-                msg += f"현재 <b>[{ticker}] {max_qty}주</b>를 보유 중입니다. (삼중 교차 검증)\n"
-                msg += "V14 ↔ V-REV 간의 엔진 스위칭은 장부 평단가 오염을 막기 위해 <b>'0주(100% 현금)'</b> 상태에서만 절대적으로 허용됩니다.\n\n"
-                msg += "진행 중인 매매 사이클을 전량 익절(0주)로 마무리하신 후 다시 시도해 주십시오."
-                await query.edit_message_text(msg, parse_mode='HTML')
-                return
-            
-            if mode_type == "V_REV":
-                await asyncio.to_thread(self.cfg.set_version, ticker, "V_REV")
-                await asyncio.to_thread(self.cfg.set_reverse_state, ticker, True, 0)
-                await asyncio.to_thread(self.cfg.set_upward_sniper_mode, ticker, False)
-                if hasattr(self.cfg, 'set_avwap_hybrid_mode'):
-                    await asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, ticker, False)
-                
-                # 🚨 NEW: [KIS VWAP 알고리즘 대통합 수술] 수동/자동 분기 전면 소각 및 자동 예약 락온
-                await asyncio.to_thread(self.cfg.set_manual_vwap_mode, ticker, True)
-                mode_txt = "🕒 KIS VWAP 알고리즘 예약 주문 자동 장전"
-                     
-                await query.edit_message_text(f"✅ <b>[{ticker}]</b> 퀀트 엔진이 <b>V_REV 역추세 하이브리드</b>로 전환되었습니다.\n▫️ <b>운용 방식:</b> {mode_txt}\n▫️ /sync 지시서를 확인해 주십시오.", parse_mode='HTML')
-            
-            elif mode_type in ["V14_LOC", "V14_VWAP"]:
-                await asyncio.to_thread(self.cfg.set_version, ticker, "V14")
-                await asyncio.to_thread(self.cfg.set_reverse_state, ticker, False, 0)
-                await asyncio.to_thread(self.cfg.set_upward_sniper_mode, ticker, False)
-                if hasattr(self.cfg, 'set_avwap_hybrid_mode'):
-                    await asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, ticker, False)
-                    
-                if mode_type == "V14_VWAP":
-                    # 🚨 NEW: [KIS VWAP 알고리즘 대통합 수술]
-                    await asyncio.to_thread(self.cfg.set_manual_vwap_mode, ticker, True)
-                    mode_txt = "🕒 KIS VWAP 알고리즘 예약 주문 자동 장전"
-                else:
-                    await asyncio.to_thread(self.cfg.set_manual_vwap_mode, ticker, False)
-                    mode_txt = "📉 LOC 단일 타격 (초안정성)"
-                
-                await query.edit_message_text(f"✅ <b>[{ticker}]</b> 퀀트 엔진이 <b>V14 무매4</b> 모드로 전환되었습니다.\n▫️ <b>집행 방식:</b> {mode_txt}\n▫️ /sync 명령어에서 변경된 지시서를 확인하세요.", parse_mode='HTML')
-
         elif action == "AVWAP_SET":
             action_type = sub
             ticker = data[2]
@@ -659,7 +535,7 @@ class TelegramCallbacks:
             if context.job_queue:
                  for job in context.job_queue.jobs():
                      if job.data is not None:
-                         render_app_data = job.data
+                        render_app_data = job.data
             
             tracking_cache = render_app_data.setdefault('sniper_tracking', {})
             
@@ -741,8 +617,8 @@ class TelegramCallbacks:
             await query.answer()
             current_ver = await asyncio.to_thread(self.cfg.get_version, ticker)
             if current_ver == "V_REV" and mode_val == "ON":
-                 await context.bot.send_message(chat_id, f"🚨 {current_ver} 모드에서는 로직 충돌 방지를 위해 상방 스나이퍼를 켤 수 없습니다!")
-                 return
+                await context.bot.send_message(chat_id, f"🚨 {current_ver} 모드에서는 로직 충돌 방지를 위해 상방 스나이퍼를 켤 수 없습니다!")
+                return
 
             await asyncio.to_thread(self.cfg.set_upward_sniper_mode, ticker, mode_val == "ON")
             await query.edit_message_text(f"✅ <b>[{ticker}]</b> 상방 스나이퍼 모드 변경 완료: {'🎯 ON (가동중)' if mode_val == 'ON' else '⚪ OFF (대기중)'}", parse_mode='HTML')

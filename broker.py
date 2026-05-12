@@ -10,12 +10,7 @@
 # 🚨 MODIFIED: [V47.00 하이킨아시 파서 open 컬럼 강제 수혈 락온]
 # 🚨 MODIFIED: [V61.01 숏(SOXS) 전면 소각 작전 지시서 적용] 싱글 롱 모멘텀 압축
 # 🚨 MODIFIED: [V71.05 KIS VWAP 30분 압축 타격 및 예약 주문 파이프라인 정밀 수술]
-# - KIS 명세에 따라 VWAP 주문 시 ORD_DVSN="36" 및 ALGO_ORD_TMD_DVSN_CD="00"(시간지정) 락온.
-# 🚨 MODIFIED: [V71.06 지정가 VWAP(Limit VWAP) 절대 락온 수술]
-# - 시장가(0) 강제 변환 로직을 전면 소각하고, 지시서에 명시된 지정가를 FT_ORD_UNPR3에 100% 다이렉트 주입하여 '가격 불만족 시 체결 거부' 방어막 확립.
-# NEW: [V71.07 KIS 예약주문 실원장 다이렉트 스캔 및 LOC 강제 인젝션]
-# - 로컬 캐시 의존성을 소각하고 get_reservation_orders 엔진을 신설하여 페이징 무결성 확보.
-# - LOC 예약 주문 시 ORD_DVSN="34" 파라미터 다이렉트 인젝션 라우팅 교정 완료.
+# 🚨 MODIFIED: [V71.14 지정가 VWAP 일반주문(Regular Order) 100% 팩트 락온 및 예약주문 내 데드코드 전면 폐기]
 # ==========================================================
 
 import requests
@@ -228,7 +223,6 @@ class KoreaInvestmentBroker:
             dncl_amt = self._safe_float(o2.get('frcr_dncl_amt_2', 0))       
             sll_amt = self._safe_float(o2.get('frcr_sll_amt_smtl', 0))      
             buy_amt = self._safe_float(o2.get('frcr_buy_amt_smtl', 0))      
-             
             raw_bp = dncl_amt + sll_amt - buy_amt
             cash = max(0.0, math.floor((raw_bp * 0.9945) * 100) / 100.0)
 
@@ -240,7 +234,7 @@ class KoreaInvestmentBroker:
                 headers = self._get_header("TTTS3012R")
                 url = f"{self.base_url}/uapi/overseas-stock/v1/trading/inquire-balance"
                 res_hold, resp_json = self._api_request("GET", url, headers, params=params_hold)
-                 
+                
                 if res_hold and resp_json.get('rt_cd') == '0':
                     api_success = True
                     if cash <= 0:
@@ -248,7 +242,7 @@ class KoreaInvestmentBroker:
                         if isinstance(o2, list): o2 = o2[0] if len(o2) > 0 else {}
                         new_cash = self._safe_float(o2.get('ovrs_ord_psbl_amt', 0))
                         if new_cash > cash: cash = new_cash
-                     
+                   
                     for item in (resp_json.get('output1') or []):
                         ticker = item.get('ovrs_pdno')
                         if not ticker: continue
@@ -256,7 +250,7 @@ class KoreaInvestmentBroker:
                         qty = int(self._safe_float(item.get('ovrs_cblc_qty', 0)))
                         ord_psbl_qty = int(self._safe_float(item.get('ord_psbl_qty', 0)))
                         avg = self._safe_float(item.get('pchs_avg_pric', 0))
-                         
+                    
                         if qty > 0 and ord_psbl_qty == 0: ord_psbl_qty = qty
                         if qty > 0:
                             if ticker not in holdings: 
@@ -450,7 +444,6 @@ class KoreaInvestmentBroker:
             df = df.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'})
             df['time_est'] = df.index.strftime('%H%M00')
             
-            # NEW: [V47 시계열 체력 측정 로직] 당일 고가/저가 타임스탬프 영속화
             try:
                 max_high, min_low = float(df['high'].max()), float(df['low'].min())
                 time_high_idx, time_low_idx = df['high'].astype(float).idxmax(), df['low'].astype(float).idxmin()
@@ -493,9 +486,6 @@ class KoreaInvestmentBroker:
             else: return False
         return valid_orders
 
-    # NEW: [V71.07 KIS 예약주문 실원장 다이렉트 스캔 결속]
-    # - 로컬 캐시 의존성을 전면 소각하고 KIS API(TTTT3039R)를 다이렉트로 호출하는 무결점 코어 엔진 이식
-    # - 페이징 처리 루프를 통해 데이터 기아 현상 100% 원천 차단
     def get_reservation_orders(self, ticker, start_date, end_date):
         excg_cd = self._get_exchange_code(ticker, target_api="ORDER")
         valid_orders = []
@@ -578,7 +568,8 @@ class KoreaInvestmentBroker:
         for o in target_orders: self.cancel_order(ticker, o.get('odno')); time.sleep(0.3)
         return len(target_orders)
 
-    def send_order(self, ticker, side, qty, price, order_type="LIMIT"):
+    # 🚨 MODIFIED: [V71.14 지정가 VWAP 일반주문(Regular Order) 100% 팩트 락온]
+    def send_order(self, ticker, side, qty, price, order_type="LIMIT", start_time=None, end_time=None):
         try: order_qty = int(float(qty))
         except (TypeError, ValueError): return {'rt_cd': '999', 'msg1': f'유효하지 않은 주문 수량: {qty!r}'}
         if order_qty <= 0: return {'rt_cd': '999', 'msg1': f'수량 오류: {qty}'}
@@ -586,11 +577,26 @@ class KoreaInvestmentBroker:
         for attempt in range(2):
             tr_id = "TTTT1002U" if side == "BUY" else "TTTT1006U"
             excg_cd = self._get_exchange_code(ticker, target_api="ORDER")
-            ord_dvsn = {"LOC": "34", "MOC": "33", "LOO": "02", "MOO": "31"}.get(order_type, "00")
+            # 🚨 36: VWAP 추가 및 32: LOO 강제 매핑
+            ord_dvsn = {"LOC": "34", "MOC": "33", "LOO": "32", "MOO": "31", "VWAP": "36"}.get(order_type, "00")
             final_price = 0 if order_type in ["MOC", "MOO"] else self._ceil_2(price)
             if order_type not in ["MOC", "MOO"] and final_price <= 0.0: return {'rt_cd': '999', 'msg1': f'가격 오류: {price}'}
             
-            body = {"CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "OVRS_EXCG_CD": excg_cd, "PDNO": ticker, "ORD_QTY": str(order_qty), "OVRS_ORD_UNPR": str(final_price), "ORD_SVR_DVSN_CD": "0", "ORD_DVSN": ord_dvsn}
+            body = {
+                "CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "OVRS_EXCG_CD": excg_cd, 
+                "PDNO": ticker, "ORD_QTY": str(order_qty), "OVRS_ORD_UNPR": str(final_price), 
+                "ORD_SVR_DVSN_CD": "0", "ORD_DVSN": ord_dvsn
+            }
+            
+            # 💡 [핵심 락온] 일반주문 API에 VWAP 분할시간 파라미터 필수 주입
+            if order_type == "VWAP":
+                if start_time and end_time:
+                    body["ALGO_ORD_TMD_DVSN_CD"] = "00"
+                    body["START_TIME"] = start_time
+                    body["END_TIME"] = end_time
+                else:
+                    body["ALGO_ORD_TMD_DVSN_CD"] = "02"
+
             res = self._call_api(tr_id, "/uapi/overseas-stock/v1/trading/order", "POST", body=body)
             if res.get('rt_cd') != '0' and attempt == 0 and any(x in res.get('msg1', '') for x in ["거래소", "시장", "exchange", "코드"]):
                 if ticker in self._excg_cd_cache: del self._excg_cd_cache[ticker]
@@ -618,10 +624,8 @@ class KoreaInvestmentBroker:
         body = {"CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "OVRS_EXCG_CD": excg_cd, "PDNO": ticker, "ORGN_ODNO": order_id, "RVSE_CNCL_DVSN_CD": "02", "ORD_QTY": str(qty), "OVRS_ORD_UNPR": str(price), "CTAC_TLNO": "", "MGCO_APTM_ODNO": "", "ORD_SVR_DVSN_CD": "0"}
         return self._call_api("TTTS6038U", "/uapi/overseas-stock/v1/trading/daytime-order-rvsecncl", "POST", body=body)
 
-    # 🚨 MODIFIED: [V71.06 지정가 VWAP(Limit VWAP) 절대 락온 수술]
-    # NEW: [V71.07 LOC 예약주문 강제 인젝션 라우팅 교정 완료]
-    def send_reservation_order(self, ticker, side, qty, price, order_type="LIMIT", start_time=None, end_time=None):
-        """ 💡 KIS 명세에 따라 VWAP 주문 시 ORD_DVSN '36' 및 지정가 가격 락온 지원 """
+    # 🚨 MODIFIED: [V71.14 지정가 VWAP(Limit VWAP) 예약주문 데드코드 전면 폐기 및 일반주문 이관]
+    def send_reservation_order(self, ticker, side, qty, price, order_type="LIMIT"):
         try: order_qty = int(float(qty))
         except: return {'rt_cd': '999', 'msg1': '수량 오류'}
         
@@ -634,24 +638,7 @@ class KoreaInvestmentBroker:
             "OVRS_EXCG_CD": excg_cd, "FT_ORD_QTY": str(order_qty)
         }
         
-        # 🚨 [팩트 패치] 지정가 VWAP (Limit VWAP) 및 LOC 락온
-        if order_type == "VWAP":
-            body["ORD_DVSN"] = "36" # 36: VWAP 지원
-            
-            # 💡 [핵심 락온] 시장가("0")가 아닌 포트폴리오 매니저가 지시한 '지정가(Limit Price)' 100% 강제 주입!
-            # 이를 통해 지정한 가격 이상(매수 시) 또는 이하(매도 시)일 때 체결을 거부하는 방어막 형성.
-            body["FT_ORD_UNPR3"] = final_price 
-            
-            if start_time and end_time:
-                # ※ 분할주문 시간 직접입력 시 '00'으로 값 설정
-                body["ALGO_ORD_TMD_DVSN_CD"] = "00" 
-                body["START_TIME"] = start_time
-                body["END_TIME"] = end_time
-            else:
-                # ※ 종결시간 미입력 시 정규장 종료시까지 '02' 고정
-                body["ALGO_ORD_TMD_DVSN_CD"] = "02"
-        elif order_type == "LOC":
-            # 🚨 NEW: [LOC 예약주문 강제 인젝션]
+        if order_type == "LOC":
             body["ORD_DVSN"] = "34" # 34: LOC (장마감지정가)
             body["FT_ORD_UNPR3"] = final_price
         else:

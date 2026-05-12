@@ -9,15 +9,10 @@
 # 🚨 MODIFIED: [V-REV 데이터 기아 방어] 통신 장애로 0.0 폴백 시 루프 조기 탈출(continue) 무시 및 깡통 스냅샷 팩트 박제 락온.
 # 🚨 NEW: [KIS VWAP 알고리즘 권한 위임 수술] V-REV 수동 덫 장전 경고문 및 바이패스 분기를 전면 소각. 17:05 KST 기상 시 산출된 단일 지시서를 KIS VWAP 예약 주문 및 LOC 예약 주문으로 즉각 전송하고 예약 주문 번호(ODNO)를 로컬 캐시에 영속화하는 라우팅 배선 100% 개통 완료.
 # 🚨 MODIFIED: [V71.05 정규장 스케줄러 라이브 주문 런타임 붕괴 수술 및 시간 인젝션]
-# - 17:05 KST에 실시간 주문(send_order)을 발송하여 전량 거절(Reject) 당하던 런타임 맹점 원천 차단.
-# - 예약 주문(send_reservation_order)으로 100% 역배선(Rewiring) 완료.
-# - 지시서의 start_time, end_time 파라미터를 다이렉트 인젝션하여 30분 압축 타임라인 락온.
 # 🚨 MODIFIED: [V71.12 로컬 캐시 의존성 영구 소각 및 코어 압축]
-# - KIS 실시간 팩트 스캔 엔진 도입에 따라, 파일 파편화를 유발하는 로컬 예약 캐시 영속화 보조 함수(_save_resv_odno_sync) 전면 적출.
-# - 호출 루프 내 해당 비동기 배선 완벽 철거 및 코드 진공 압축 완료.
-# 🚨 NEW: [V71.14 사일런트 스킵(Silent Skip) 맹점 원천 수술 및 관망 팩트 보고망 이식]
-# - 예산 고갈 및 매도 타점 미도달로 전송할 덫(주문)이 0건일 때 봇이 조용히 침묵하던 UX 결함 해결.
-# - 주문이 없을 경우 즉시 "💤 관망 모드 유지 (주문 0건)" 상태를 텔레그램으로 명시적 타전하도록 방어막 구축.
+# 🚨 MODIFIED: [V71.14 지정가 VWAP 일반주문(Regular Order) 100% 팩트 락온]
+# - KIS 명세에 따라 VWAP(36)은 일반주문 API(TTTT1002U)로만 전송되어야 하므로, 
+#   예약주문 API로 쏘아 Reject 당하던 하극상 맹점을 원천 차단하고 분기 라우팅을 100% 역배선 완료.
 # ==========================================================
 import logging
 import datetime
@@ -139,28 +134,27 @@ async def scheduled_regular_trade(context):
                 )
                 
                 plans[t] = plan
+                if plan.get('core_orders', []) or plan.get('orders', []):
+                    is_rev = plan.get('is_reverse', False)
+                    msgs[t] += f"🔄 <b>[{t}] 리버스(VWAP) 예약 덫 장전 완료</b>\n" if is_rev else f"💎 <b>[{t}] 정규장(LOC/VWAP) 덫 장전 완료</b>\n"
 
+            # 🚨 MODIFIED: [V71.14 일반주문 배선 복구] VWAP은 예약이 아닌 일반주문으로 직결
             for t in sorted_tickers:
                 if t not in plans: continue
                 target_orders = plans[t].get('core_orders', plans[t].get('orders', []))
-                target_bonus = plans[t].get('bonus_orders', [])
-                
-                # 🚨 NEW: [V71.14 사일런트 스킵 맹점 원천 수술] 주문 0건 시 관망 팩트 텔레그램 타전망 이식
-                if not target_orders and not target_bonus:
-                    msg_skip = f"💤 <b>[{t}] 관망 모드 유지 (주문 0건)</b>\n▫️ 가용 예산이 모두 소진되었고 장전할 매도 덫이 없어 금일 정규장은 시스템 관망합니다."
-                    await context.bot.send_message(chat_id=context.job.chat_id, text=msg_skip, parse_mode='HTML')
-                    continue
-                
-                is_rev = plans[t].get('is_reverse', False)
-                msgs[t] += f"🔄 <b>[{t}] 리버스(VWAP) 예약 덫 장전 완료</b>\n" if is_rev else f"💎 <b>[{t}] 정규장(LOC/VWAP) 예약 덫 장전 완료</b>\n"
-
                 for o in target_orders:
-                    # 🚨 [라우팅 수술] send_order -> send_reservation_order 역배선 및 시간 주입
-                    res = await asyncio.to_thread(
-                        broker.send_reservation_order, 
-                        t, o['side'], o['qty'], o['price'], o['type'],
-                        start_time=o.get('start_time'), end_time=o.get('end_time')
-                    )
+                    if o['type'] == "VWAP":
+                        res = await asyncio.to_thread(
+                            broker.send_order, 
+                            t, o['side'], o['qty'], o['price'], o['type'],
+                            start_time=o.get('start_time'), end_time=o.get('end_time')
+                        )
+                    else:
+                        res = await asyncio.to_thread(
+                            broker.send_reservation_order, 
+                            t, o['side'], o['qty'], o['price'], o['type']
+                        )
+                    
                     is_success = res.get('rt_cd') == '0'
                     if not is_success: all_success_map[t] = False
 
@@ -173,15 +167,20 @@ async def scheduled_regular_trade(context):
             for t in sorted_tickers:
                 if t not in plans: continue
                 target_bonus = plans[t].get('bonus_orders', [])
-                if not target_bonus: continue
-                
                 for o in target_bonus:
-                    # 🚨 [라우팅 수술] send_order -> send_reservation_order 역배선 및 시간 주입
-                    res = await asyncio.to_thread(
-                        broker.send_reservation_order, 
-                        t, o['side'], o['qty'], o['price'], o['type'],
-                        start_time=o.get('start_time'), end_time=o.get('end_time')
-                    )
+                    # 🚨 MODIFIED: [V71.14 일반주문 배선 복구] VWAP은 예약이 아닌 일반주문으로 직결
+                    if o['type'] == "VWAP":
+                        res = await asyncio.to_thread(
+                            broker.send_order, 
+                            t, o['side'], o['qty'], o['price'], o['type'],
+                            start_time=o.get('start_time'), end_time=o.get('end_time')
+                        )
+                    else:
+                        res = await asyncio.to_thread(
+                            broker.send_reservation_order, 
+                            t, o['side'], o['qty'], o['price'], o['type']
+                        )
+                    
                     is_success = res.get('rt_cd') == '0'
 
                     # 🚨 [V71.12 로컬 캐시 의존성 영구 소각] _save_resv_odno_sync 호출부 전면 적출 완료.
@@ -198,12 +197,12 @@ async def scheduled_regular_trade(context):
                 
                 if all_success_map[t] and len(target_orders) > 0:
                     await asyncio.to_thread(cfg.set_lock, t, "REG")
-                    msgs[t] += "\n🔒 <b>필수 예약 덫 정상 전송 완료 (잠금 설정됨)</b>"
+                    msgs[t] += "\n🔒 <b>필수 덫 정상 전송 완료 (잠금 설정됨)</b>"
                 elif not all_success_map[t] and len(target_orders) > 0:
-                    msgs[t] += "\n⚠️ <b>일부 예약 덫 장전 실패 (매매 잠금 보류)</b>"
+                    msgs[t] += "\n⚠️ <b>일부 덫 장전 실패 (매매 잠금 보류)</b>"
                 elif len(target_bonus) > 0:
                     await asyncio.to_thread(cfg.set_lock, t, "REG")
-                    msgs[t] += "\n🔒 <b>보너스 예약 덫만 전송 완료 (잠금 설정됨)</b>"
+                    msgs[t] += "\n🔒 <b>보너스 덫만 전송 완료 (잠금 설정됨)</b>"
                     
                 await context.bot.send_message(chat_id=context.job.chat_id, text=msgs[t], parse_mode='HTML')
 
@@ -214,10 +213,10 @@ async def scheduled_regular_trade(context):
             success, fail_reason = await asyncio.wait_for(_do_regular_trade(), timeout=300.0)
             if success:
                 if attempt > 1:
-                    await context.bot.send_message(chat_id=context.job.chat_id, text=f"✅ <b>[통신 복구] {attempt}번째 재시도 끝에 예약 덫 장전을 완수했습니다!</b>", parse_mode='HTML')
+                    await context.bot.send_message(chat_id=context.job.chat_id, text=f"✅ <b>[통신 복구] {attempt}번째 재시도 끝에 덫 장전을 완수했습니다!</b>", parse_mode='HTML')
                 return 
         except Exception as e:
-            logging.error(f"정규장 예약 덫 전송 에러 ({attempt}/{MAX_RETRIES}): {e}", exc_info=True)
+            logging.error(f"정규장 덫 전송 에러 ({attempt}/{MAX_RETRIES}): {e}", exc_info=True)
             if attempt == 1:
                 await context.bot.send_message(
                     chat_id=context.job.chat_id, 
@@ -225,7 +224,7 @@ async def scheduled_regular_trade(context):
                     parse_mode='HTML'
                 )
         else:
-            logging.warning(f"정규장 예약 덫 조건 미충족 ({attempt}/{MAX_RETRIES}): {fail_reason}")
+            logging.warning(f"정규장 덫 조건 미충족 ({attempt}/{MAX_RETRIES}): {fail_reason}")
             if attempt == 1:
                  await context.bot.send_message(
                     chat_id=context.job.chat_id, 

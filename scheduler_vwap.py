@@ -30,6 +30,11 @@
 # 🚨 MODIFIED: [V66.09 V-REV VWAP 런타임 엑스레이 이식]
 # 🚨 NEW: [KIS VWAP 알고리즘 권한 위임 수술] 1분마다 매수/매도 주문을 쏘던 자체 타임 슬라이싱 타격망 100% 영구 소각. KIS 예약 덫 체결 관망 및 갭 하이재킹(Gap Hijack) 섀도우 오버라이드망으로 롤 완벽 격상.
 # 🚨 NEW: [V71.10 섀도우 오버라이드 덫 파기 팩트 스캔] 갭 하이재킹 격발 시 로컬 캐시 조회 파기 로직 전면 소각 및 KIS 실원장(get_reservation_orders) 다이렉트 연동 아키텍처 이식.
+# 🚨 MODIFIED: [V71.14 지정가 VWAP 일반주문 역배선 팩트 락온 및 갭 하이재킹 기절 버그 수술]
+# - 본 파일(scheduler_vwap.py)은 갭 하이재킹(Gap Hijacking)을 전담하며, LIMIT(지정가) 주문을 사용하므로 V71.14 일반주문 역배선 명세에 완벽히 부합함.
+# - V71 업데이트 이후 V-REV가 자동 예약 모드(is_manual_vwap=True)로 락온되면서, 
+#   기존의 `if version == "V_REV" and is_manual_vwap: continue` 방어막에 걸려 
+#   갭 하이재킹 스캔이 100% 무력화되던 치명적 런타임 맹점(Deadcode)을 영구 소각 완료.
 # ==========================================================
 import logging
 import datetime
@@ -114,9 +119,9 @@ async def scheduled_vwap_init_and_cancel(context):
             for t in active_tickers:
                 version = await asyncio.to_thread(cfg.get_version, t)
                 is_manual_vwap = await asyncio.to_thread(getattr(cfg, 'get_manual_vwap_mode', lambda x: False), t)
-        
-                if version == "V_REV" and is_manual_vwap:
-                    continue
+                
+                # 🚨 MODIFIED: [V71.14 갭 하이재킹 섀도우망 무력화 맹점 영구 소각]
+                # 기존 if version == "V_REV" and is_manual_vwap: continue 데드코드 로직 삭제 완료
                 
                 if version == "V_REV" or (version == "V14" and is_manual_vwap):
                     if not vwap_cache.get(f"REV_{t}_nuked"):
@@ -221,8 +226,9 @@ async def scheduled_vwap_trade(context):
                 version = await asyncio.to_thread(cfg.get_version, t)
                 is_manual_vwap = await asyncio.to_thread(getattr(cfg, 'get_manual_vwap_mode', lambda x: False), t)
 
-                if version == "V_REV" and is_manual_vwap:
-                    continue
+                # 🚨 MODIFIED: [V71.14 갭 하이재킹 섀도우망 무력화 맹점 영구 소각]
+                # V-REV가 자동 예약 모드(is_manual_vwap=True)로 고정됨에 따라, 
+                # 갭 하이재킹을 100% 바이패스해버리던 치명적 데드코드(continue) 원천 적출 완료.
 
                 if version == "V_REV" or (version == "V14" and is_manual_vwap):
                     
@@ -245,15 +251,15 @@ async def scheduled_vwap_trade(context):
                                 df_b = df_1min_base.copy()
                                 if 'time_est' in df_b.columns:
                                     df_b = df_b[(df_b['time_est'] >= '093000') & (df_b['time_est'] <= '155900')]
-                                 
+                                
                                 if not df_b.empty:
                                     df_b['tp'] = (df_b['high'].astype(float) + df_b['low'].astype(float) + df_b['close'].astype(float)) / 3.0
                                     df_b['vol'] = df_b['volume'].astype(float)
                                     df_b['vol_tp'] = df_b['tp'] * df_b['vol']
-                                   
+                                    
                                     c_vol = df_b['vol'].sum()
                                     base_vwap = df_b['vol_tp'].sum() / c_vol if c_vol > 0 else base_curr_p
-                                     
+                                    
                                     gap_pct = ((base_curr_p - base_vwap) / base_vwap * 100.0) if base_vwap > 0 else 0.0
                                     gap_thresh = await asyncio.to_thread(getattr(cfg, 'get_vrev_gap_threshold', lambda x: -0.67), t)
                                     
@@ -307,6 +313,7 @@ async def scheduled_vwap_trade(context):
                                         buy_qty = int(math.floor(rem_budget / exec_price)) if exec_price > 0 else 0
                                         
                                         if buy_qty > 0:
+                                            # 💡 갭 하이재킹은 즉각적인 스윕(Sweep) 타격을 위해 지정가(LIMIT)를 사용함. (일반주문 명세 100% 부합)
                                             res = await asyncio.to_thread(broker.send_order, t, "BUY", buy_qty, exec_price, "LIMIT")
                                             odno = res.get('odno', '') if isinstance(res, dict) else ''
                                             
