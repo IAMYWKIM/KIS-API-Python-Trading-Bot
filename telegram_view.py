@@ -26,6 +26,7 @@
 # 암살자 가동 경고 팝업 내 15:25 도달 시 문구를 15:22~15:25 동적 지터 분산 도달 시로 팩트 교정 완료.
 # NEW: [V66.02 원격 로그 핀셋 추출 엔진 탑재] 텔레그램 4096자 렌더링 쉴드 및 시간 정순 정렬 아키텍처 이식 완료.
 # 🚨 MODIFIED: [V66.04 런타임 붕괴 방어] 파일 전역의 IndentationError(들여쓰기) 팩트 무결점 교정 완료.
+# 🚨 NEW: [KIS VWAP 알고리즘 대통합 수술] 수동 VWAP 한투 앱 직접 세팅 관련 경고문 전면 소각 및 17:05 KST 자동 예약 장전 팩트 기반 렌더링으로 100% 교정 완료.
 # ==========================================================
 import os
 import math
@@ -362,11 +363,13 @@ class TelegramView:
                 body_msg += "🛡️ <b>가동 조치:</b> 마이너스 호가 차단용 절대 하한선($0.01) 방어막 가동 중!\n\n"
 
             if v_mode == "V_REV":
-                v_mode_display = "V_REV 역추세(한투위임)" if is_manual_vwap else "V_REV 역추세(자체엔진)"
+                # MODIFIED: [KIS VWAP 알고리즘 대통합 수술] 수동/자율 텍스트 소각 및 팩트 렌더링
+                v_mode_display = "V_REV 역추세 (VWAP 자동예약)"
                 main_icon = "⚖️"
                 bdg_txt = f"1회(1배수) 예산: ${safe_one_portion:,.0f}"
             else:
-                v_mode_display = "무매4 (VWAP)" if is_manual_vwap else "무매4 (LOC)"
+                # MODIFIED: [KIS VWAP 알고리즘 대통합 수술]
+                v_mode_display = "무매4 (VWAP 자동예약)" if is_manual_vwap else "무매4 (LOC)"
                 main_icon = "💎"
                 bdg_txt = f"당일 예산: ${safe_one_portion:,.0f}"
             
@@ -435,9 +438,7 @@ class TelegramView:
                     if fact_qty > 0 and safe_avg > 0:
                         target_price = safe_avg * (1 + safe_target / 100.0)
                         body_msg += f"⚙️ 🎯 익절 목표가: <b>${target_price:.2f}</b> (+{safe_target}%)\n"
-                        body_msg += f"⚙️ ⭐ 별지점: {safe_star_pct}% | 🎯감시: {sniper_status_txt}\n"
-                    else:
-                        body_msg += f"⚙️ 🎯 목표: {safe_target}% | ⭐ 별지점: {safe_star_pct}% | 🎯감시: {sniper_status_txt}\n"
+                    body_msg += f"⚙️ ⭐ 별지점: {safe_star_pct}% | 🎯감시: {sniper_status_txt}\n"
                     
                 if sniper_status_txt == "ON":
                     if not is_trade_active:
@@ -457,10 +458,8 @@ class TelegramView:
                             body_msg += f"🎯 상방 스나이퍼: ${sn_target:.2f} 이상 대기\n"
             elif v_mode == "V_REV":
                 body_msg += "⚖️ <b>역추세 LIFO 큐(Queue) 엔진 스탠바이</b>\n"
-                if is_manual_vwap:
-                    body_msg += "⏱️ <b>VWAP 스케줄:</b> <b>(수동) 한투 앱에서 직접 알고리즘 장전 대기</b>\n"
-                else:
-                    body_msg += "⏱️ <b>VWAP 스케줄:</b> 15:30 EST 가상 앵커 세팅 ➔ 1분 단위 교차 타격\n"
+                # MODIFIED: [KIS VWAP 권한 위임] 수동 덫 장전 안내 소각 및 17:05 예약 장전 팩트 렌더링
+                body_msg += "⏱️ <b>VWAP 스케줄:</b> 17:05 KST 증권사 VWAP 자동 예약 덫 장전 ➔ 장막판 갭 하이재킹 관망\n"
             
             if v_mode == "V_REV":
                 body_msg += "📋 <b>[주문 가이던스 - ⚖️다중 LIFO 제어]</b>\n"
@@ -479,7 +478,8 @@ class TelegramView:
 
             else:
                 if is_manual_vwap and not is_rev_logic:
-                    body_msg += "⏱️ <b>VWAP 스케줄:</b> 장 마감 30분 전 ➔ 1분 단위 유동성 분할 타격\n"
+                    # MODIFIED: [KIS VWAP 권한 위임]
+                    body_msg += "⏱️ <b>VWAP 스케줄:</b> 17:05 KST 증권사 VWAP 자동 예약 덫 장전 ➔ KIS 알고리즘 체결 위임\n"
                 
                 plan_info = t_info.get('plan', {})
                 body_msg += f"📋 <b>[주문 계획 - {proc_status}]</b>\n"
@@ -499,7 +499,7 @@ class TelegramView:
                         
                         if "수혈" in desc: 
                             ico = "🩸"
-                            desc = desc.replace("🩸", "")
+                        desc = desc.replace("🩸", "")
                         
                         type_str = "" if o['type'] == 'LIMIT' else f"({o['type']})"
                         type_disp = f" {type_str}" if type_str else ""
@@ -555,10 +555,10 @@ class TelegramView:
             
             if ver == "V_REV":
                 icon = "⚖️"
-                ver_display = "V_REV 역추세"
+                ver_display = "V_REV 역추세 (VWAP 자동예약)" # MODIFIED: [KIS VWAP 알고리즘 대통합] 팩트 교정
             else:
                 icon = "💎"
-                ver_display = "무매4 (VWAP)" if is_manual_vwap else "무매4 (LOC)"
+                ver_display = "무매4 (VWAP 자동예약)" if is_manual_vwap else "무매4 (LOC)" # MODIFIED: [KIS VWAP 알고리즘 대통합] 팩트 교정
                 
             split_cnt = int(config.get_split_count(t))
             target_profit = config.get_target_profit(t)
@@ -580,11 +580,13 @@ class TelegramView:
                     msg += f"▫️ AVWAP 암살자: <b>{avwap_status_txt}</b>\n"
                     
                 msg += "⚖️ <b>역추세(Reversion) 하이브리드 엔진 스탠바이:</b>\n"
-                msg += "▫️ 전일 종가 앵커 기준 LIFO 큐 가상 락온 대기 중\n\n"
+                # MODIFIED: [KIS VWAP 알고리즘 대통합] 17:05 팩트 락온 텍스트 교정
+                msg += "▫️ 17:05 KST KIS VWAP 자동 예약 장전 및 갭 하이재킹 관망 중\n\n"
             else:
                 msg += f"▫️ 분할: {split_cnt}회\n▫️ 목표: {target_profit}%\n▫️ 자동복리: {comp_rate}%\n"
                 msg += f"▫️ 증권사 수수료: <b>{fee_rate}%</b>\n"
-                v14_mode_txt = "🕒 VWAP 1분 타임 슬라이싱 (자체엔진)" if is_manual_vwap else "📉 LOC 단일 타격 (초안정성)"
+                # MODIFIED: [KIS VWAP 알고리즘 대통합]
+                v14_mode_txt = "🕒 KIS VWAP 알고리즘 예약 주문 자동 장전" if is_manual_vwap else "📉 LOC 단일 타격 (초안정성)"
                 msg += f"▫️ 집행: <b>{v14_mode_txt}</b>\n\n"
         
             if t == "SOXL":
@@ -640,20 +642,16 @@ class TelegramView:
         return msg, InlineKeyboardMarkup(keyboard)
 
     def get_vrev_mode_selection_menu(self, ticker):
-        msg = f"⚠️ <b>[{ticker} 운용 방식 (알고리즘 주체) 선택]</b>\n\n"
-        msg += "V-REV 전략의 장 마감 전 VWAP 집행 주체를 선택해 주십시오.\n"
-        msg += "(※ 두 방식 모두 한국투자증권 매매 수수료는 동일하게 적용됩니다.)\n\n"
-        msg += "<b>1. 🤖 자동 모드 (자체 U-Curve 엔진)</b>\n"
-        msg += "▫️ 봇이 장 마감 30분 전부터 1분 단위로 VWAP 타임 슬라이싱 자동 격발\n"
-        msg += "▫️ 세밀한 정밀 타격 및 편의성 극대화\n\n"
-        msg += "<b>2. 🖐️ 수동 모드 (한투 자체 알고리즘 위임)</b>\n"
-        msg += "▫️ 봇은 타점 시그널 알림만 제공하며 API 자동주문을 100% 락다운함\n"
-        msg += "▫️ <b>[필수]</b> 지시서를 보고 한투 앱(MTS)에서 직접 <b>'장 마감 30분 전' VWAP 조건</b>으로 수동 장전해야 함\n\n"
-        msg += "원하시는 운용 방식을 선택해 주십시오."
+        # MODIFIED: [KIS VWAP 권한 위임] 수동/자동 분기 텍스트 및 콜백 100% 영구 소각, 단일 팩트 승인창 개통
+        msg = f"⚠️ <b>[{ticker} V-REV 역추세 모드 전환]</b>\n\n"
+        msg += "V-REV 전략은 장 마감 전 KIS 자체 VWAP 알고리즘 예약 주문을 통해 1일치 예산을 집행합니다.\n\n"
+        msg += "<b>🤖 KIS VWAP 자동 예약 덫 장전 (자율주행)</b>\n"
+        msg += "▫️ 17:05 KST 정규장 스케줄러가 KIS 서버로 VWAP 예약 주문을 다이렉트 자동 전송합니다.\n"
+        msg += "▫️ 봇은 15:27~16:00 EST 구간에서 기초자산의 갭(Gap) 이탈을 감시하며, 위급 시 예약 덫을 즉각 철거하고 섀도우 스윕(Sweep) 타격으로 롤을 오버라이드합니다.\n\n"
+        msg += "V-REV 모드 전환을 승인하시겠습니까?"
         
         keyboard = [
-            [InlineKeyboardButton("🤖 자동 모드 (자체 엔진 1분 타격)", callback_data=f"SET_VER_CONFIRM:AUTO:{ticker}")],
-            [InlineKeyboardButton("🖐️ 수동 모드 (한투 알고리즘 위임)", callback_data=f"SET_VER_CONFIRM:MANUAL:{ticker}")],
+            [InlineKeyboardButton("🔥 V-REV 역추세 모드 전환 승인", callback_data=f"SET_VER_CONFIRM:V_REV:{ticker}")],
             [InlineKeyboardButton("❌ 작전 취소 (이전 버전 유지)", callback_data="RESET:CANCEL")]
         ]
         return msg, InlineKeyboardMarkup(keyboard)
@@ -664,10 +662,10 @@ class TelegramView:
         msg += "<b>1. 📉 LOC 방식 (기본)</b>\n"
         msg += "▫️ 17:05 KST 정규장 주문 시 전량 장마감시지정가(LOC)로 일괄 전송\n"
         msg += "▫️ 호가창 슬리피지 최소화 및 초안정성 지향\n\n"
-        msg += "<b>2. 🕒 VWAP 방식 (유동성 추적)</b>\n"
-        msg += "▫️ 17:05 KST에는 예방적 LOC 덫만 장전\n"
-        msg += "▫️ 장 마감 30분 전부터 1분 단위로 예산을 분할하여 U-Curve 궤적으로 타격\n"
-        msg += "▫️ 물리적 미체결 엣지 케이스 방어 및 시장 합의 가격 수렴\n\n"
+        # MODIFIED: [KIS VWAP 권한 위임] 
+        msg += "<b>2. 🕒 VWAP 방식 (KIS 알고리즘 위임)</b>\n"
+        msg += "▫️ 17:05 KST에 KIS VWAP 예약 주문을 자동 장전하여 증권사 알고리즘에 위임\n"
+        msg += "▫️ 분 분할 타임 슬라이싱의 슬리피지를 없애고 증권사 알고리즘의 평균가 체결을 보장합니다.\n\n"
         msg += "원하시는 집행 방식을 선택해 주십시오."
         
         keyboard = [
@@ -816,7 +814,6 @@ class TelegramView:
         fname = f"data/profit_{ticker}.png"
         
         dir_name = os.path.dirname(fname) or '.'
-        # MODIFIED: [V54.05 원자적 쓰기 락온] 파일 파손 방지
         fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=False)
         try:
             with os.fdopen(fd, 'wb') as f:
@@ -839,27 +836,21 @@ class TelegramView:
         ]
         return f"🔄 <b>[ 운용 종목 선택 ]</b>\n현재 가동중: <b>{', '.join(current_tickers)}</b>", InlineKeyboardMarkup(keyboard)
 
-    # NEW: [V66.02 원격 로그 핀셋 추출 엔진 탑재] 텔레그램 4096자 렌더링 쉴드 및 시간 정순 정렬 아키텍처 이식 완료
     def format_log_report(self, error_logs):
-        # 시간 정순(과거->최신)으로 배열 복구하여 인과관계 분석 직관성 100% 확보
         chronological_logs = list(reversed(error_logs))
         
         header = "🔍 <b>[ 시스템 원격 진단 리포트 (최근 50건) ]</b>\n\n<code>"
         footer = "</code>\n\n✅ <b>[진단 완료]</b>"
         
-        # 텔레그램 최대 글자 수(4096자) 방어를 위한 안전 마진(4000자) 계산
         max_len = 4000 - len(header) - len(footer)
         
         body = ""
         for line in chronological_logs:
-            # HTML 특수문자 이스케이프 (텔레그램 파싱 런타임 붕괴 원천 차단)
             safe_line = html.escape(line)
             body += f"{safe_line}\n"
             
-        # 텍스트 제한 초과 시 가장 오래된 로그부터 안전하게 절삭(Truncate)
         if len(body) > max_len:
             truncated_body = body[-max_len:]
-            # 잘린 첫 줄이 불완전할 수 있으므로 첫 개행 문자 이후부터 온전한 줄만 렌더링
             first_newline_idx = truncated_body.find('\n')
             if first_newline_idx != -1:
                 truncated_body = truncated_body[first_newline_idx+1:]

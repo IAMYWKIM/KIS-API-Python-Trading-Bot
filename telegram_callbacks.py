@@ -30,6 +30,7 @@
 # 🚨 MODIFIED: [V61.06 런타임 붕괴 방어] MODE 및 INPUT 라우터 내 IndentationError(들여쓰기) 팩트 완벽 교정
 # 🚨 MODIFIED: [V66.07 오퍼레이션 SSOT - 엑스레이 환각 소각 및 VWAP 최초 명중 타전망 이식]
 # 엑스레이 진단 시 무조건 낡은 인메모리 상태를 강제 폐기(None)하고 최신 JSON 팩트 파일을 로드하도록 배선 교정 완료.
+# 🚨 NEW: [KIS VWAP 알고리즘 대통합 수술] 수동 VWAP 설정(AUTO/MANUAL) 텔레그램 콜백 라우팅을 전면 소각하고 단일 KIS VWAP 예약 장전 모드로 팩트 락온 완료.
 # ==========================================================
 import logging
 import datetime
@@ -95,7 +96,7 @@ class TelegramCallbacks:
                     
                     if curr_p is None: curr_p = 0.0
                     if prev_c is None: prev_c = 0.0
-                     
+                    
                     q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) if getattr(self, 'queue_ledger', None) else []
                     total_q = sum(int(item.get("qty", 0)) for item in q_data)
                     
@@ -242,7 +243,7 @@ class TelegramCallbacks:
             if status_code not in ["PRE", "REG"]:
                 await query.answer("❌ [격발 차단] 현재 장운영시간(정규장/프리장)이 아닙니다.", show_alert=True)
                 return
-                
+             
             if not getattr(self, 'queue_ledger', None):
                 from queue_ledger import QueueLedger
                 self.queue_ledger = QueueLedger()
@@ -290,7 +291,7 @@ class TelegramCallbacks:
                     qty = item.get('qty', 0)
                     price = item.get('price', 0.0)
                     break
-            
+        
             msg, markup = self.view.get_queue_action_confirm_menu(ticker, target_date, qty, price)
             await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
 
@@ -304,12 +305,12 @@ class TelegramCallbacks:
                         await asyncio.to_thread(self.queue_ledger.delete_lot, ticker, target_date)
                      
                     await query.answer("✅ 지층 삭제 완료. KIS 원장과 동기화합니다.", show_alert=False)
-                    
+             
                     if ticker not in self.sync_engine.sync_locks:
                          self.sync_engine.sync_locks[ticker] = asyncio.Lock()
                     if not self.sync_engine.sync_locks[ticker].locked():
                         await self.sync_engine.process_auto_sync(ticker, chat_id, context, silent_ledger=True)
-                        
+        
                     final_q = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) if getattr(self, 'queue_ledger', None) else []
                     msg, markup = self.view.get_queue_management_menu(ticker, final_q)
                     await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
@@ -338,7 +339,7 @@ class TelegramCallbacks:
                 page_idx = int(data[2])
                 msg, markup = self.view.get_version_message(history_data, page_index=page_idx)
                 await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-            
+      
         elif action == "RESET":
             await query.answer()
             if sub == "MENU":
@@ -373,7 +374,7 @@ class TelegramCallbacks:
                             with open(backup_file, 'r', encoding='utf-8') as f:
                                 b_data = json.load(f)
                             b_data = [r for r in b_data if r.get('ticker') != ticker]
-                            
+                       
                             fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(backup_file) or '.')
                             with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
                                 json.dump(b_data, f_out, ensure_ascii=False, indent=4)
@@ -426,7 +427,7 @@ class TelegramCallbacks:
                             t_rec['ticker'] = target['ticker']
                         if 'side' not in t_rec:
                             t_rec['side'] = 'BUY'
-                            
+                      
                     qty, avg, invested, sold = await asyncio.to_thread(self.cfg.calculate_holdings, target['ticker'], safe_trades)
                     
                     try:
@@ -454,7 +455,7 @@ class TelegramCallbacks:
                 target_hist = None
                 if target_id:
                     target_hist = next((h for h in hist_list if h.get('id') == target_id), None)
-                 
+                
                 if not target_hist:
                     target_hist = sorted(hist_list, key=lambda x: x.get('end_date', ''), reverse=True)[0]
                 
@@ -501,13 +502,14 @@ class TelegramCallbacks:
                 
             if holdings is None:
                 return await query.edit_message_text("❌ API 통신 오류로 주문을 실행할 수 없습니다.")
-                 
+                
             active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
             _, allocated_cash = await asyncio.to_thread(controller._calculate_budget_allocation, cash, active_tickers)
             h = holdings.get(t, {'qty':0, 'avg':0})
             
             curr_p = float(await asyncio.to_thread(self.broker.get_current_price, t) or 0.0)
             prev_c = float(await asyncio.to_thread(self.broker.get_previous_close, t) or 0.0)
+            
             safe_avg = float(h.get('avg') or 0.0)
             safe_qty = int(float(h.get('qty') or 0))
 
@@ -596,14 +598,14 @@ class TelegramCallbacks:
 
             async with self.tx_lock:
                 _, holdings = await asyncio.to_thread(self.broker.get_account_balance)
-                 
+                  
             if holdings is None:
                 await context.bot.send_message(chat_id, "🚨 API 통신 지연으로 잔고를 확인할 수 없어 전환을 차단합니다. 잠시 후 다시 시도해 주세요.")
                 return
                 
             kis_qty = int(float(holdings.get(ticker, {}).get('qty', 0)))
             max_qty = await self._get_max_holdings_qty(ticker, kis_qty)
-            
+             
             if kis_qty == 0 and max_qty > 0 and current_ver != new_ver:
                 msg = f"🚨 <b>[ 퀀트 모드 전환 강제 차단: 수동 매도 감지 ]</b>\n\n"
                 msg += f"실잔고는 0주이나 장부에 잔여 수량({max_qty}주)이 남아있어 모드 전환이 차단되었습니다.\n"
@@ -647,7 +649,7 @@ class TelegramCallbacks:
             ticker = data[2]
             current_ver = await asyncio.to_thread(self.cfg.get_version, ticker)
             
-            target_ver = "V_REV" if mode_type in ["AUTO", "MANUAL"] else "V14"
+            target_ver = "V_REV" if mode_type == "V_REV" else "V14"
 
             if ticker == "TQQQ" and target_ver == "V_REV":
                 await context.bot.send_message(chat_id, "⚠️ [절대 헌법 위반] TQQQ는 V14 무매4 전용 아키텍처입니다. 전환이 차단되었습니다.")
@@ -681,36 +683,30 @@ class TelegramCallbacks:
                 await query.edit_message_text(msg, parse_mode='HTML')
                 return
             
-            if mode_type in ["AUTO", "MANUAL"]:
+            if mode_type == "V_REV":
                 await asyncio.to_thread(self.cfg.set_version, ticker, "V_REV")
-                
                 await asyncio.to_thread(self.cfg.set_reverse_state, ticker, True, 0)
-                
                 await asyncio.to_thread(self.cfg.set_upward_sniper_mode, ticker, False)
                 if hasattr(self.cfg, 'set_avwap_hybrid_mode'):
                     await asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, ticker, False)
                 
-                if mode_type == "MANUAL":
-                    await asyncio.to_thread(self.cfg.set_manual_vwap_mode, ticker, True)
-                    mode_txt = "🖐️ 수동 모드 (한투 VWAP 알고리즘 위임)"
-                else:
-                    await asyncio.to_thread(self.cfg.set_manual_vwap_mode, ticker, False)
-                    mode_txt = "🤖 자동 모드 (자체 VWAP 엔진 정밀타격)"
+                # 🚨 NEW: [KIS VWAP 알고리즘 대통합 수술] 수동/자동 분기 전면 소각 및 자동 예약 락온
+                await asyncio.to_thread(self.cfg.set_manual_vwap_mode, ticker, True)
+                mode_txt = "🕒 KIS VWAP 알고리즘 예약 주문 자동 장전"
                     
                 await query.edit_message_text(f"✅ <b>[{ticker}]</b> 퀀트 엔진이 <b>V_REV 역추세 하이브리드</b>로 전환되었습니다.\n▫️ <b>운용 방식:</b> {mode_txt}\n▫️ /sync 지시서를 확인해 주십시오.", parse_mode='HTML')
             
             elif mode_type in ["V14_LOC", "V14_VWAP"]:
                 await asyncio.to_thread(self.cfg.set_version, ticker, "V14")
-                
                 await asyncio.to_thread(self.cfg.set_reverse_state, ticker, False, 0)
-                
                 await asyncio.to_thread(self.cfg.set_upward_sniper_mode, ticker, False)
                 if hasattr(self.cfg, 'set_avwap_hybrid_mode'):
                     await asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, ticker, False)
                     
                 if mode_type == "V14_VWAP":
+                    # 🚨 NEW: [KIS VWAP 알고리즘 대통합 수술]
                     await asyncio.to_thread(self.cfg.set_manual_vwap_mode, ticker, True)
-                    mode_txt = "🕒 VWAP 타임 슬라이싱 (자동 유동성 추적)"
+                    mode_txt = "🕒 KIS VWAP 알고리즘 예약 주문 자동 장전"
                 else:
                     await asyncio.to_thread(self.cfg.set_manual_vwap_mode, ticker, False)
                     mode_txt = "📉 LOC 단일 타격 (초안정성)"
@@ -720,7 +716,7 @@ class TelegramCallbacks:
         elif action == "AVWAP_SET":
             action_type = sub
             ticker = data[2]
-            
+             
             if 'app_data' not in context.bot_data:
                 context.bot_data['app_data'] = {}
             render_app_data = context.bot_data['app_data']
@@ -756,7 +752,7 @@ class TelegramCallbacks:
                     tracking_cache[f"AVWAP_AVG_{ticker}"] = 0.0
 
                     if hasattr(self.strategy, 'v_avwap_plugin'):
-                        state_data = {
+                         state_data = {
                             'bought': False,
                             'shutdown': True,
                             'qty': 0,
@@ -764,7 +760,7 @@ class TelegramCallbacks:
                             'strikes': tracking_cache.get(f"AVWAP_STRIKES_{ticker}", 0),
                             'daily_bought_qty': tracking_cache.get(f"AVWAP_DAILY_BOUGHT_{ticker}", 0),
                             'daily_sold_qty': tracking_cache.get(f"AVWAP_DAILY_SOLD_{ticker}", 0),
-                            'first_scan_done': tracking_cache.get(f"AVWAP_FIRST_SCAN_DONE_{ticker}", False),
+                             'first_scan_done': tracking_cache.get(f"AVWAP_FIRST_SCAN_DONE_{ticker}", False),
                             'first_scan_passed': tracking_cache.get(f"AVWAP_FIRST_SCAN_PASSED_{ticker}", False),
                             'dump_jitter_sec': tracking_cache.get(f"AVWAP_DUMP_JITTER_{ticker}", 0)
                         }
