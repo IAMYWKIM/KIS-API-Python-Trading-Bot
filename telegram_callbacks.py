@@ -35,11 +35,11 @@
 # 🚨 MODIFIED: [V71.02 XRAY 엔진 라우팅 영구 소각]
 # KIS 자체 VWAP 알고리즘 위임에 따라 1분 단위 시뮬레이션의 의미가 상실된 런타임 엑스레이(Dry-Run) 진단 콜백 라우터를 전면 적출 완료.
 # 🚨 MODIFIED: [V71.14 지정가 VWAP 일반주문 역배선 팩트 락온]
-# - EXEC (수동 주문 실행) 콜백 라우터에서 일반 실시간 주문(send_order)을 호출하여 KIS 서버 리젝(Reject)을 유발하던 맹점 수술.
 # 🚨 MODIFIED: [V71.15 V-REV 수동 격발 렌더링 증발(Silent Skip) 버그 수술]
-# - 수동 주문(EXEC) 시 V-REV 모드의 `orders` 배열을 스캔하지 못해 
-#   API 통신 시도조차 하지 않고 실패로 오판하던 치명적 맹점(Data Starvation) 완벽 적출.
-# - core_orders 부재 시 orders로 Fallback하는 팩트 브릿지 이식 완료.
+# 🚨 MODIFIED: [V71.17 구형 스냅샷 데이터 기아(Data Starvation) 완벽 수술 및 타임 파라미터 강제 수혈 락온]
+# - 수동 주문(EXEC) 시 과거에 생성된 구형 스냅샷에 `start_time` 파라미터가 없어 
+#   KIS 서버에서 `ALGO주문시작시간 입력오류`로 전량 리젝당하던 맹점 원천 차단.
+# - 결측치(None) 스캔 시 `152500`, `155500`을 강제 수혈(Fallback)하도록 팩트 락온 이식 완료.
 # ==========================================================
 import logging
 import datetime
@@ -404,7 +404,7 @@ class TelegramCallbacks:
                     logging.error(f"📸 👑 졸업 이미지 생성/발송 실패: {e}")
                     await query.edit_message_text("❌ 이미지 생성 중 오류가 발생했습니다.", parse_mode='HTML')
             
-        # 🚨 MODIFIED: [V71.15 수동 주문 격발 궤도 역배선 및 데이터 증발 완벽 수술]
+        # 🚨 MODIFIED: [V71.17 구형 스냅샷 데이터 기아 완벽 수술 및 타임 파라미터 강제 수혈]
         elif action == "EXEC":
             t = sub
             ver = await asyncio.to_thread(self.cfg.get_version, t)
@@ -473,16 +473,21 @@ class TelegramCallbacks:
             msg = title
             all_success = True
             
-            # 🚨 MODIFIED: [V71.15 수동 격발 V-REV 데이터 증발(Data Starvation) 맹점 완벽 수술]
-            # V-REV 모드의 스냅샷은 'orders' 키를 사용하므로, core_orders가 없을 경우 orders로 폴백하는 팩트 브릿지 이식 완료.
             target_orders = plan.get('core_orders', plan.get('orders', []))
             
             for o in target_orders:
+                # 🚨 MODIFIED: [V71.17 구형 스냅샷 데이터 기아 완벽 수술]
+                # - 구형 스냅샷에 start_time, end_time 키값이 없을 경우, 
+                #   None이 전달되어 KIS 서버가 'ALGO주문시작시간 입력오류'를 뱉던 맹점 원천 차단.
+                # - 결측치(None) 스캔 시 152500, 155500을 강제 수혈(Fallback)하도록 팩트 락온 이식 완료.
+                st = o.get('start_time') or "152500"
+                et = o.get('end_time') or "155500"
+
                 if o['type'] == "VWAP":
                     res = await asyncio.to_thread(
                         self.broker.send_order, 
                         t, o['side'], o['qty'], o['price'], o['type'],
-                        start_time=o.get('start_time'), end_time=o.get('end_time')
+                        start_time=st, end_time=et
                     )
                 else:
                     res = await asyncio.to_thread(
@@ -501,11 +506,15 @@ class TelegramCallbacks:
             
             target_bonus = plan.get('bonus_orders', [])
             for o in target_bonus:
+                # 🚨 MODIFIED: 구형 스냅샷 팩트 강제 수혈
+                st = o.get('start_time') or "152500"
+                et = o.get('end_time') or "155500"
+
                 if o['type'] == "VWAP":
                     res = await asyncio.to_thread(
                         self.broker.send_order, 
                         t, o['side'], o['qty'], o['price'], o['type'],
-                        start_time=o.get('start_time'), end_time=o.get('end_time')
+                        start_time=st, end_time=et
                     )
                 else:
                     res = await asyncio.to_thread(
