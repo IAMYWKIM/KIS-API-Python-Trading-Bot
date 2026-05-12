@@ -14,6 +14,10 @@
 # [ V61 절대 헌법 ]: 숏(SOXS) 운용은 시스템 전역에서 100% 영구 소각되었습니다. 
 # get_plan 진입부의 SOXS 우회 방어막을 제거하고 롱 단일 모멘텀 아키텍처로 진공 압축 완료.
 # 🚨 MODIFIED: [V61.01 시각적 오염 마커 클리닝] 주석문에 유입된 외부 에디터 렌더링 마커 태그 찌꺼기 100% 도려내어 코드 결벽성 복구.
+# 🚨 MODIFIED: [V71.16 V-REV 런타임 붕괴 및 지시서 증발 맹점 완벽 수술]
+# - V-REV 모드가 더미 깡통 데이터([])를 반환하여 17:05 스케줄러 및 수동 주문(EXEC) 시 
+#   주문이 100% 증발(Data Starvation)하던 치명적 라우팅 누수 원천 차단.
+# - QueueLedger를 동적 로드하고 get_dynamic_plan과 직결하여 팩트 기반 VWAP 예약 주문을 완벽히 반환하도록 역배선 개통 완료.
 # ==========================================================
 import logging
 import pandas as pd
@@ -41,9 +45,6 @@ class InfiniteStrategy:
             
         try:
             # 🚨 MODIFIED: [V44.61 팩트 수술] 프리마켓 거래량 노이즈가 지배력 연산을 오염시키는 맹점 원천 차단
-            # [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
-            # YF API가 프리마켓 데이터를 포함하여 반환하므로 순수 정규장 모멘텀만을 
-            # 측정하기 위해 반드시 '093000' ~ '155900' 구간만 필터링해야 합니다.
             if 'time_est' in df.columns:
                 df = df[(df['time_est'] >= '093000') & (df['time_est'] <= '155900')]
             
@@ -54,7 +55,7 @@ class InfiniteStrategy:
                 typical_price = (df['high'].astype(float) + df['low'].astype(float) + df['close'].astype(float)) / 3.0
             else:
                 typical_price = df['close'].astype(float)
-              
+            
             vol_x_price = typical_price * df['volume'].astype(float)
             total_vol = df['volume'].astype(float).sum()
             
@@ -110,8 +111,6 @@ class InfiniteStrategy:
             self.cfg.set_version(ticker, "V14")
             version = "V14"
 
-        # 🚨 [V61.00] 기존 SOXS 우회 방어막(V_REV 강제 전환) 블록 100% 영구 소각 완료
-
         if version in ["V13", "V17", "V_VWAP", "V_AVWAP"]:
             logging.warning(f"[{ticker}] 폐기된 레거시 모드({version}) 감지. V14 엔진으로 강제 라우팅합니다.")
             self.cfg.set_version(ticker, "V14")
@@ -128,24 +127,40 @@ class InfiniteStrategy:
                 is_snapshot_mode=is_snapshot_mode
             )
         elif version == "V_REV":
-            # 🚨 MODIFIED: [V54.06 SSOT 코어 통일 및 Split-Brain 영구 소각]
-            # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막]
-            # V_REV 모드라면 억지스러운 is_active 플래그 의존도를 완전히 소각하고 is_reverse를 True로 강제 락온(SSOT).
-            plan = {
-                'core_orders': [], 'bonus_orders': [], 'orders': [],
-                't_val': 0.0, 'is_reverse': True, 'star_price': 0.0, 'one_portion': 0.0
-            }
+            # 🚨 MODIFIED: [V71.16 V-REV 런타임 붕괴 및 지시서 증발 맹점 완벽 수술]
+            # V-REV 모드 더미 반환 로직 전면 소각 및 get_dynamic_plan 다이렉트 락온
+            try:
+                from queue_ledger import QueueLedger
+                ql = QueueLedger()
+                q_data = ql.get_queue(ticker)
+                
+                plan = self.v_rev_plugin.get_dynamic_plan(
+                    ticker=ticker, curr_p=current_price, prev_c=prev_close,
+                    current_weight=1.0, vwap_status={}, min_idx=-1,
+                    alloc_cash=available_cash, q_data=q_data,
+                    is_snapshot_mode=is_snapshot_mode, market_type=market_type
+                )
+                
+                # EXEC 모듈 및 스케줄러 호환성을 위해 core_orders 배열 팩트 주입
+                plan['core_orders'] = [o for o in plan.get('orders', [])]
+                plan['bonus_orders'] = []
+                plan['is_reverse'] = True
+                plan['t_val'] = 0.0
+                plan['star_price'] = 0.0
+                plan['one_portion'] = 0.0
+            except Exception as e:
+                logging.error(f"🚨 V-REV 플랜 생성 실패: {e}")
+                plan = {
+                    'core_orders': [], 'bonus_orders': [], 'orders': [],
+                    't_val': 0.0, 'is_reverse': True, 'star_price': 0.0, 'one_portion': 0.0
+                }
         else:
-            # MODIFIED: [V44.58 라우팅 누수 디커플링 붕괴 엣지 케이스 수술] v14_plugin.get_plan 호출 시 is_snapshot_mode 파라미터 배선 팩트 복구 완료
             plan = self.v14_plugin.get_plan(
                 ticker=ticker, current_price=current_price, avg_price=avg_price, qty=qty,
                 prev_close=prev_close, ma_5day=ma_5day, market_type=market_type,
                 available_cash=available_cash, is_simulation=is_simulation, vwap_status=vwap_status,
                 is_snapshot_mode=is_snapshot_mode
             )
-            
-        # MODIFIED: [V60.00] 옴니 매트릭스 필터(매수 락다운) 로직 100% 영구 소각 완료.
-        # 이제 어떠한 시장 국면에서도 매수 주문은 강제 삭제되지 않으며 팩트 기반으로 전송됩니다.
                 
         return plan
 
@@ -185,12 +200,7 @@ class InfiniteStrategy:
         return self.v_avwap_plugin.fetch_macro_context(base_ticker)
 
     def get_avwap_decision(self, base_ticker, exec_ticker, base_curr_p, exec_curr_p, base_day_open, avg_price, qty, alloc_cash, context_data, df_1min_base, now_est, avwap_state=None, regime_data=None, **kwargs):
-        
         # MODIFIED: [V60.00] AVWAP 옴니 매트릭스 락다운 필터 100% 영구 소각 완료.
-        # 암살자는 이제 시장 국면과 상관없이 오직 타점 팩트만을 보고 타격을 집행합니다.
-
-        # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] target_profit 및 is_multi_strike 파라미터 추출 배선 영구 적출 완료
-        # 🚨 [V44.03] 스나이퍼에서 수신한 체력 스캔 팩트 파라미터(**kwargs) 플러그인으로 바이패스
         return self.v_avwap_plugin.get_decision(
             base_ticker=base_ticker, exec_ticker=exec_ticker, base_curr_p=base_curr_p, exec_curr_p=exec_curr_p, 
             base_day_open=base_day_open, avwap_avg_price=avg_price, avwap_qty=qty, avwap_alloc_cash=alloc_cash,
