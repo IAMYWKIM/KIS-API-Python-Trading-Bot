@@ -37,6 +37,9 @@
 # 🚨 MODIFIED: [V66.05 Split-Brain 시각적 디커플링 해결]
 # 텔레그램 관제탑이 자체 캐시로 하이킨아시 락온을 연산하던 레거시 로직 영구 소각.
 # 코어 엔진의 상태 파일(JSON)을 SSOT로 삼아 100% 팩트 미러링하도록 아키텍처 수술 완료.
+# 🚨 MODIFIED: [V71.02 관제탑 V-Turn 팩트 동기화(UI 디커플링 해체) 수술]
+# 코어 엔진에 이식된 V-Turn Intercept(찐바닥 예외 허용) 조건을 관제탑에도 100% 팩트 이식.
+# 진폭 50% 돌파 및 당일 미드포인트 회복 감지 시 '하락세' 텍스트를 'V자 반등(찐바닥 포착)'으로 동적 오버라이드.
 # ==========================================================
 import logging
 import datetime
@@ -305,9 +308,7 @@ class AvwapConsolePlugin:
             
             # 🚨 NEW: [상대적 체력 연산 30.0% 셧다운 락온 및 UI 디커플링 수술]
             rem_relative_pct = 0.0
-
-            if trend_sequence == "BEAR":
-                cond_seq = False
+            actual_gap_pct = 0.0
 
             if base_prev_c > 0 and base_day_high > 0 and base_day_low > 0:
                 is_neg_gap_state = (base_day_high < base_prev_c) and (base_day_low < base_prev_c)
@@ -335,6 +336,19 @@ class AvwapConsolePlugin:
                 if cond2_met and not ha_2_bullish_no_lower:
                      # 🚨 MODIFIED: [V66.05 Split-Brain 시각적 디커플링 해결] JSON 상태와 100% 일치 렌더링
                      ha_status_text = f"{ha_status_text}이지만 시계열 락온 유지"
+
+            # 🚨 MODIFIED: [V71.02 관제탑 V-Turn 팩트 동기화(UI 디커플링 해체) 수술]
+            seq_text = "상승/대기"
+            if trend_sequence == "BEAR":
+                cond_seq = False
+                mid_point = 0.0
+                if day_high > 0 and day_low > 0:
+                    mid_point = (day_high + day_low) / 2.0
+                if atr5 > 0 and actual_gap_pct >= (atr5 * 0.5) and curr_p >= mid_point:
+                    cond_seq = True
+                    seq_text = "V자 반등(찐바닥 포착)"
+                else:
+                    seq_text = "하락세(Time_High&lt;Time_Low)"
              
             c1_str = "🟢" if cond1_met else "🔴"
             c2_str = "🟢" if cond2_met else "🔴"
@@ -357,7 +371,7 @@ class AvwapConsolePlugin:
             msg += f"▫️ <b>[ 하이킨아시 듀얼 모멘텀 조건 ]</b>\n"
             msg += f"   {c1_str} 고저가 방향 원웨이 일치\n"
             
-            seq_text = "상승/대기" if cond_seq else "하락세(Time_High&lt;Time_Low)"
+            # 🚨 MODIFIED: [V71.02 관제탑 V-Turn 팩트 동기화(UI 디커플링 해체) 수술]
             msg += f"   {c_seq_str} 시계열 체력 통과 ({seq_text})\n"
             
             msg += f"   {c2_str} HA 모멘텀 일치 (현재 5T: {ha_status_text})\n"
