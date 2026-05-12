@@ -40,6 +40,8 @@
 # - 외부 라우터에서 비정상적으로 거대한 예산(alloc_cash)이 유입되더라도, 
 #   절대 당일 1일 할당량(시드의 15%) 잔여분을 초과할 수 없도록 
 #   수학적 하드 마진 클램핑 이식 완료.
+# 🚨 MODIFIED: [V72.02 제20경고 준수: V-REV 매수 앵커 디커플링 및 하극상 역전 방어 락온]
+# - 기보유 상태(total_q > 0)일 때 Buy1, Buy2 타점 산출 시 전일 종가(prev_c) 대신 최근 1지층 평단가(l1_price)를 абсолют 앵커로 락온하여 자전거래 및 하극상 맹점 원천 차단 완료.
 # ==========================================================
 import math
 import os
@@ -252,8 +254,10 @@ class ReversionStrategy:
             p2_trigger = round(prev_c * 0.999, 2)
         else:
             side = "SELL" if curr_p > prev_c else "BUY"
-            p1_trigger = round(prev_c * 0.995, 2)
-            p2_trigger = round(prev_c * 0.9725, 2)
+            # 🚨 MODIFIED: [V72.02 제20경고 준수: 기보유 상태 매수 앵커 l1_price 디커플링 및 하극상 방어 락온]
+            safe_anchor = l1_price if l1_price > 0.0 else prev_c
+            p1_trigger = round(safe_anchor * 0.995, 2)
+            p2_trigger = round(safe_anchor * 0.9725, 2)
 
         if total_q > 0:
              active_sell_targets = [t for t in [trigger_jackpot, trigger_l1, trigger_upper] if t > 0]
@@ -323,7 +327,7 @@ class ReversionStrategy:
                 orders.append({"side": "SELL", "qty": available_upper, "price": trigger_upper, "type": ord_type, "start_time": start_t if ord_type == "VWAP" else None, "end_time": end_t if ord_type == "VWAP" else None, "desc": desc_str})
         
         plan_result = {
-             "orders": orders, 
+            "orders": orders, 
             "trigger_loc": False, 
             "total_q": total_q,
             "is_zero_start": is_zero_start_session
