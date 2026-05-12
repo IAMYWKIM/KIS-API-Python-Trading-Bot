@@ -34,6 +34,8 @@
 # 🚨 MODIFIED: [런타임 즉사 방어] SYNC_ZERO 콜백 라우터 내 IndentationError 팩트 무결점 4배수 교정 완료.
 # 🚨 MODIFIED: [V71.02 XRAY 엔진 라우팅 영구 소각]
 # KIS 자체 VWAP 알고리즘 위임에 따라 1분 단위 시뮬레이션의 의미가 상실된 런타임 엑스레이(Dry-Run) 진단 콜백 라우터를 전면 적출 완료.
+# 🚨 MODIFIED: [V71.04 수동 주문(EXEC) 통합 스냅샷 격발 및 캐시 영속화 엔진 이식]
+# V-REV 전환 차단벽 허물기, 스냅샷 팩트 최우선 로드 락온 및 예약주문 번호 로컬 캐시 멱등성 영속화
 # ==========================================================
 import logging
 import datetime
@@ -154,8 +156,8 @@ class TelegramCallbacks:
             status_code, _ = await controller._get_market_status()
             
             if status_code not in ["PRE", "REG"]:
-                await query.answer("❌ [격발 차단] 현재 장운영시간(정규장/프리장)이 아닙니다.", show_alert=True)
-                return
+               await query.answer("❌ [격발 차단] 현재 장운영시간(정규장/프리장)이 아닙니다.", show_alert=True)
+               return
              
             if not getattr(self, 'queue_ledger', None):
                 from queue_ledger import QueueLedger
@@ -165,7 +167,7 @@ class TelegramCallbacks:
             if not q_data:
                  await query.answer("⚠️ 큐(Queue)가 텅 비어있어 수혈할 잔여 물량이 없습니다.", show_alert=True)
                  return
-                
+            
             await query.answer("⏳ KIS 서버에 수동 긴급 수혈(MOC) 명령을 격발합니다...", show_alert=False)
             
             emergency_qty = q_data[-1].get('qty', 0)
@@ -339,7 +341,7 @@ class TelegramCallbacks:
                         if 'ticker' not in t_rec:
                             t_rec['ticker'] = target['ticker']
                         if 'side' not in t_rec:
-                            t_rec['side'] = 'BUY'
+                             t_rec['side'] = 'BUY'
                       
                     qty, avg, invested, sold = await asyncio.to_thread(self.cfg.calculate_holdings, target['ticker'], safe_trades)
                     
@@ -398,77 +400,88 @@ class TelegramCallbacks:
                     logging.error(f"📸 👑 졸업 이미지 생성/발송 실패: {e}")
                     await query.edit_message_text("❌ 이미지 생성 중 오류가 발생했습니다.", parse_mode='HTML')
             
+        # MODIFIED: [V71.04 수동 주문(EXEC) 통합 스냅샷 격발 및 캐시 영속화 엔진 이식]
+        # V-REV 전환 차단벽 허물기, 스냅샷 팩트 최우선 로드 락온 및 예약주문 번호 로컬 캐시 멱등성 영속화
         elif action == "EXEC":
             t = sub
             ver = await asyncio.to_thread(self.cfg.get_version, t)
 
-            if ver == "V_REV":
-                await query.answer("🛑 [예방 덫 전면 소각] V-REV 모드는 자전거래 의심을 회피하고 AVWAP 암살자 가동을 위해 예방 덫 수동 장전 기능을 영구 소각했습니다.", show_alert=True)
-                return
-
             await query.answer()
-            
-            await query.edit_message_text(f"🚀 {t} 수동 강제 전송 시작 (교차 분리)...")
+            await query.edit_message_text(f"🚀 {t} 수동 강제 전송 시작 (스냅샷 팩트 기반)...")
             
             async with self.tx_lock:
                 cash, holdings = await asyncio.to_thread(self.broker.get_account_balance)
                 
             if holdings is None:
-                return await query.edit_message_text("❌ API 통신 오류로 주문을 실행할 수জীবী 잔고를 확인할 수 없어 전환을 차단합니다. 잠시 후 다시 시도해 주세요.")
+                return await query.edit_message_text("❌ API 통신 오류로 잔고를 확인할 수 없어 실행을 차단합니다. 잠시 후 다시 시도해 주세요.")
                 
-            active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
-            _, allocated_cash = await asyncio.to_thread(controller._calculate_budget_allocation, cash, active_tickers)
-            h = holdings.get(t, {'qty':0, 'avg':0})
-            
-            curr_p = float(await asyncio.to_thread(self.broker.get_current_price, t) or 0.0)
-            prev_c = float(await asyncio.to_thread(self.broker.get_previous_close, t) or 0.0)
-            
-            safe_avg = float(h.get('avg') or 0.0)
-            safe_qty = int(float(h.get('qty') or 0))
-
-            status_code, _ = await controller._get_market_status()
-            
-            if status_code in ["AFTER", "CLOSE", "PRE"]:
-                try:
-                    def get_yf_close():
-                        df = yf.Ticker(t).history(period="5d", interval="1d")
-                        return float(df['Close'].iloc[-1]) if not df.empty else None
-                    yf_close = await asyncio.wait_for(asyncio.to_thread(get_yf_close), timeout=3.0)
-                    if yf_close and yf_close > 0:
-                        prev_c = yf_close
-                except Exception as e:
-                    logging.debug(f"YF 정규장 종가 롤오버 스캔 실패 ({t}): {e}")
-                if curr_p > 0 and prev_c == 0.0:
-                    prev_c = curr_p
-            
-            ma_5day = await asyncio.to_thread(self.broker.get_5day_ma, t)
-            
-            logic_qty_v14 = safe_qty
+            # 🚨 [스냅샷 팩트 로드 락온] 통합지시서와 100% 동일한 타격 집행을 위해 당일 스냅샷 최우선 로드
+            cached_snap = None
             is_manual_vwap = await asyncio.to_thread(getattr(self.cfg, 'get_manual_vwap_mode', lambda x: False), t)
-            if is_manual_vwap:
-                cached_snap_v14 = None
-                if hasattr(self.strategy, 'v14_vwap_plugin'):
-                    cached_snap_v14 = await asyncio.to_thread(self.strategy.v14_vwap_plugin.load_daily_snapshot, t)
-                if cached_snap_v14 and "total_q" in cached_snap_v14:
-                    logic_qty_v14 = cached_snap_v14["total_q"]
-
-            plan = await asyncio.to_thread(self.strategy.get_plan, t, curr_p, safe_avg, logic_qty_v14, prev_c, ma_5day=ma_5day, market_type="REG", available_cash=allocated_cash[t], is_simulation=True)
             
-            if safe_qty == 0:
-                for o in plan.get('core_orders', []):
-                    if o['side'] == 'BUY' and 'Buy1' in o.get('desc', ''):
-                        o['price'] = round(prev_c * 1.15, 2)
+            if ver == "V_REV":
+                cached_snap = await asyncio.to_thread(self.strategy.v_rev_plugin.load_daily_snapshot, t)
+            elif ver == "V14":
+                if is_manual_vwap:
+                    cached_snap = await asyncio.to_thread(self.strategy.v14_vwap_plugin.load_daily_snapshot, t)
+                else:
+                    if hasattr(self.strategy, 'v14_plugin') and hasattr(self.strategy.v14_plugin, 'load_daily_snapshot'):
+                        cached_snap = await asyncio.to_thread(self.strategy.v14_plugin.load_daily_snapshot, t)
+            
+            if cached_snap and 'orders' in cached_snap:
+                plan = cached_snap
+            else:
+                # 스냅샷 부재 시 실시간 폴백 연산
+                active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
+                _, allocated_cash = await asyncio.to_thread(controller._calculate_budget_allocation, cash, active_tickers)
+                h = holdings.get(t, {'qty':0, 'avg':0})
+                curr_p = float(await asyncio.to_thread(self.broker.get_current_price, t) or 0.0)
+                prev_c = float(await asyncio.to_thread(self.broker.get_previous_close, t) or 0.0)
+                safe_avg = float(h.get('avg') or 0.0)
+                safe_qty = int(float(h.get('qty') or 0))
+                
+                status_code, _ = await controller._get_market_status()
+                if status_code in ["AFTER", "CLOSE", "PRE"]:
+                    try:
+                        def get_yf_close():
+                            df = yf.Ticker(t).history(period="5d", interval="1d")
+                            return float(df['Close'].iloc[-1]) if not df.empty else None
+                        yf_close = await asyncio.wait_for(asyncio.to_thread(get_yf_close), timeout=3.0)
+                        if yf_close and yf_close > 0:
+                            prev_c = yf_close
+                    except Exception as e:
+                        logging.debug(f"YF 정규장 종가 롤오버 스캔 실패 ({t}): {e}")
+                    if curr_p > 0 and prev_c == 0.0:
+                        prev_c = curr_p
+                
+                ma_5day = await asyncio.to_thread(self.broker.get_5day_ma, t)
+                logic_qty_v14 = safe_qty
+                if is_manual_vwap and cached_snap and "total_q" in cached_snap:
+                    logic_qty_v14 = cached_snap["total_q"]
 
-            title = f"💎 <b>[{t}] 무매4 정규장 주문 수동 실행</b>\n"
+                plan = await asyncio.to_thread(self.strategy.get_plan, t, curr_p, safe_avg, logic_qty_v14, prev_c, ma_5day=ma_5day, market_type="REG", available_cash=allocated_cash.get(t, 0.0), is_simulation=True)
+                
+                if safe_qty == 0:
+                    for o in plan.get('core_orders', []):
+                        if o['side'] == 'BUY' and 'Buy1' in o.get('desc', ''):
+                            o['price'] = round(prev_c * 1.15, 2)
+
+            title = f"💎 <b>[{t}] 예방적 덫 수동 주문 실행</b>\n"
             msg = title
-            
             all_success = True
+            
+            # 🚨 [제13헌법 철거/재장전을 위한 락온] 타 스케줄러의 캐시 로직 재사용
+            from scheduler_regular import _save_resv_odno_sync
             
             for o in plan.get('core_orders', []):
                 res = await asyncio.to_thread(self.broker.send_order, t, o['side'], o['qty'], o['price'], o['type'])
                 is_success = res.get('rt_cd') == '0'
                 if not is_success:
                     all_success = False
+                    
+                odno = res.get('odno', '') if isinstance(res, dict) else ''
+                if is_success and odno:
+                    await asyncio.to_thread(_save_resv_odno_sync, t, odno, o['type'], o['side'])
                     
                 err_msg = res.get('msg1', '오류')
                 status_icon = '✅' if is_success else f'❌({err_msg})'
@@ -478,6 +491,11 @@ class TelegramCallbacks:
             for o in plan.get('bonus_orders', []):
                 res = await asyncio.to_thread(self.broker.send_order, t, o['side'], o['qty'], o['price'], o['type'])
                 is_success = res.get('rt_cd') == '0'
+                
+                odno = res.get('odno', '') if isinstance(res, dict) else ''
+                if is_success and odno:
+                    await asyncio.to_thread(_save_resv_odno_sync, t, odno, o['type'], o['side'])
+                    
                 err_msg = res.get('msg1', '잔금패스')
                 status_icon = '✅' if is_success else f'❌({err_msg})'
                 msg += f"└ 2차 보너스: {o['desc']} {o['qty']}주: {status_icon}\n"
@@ -650,7 +668,7 @@ class TelegramCallbacks:
                     await query.answer("🔄 관제탑 스크린을 최신 팩트로 갱신했습니다.", show_alert=False)
                 except Exception as e:
                     if "Message is not modified" in str(e):
-                          await query.answer("✅ 시장 변화가 없어 최신 상태가 유지 중입니다.", show_alert=False)
+                            await query.answer("✅ 시장 변화가 없어 최신 상태가 유지 중입니다.", show_alert=False)
                     else:
                         await query.answer(f"갱신 에러: {e}", show_alert=True)
             
@@ -719,8 +737,8 @@ class TelegramCallbacks:
             await query.answer()
             current_ver = await asyncio.to_thread(self.cfg.get_version, ticker)
             if current_ver == "V_REV" and mode_val == "ON":
-                await context.bot.send_message(chat_id, f"🚨 {current_ver} 모드에서는 로직 충돌 방지를 위해 상방 스나이퍼를 켤 수 없습니다!")
-                return
+                 await context.bot.send_message(chat_id, f"🚨 {current_ver} 모드에서는 로직 충돌 방지를 위해 상방 스나이퍼를 켤 수 없습니다!")
+                 return
 
             await asyncio.to_thread(self.cfg.set_upward_sniper_mode, ticker, mode_val == "ON")
             await query.edit_message_text(f"✅ <b>[{ticker}]</b> 상방 스나이퍼 모드 변경 완료: {'🎯 ON (가동중)' if mode_val == 'ON' else '⚪ OFF (대기중)'}", parse_mode='HTML')
