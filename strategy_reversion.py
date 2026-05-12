@@ -41,7 +41,11 @@
 #   절대 당일 1일 할당량(시드의 15%) 잔여분을 초과할 수 없도록 
 #   수학적 하드 마진 클램핑 이식 완료.
 # 🚨 MODIFIED: [V72.02 제20경고 준수: V-REV 매수 앵커 디커플링 및 하극상 역전 방어 락온]
-# - 기보유 상태(total_q > 0)일 때 Buy1, Buy2 타점 산출 시 전일 종가(prev_c) 대신 최근 1지층 평단가(l1_price)를 абсолют 앵커로 락온하여 자전거래 및 하극상 맹점 원천 차단 완료.
+# - 기보유 상태(total_q > 0)일 때 Buy1, Buy2 타점 산출 시 전일 종가(prev_c) 대신 최근 1지층 평단가(l1_price)를 절대 앵커로 락온하여 자전거래 및 하극상 맹점 원천 차단 완료.
+# 🚨 MODIFIED: [V72.06 V-REV 최저가순 매도 타점 통합 및 잭팟 렌더링 대수술]
+# - KIS 지정가 VWAP 알고리즘 위임에 따라, 무의미해진 MOC 잭팟 덤핑 로직을 영구 소각.
+# - l1_price, upper_avg, jackpot_avg 3가지 타점 중 가장 낮은 가격으로 물량을 통합(Merge)하고
+#   오름차순(최저가순)으로 정렬하여 VWAP 덫을 순차 장전하도록 100% 수학적 디커플링 해체 완료.
 # ==========================================================
 import math
 import os
@@ -259,22 +263,11 @@ class ReversionStrategy:
             p1_trigger = round(safe_anchor * 0.995, 2)
             p2_trigger = round(safe_anchor * 0.9725, 2)
 
-        if total_q > 0:
-             active_sell_targets = [t for t in [trigger_jackpot, trigger_l1, trigger_upper] if t > 0]
-             if active_sell_targets:
-                min_sell = min(active_sell_targets)
-                if p1_trigger >= min_sell:
-                    p1_trigger = max(0.01, round(min_sell - 0.01, 2))
-                if p2_trigger >= min_sell:
-                    p2_trigger = max(0.01, round(min_sell - 0.01, 2))
-
         orders = []
 
         total_spent = float(self.executed["BUY_BUDGET"].get(ticker, 0.0))
         
         # 🚨 MODIFIED: [V72.01 V-REV 1회 예산(15%) 하드 마진 캡(Cap) 락온]
-        # 외부에서 거대 예산(alloc_cash)이 유입되더라도 절대 당일 1회 할당량(시드의 15%)
-        # 잔여분을 초과할 수 없도록 수학적 하드 마진 클램핑 이식 완료.
         seed_val = float(self.cfg.get_seed(ticker) or 0.0)
         daily_limit = seed_val * 0.15
         
@@ -313,18 +306,40 @@ class ReversionStrategy:
             end_t = "045500" if is_dst_active else "055500"
             
             available_l1 = min(l1_qty, rem_qty_total)
-            l1_queued = 0
-            if available_l1 > 0 and trigger_l1 > 0:
-                ord_type = "VWAP" if available_l1 >= 10 else "LOC"
-                desc_str = "Pop1(VWAP)" if ord_type == "VWAP" else "Pop1(LOC)"
-                orders.append({"side": "SELL", "qty": available_l1, "price": trigger_l1, "type": ord_type, "start_time": start_t if ord_type == "VWAP" else None, "end_time": end_t if ord_type == "VWAP" else None, "desc": desc_str})
-                l1_queued = available_l1
+            available_upper = min(upper_qty, rem_qty_total - available_l1)
+            
+            # 🚨 MODIFIED: [V72.06 V-REV 최저가순 매도 타점 통합 및 잭팟 렌더링 대수술]
+            # 상위층 목표가(Upper)보다 잭팟 목표가(Jackpot)가 더 낮다면, 
+            # 굳이 비싼 가격을 고집하지 않고 남은 물량 전부를 잭팟 가격으로 묶어 KIS 지정가 VWAP에 던집니다.
+            target_l1_final = min(trigger_l1, trigger_jackpot) if trigger_l1 > 0 else trigger_jackpot
+            target_upper_final = min(trigger_upper, trigger_jackpot) if trigger_upper > 0 else trigger_jackpot
+            
+            sell_dict = {}
+            if available_l1 > 0 and target_l1_final > 0:
+                sell_dict[target_l1_final] = sell_dict.get(target_l1_final, 0) + available_l1
+            if available_upper > 0 and target_upper_final > 0:
+                sell_dict[target_upper_final] = sell_dict.get(target_upper_final, 0) + available_upper
                 
-            available_upper = min(upper_qty, rem_qty_total - l1_queued)
-            if available_upper > 0 and trigger_upper > 0:
-                ord_type = "VWAP" if available_upper >= 10 else "LOC"
-                desc_str = "Pop2(VWAP)" if ord_type == "VWAP" else "Pop2(LOC)"
-                orders.append({"side": "SELL", "qty": available_upper, "price": trigger_upper, "type": ord_type, "start_time": start_t if ord_type == "VWAP" else None, "end_time": end_t if ord_type == "VWAP" else None, "desc": desc_str})
+            sell_idx = 1
+            for price in sorted(sell_dict.keys()):
+                s_qty = sell_dict[price]
+                ord_type = "VWAP" if s_qty >= 10 else "LOC"
+                
+                # 잭팟 가격으로 전체 수량이 묶였다면 전체 잭팟, 잔여 수량만 묶였다면 잔여 잭팟
+                if price == trigger_jackpot and s_qty == total_q:
+                    desc_str = f"전체잭팟"
+                elif price == trigger_jackpot:
+                    desc_str = f"잔여잭팟"
+                else:
+                    desc_str = f"Pop{sell_idx}"
+                    
+                orders.append({
+                    "side": "SELL", "qty": s_qty, "price": price, "type": ord_type, 
+                    "start_time": start_t if ord_type == "VWAP" else None, 
+                    "end_time": end_t if ord_type == "VWAP" else None, 
+                    "desc": desc_str
+                })
+                sell_idx += 1
         
         plan_result = {
             "orders": orders, 
