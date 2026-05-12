@@ -31,7 +31,7 @@
 # 🚨 MODIFIED: [V66.07 오퍼레이션 SSOT - 엑스레이 환각 소각 및 VWAP 최초 명중 타전망 이식]
 # 엑스레이 진단 시 무조건 낡은 인메모리 상태를 강제 폐기(None)하고 최신 JSON 팩트 파일을 로드하도록 배선 교정 완료.
 # 🚨 NEW: [KIS VWAP 알고리즘 대통합 수술] 수동 VWAP 설정(AUTO/MANUAL) 텔레그램 콜백 라우팅을 전면 소각하고 단일 KIS VWAP 예약 장전 모드로 팩트 락온 완료.
-# 🚨 MODIFIED: [런타임 즉사 방어] SYNC_ZERO 콜백 라우터 내 IndentationError 팩트 무결점 교정 완료.
+# 🚨 MODIFIED: [런타임 즉사 방어] SYNC_ZERO 콜백 라우터 내 IndentationError 팩트 무결점 4배수 교정 완료.
 # ==========================================================
 import logging
 import datetime
@@ -502,7 +502,7 @@ class TelegramCallbacks:
                 cash, holdings = await asyncio.to_thread(self.broker.get_account_balance)
                 
             if holdings is None:
-                return await query.edit_message_text("❌ API 통신 오류로 주문을 실행할 수 없습니다.")
+                return await query.edit_message_text("❌ API 통신 오류로 주문을 실행할 수জীবী 잔고를 확인할 수 없어 전환을 차단합니다. 잠시 후 다시 시도해 주세요.")
                 
             active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
             _, allocated_cash = await asyncio.to_thread(controller._calculate_budget_allocation, cash, active_tickers)
@@ -753,7 +753,7 @@ class TelegramCallbacks:
                     tracking_cache[f"AVWAP_AVG_{ticker}"] = 0.0
 
                     if hasattr(self.strategy, 'v_avwap_plugin'):
-                         state_data = {
+                        state_data = {
                             'bought': False,
                             'shutdown': True,
                             'qty': 0,
@@ -761,7 +761,7 @@ class TelegramCallbacks:
                             'strikes': tracking_cache.get(f"AVWAP_STRIKES_{ticker}", 0),
                             'daily_bought_qty': tracking_cache.get(f"AVWAP_DAILY_BOUGHT_{ticker}", 0),
                             'daily_sold_qty': tracking_cache.get(f"AVWAP_DAILY_SOLD_{ticker}", 0),
-                             'first_scan_done': tracking_cache.get(f"AVWAP_FIRST_SCAN_DONE_{ticker}", False),
+                            'first_scan_done': tracking_cache.get(f"AVWAP_FIRST_SCAN_DONE_{ticker}", False),
                             'first_scan_passed': tracking_cache.get(f"AVWAP_FIRST_SCAN_PASSED_{ticker}", False),
                             'dump_jitter_sec': tracking_cache.get(f"AVWAP_DUMP_JITTER_{ticker}", 0)
                         }
@@ -860,3 +860,4 @@ class TelegramCallbacks:
             
             desc = "숫자만 입력하세요.\n(예: 액면분할 시 1주가 10주가 되었다면 10 입력, 10주가 1주로 병합되었다면 0.1 입력)" if sub == "STOCK_SPLIT" else "숫자만 입력하세요."
             await context.bot.send_message(chat_id, f"✏️ <b>[{ticker}] {ko_name}</b>를 설정합니다.\n{desc}", parse_mode='HTML')
+
