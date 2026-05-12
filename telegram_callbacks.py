@@ -34,10 +34,9 @@
 # KIS 자체 VWAP 알고리즘 위임에 따라 1분 단위 시뮬레이션의 의미가 상실된 런타임 엑스레이(Dry-Run) 진단 콜백 라우터를 전면 적출 완료.
 # 🚨 MODIFIED: [V71.14 지정가 VWAP 일반주문 역배선 팩트 락온]
 # 🚨 MODIFIED: [V71.15 V-REV 수동 격발 렌더링 증발(Silent Skip) 버그 수술]
-# 🚨 MODIFIED: [V71.20 서머타임 동적 감지 및 KST 타임라인 락온]
-# 🚨 NEW: [V71.22 KIS API 자정 패러독스(Midnight Paradox) 완벽 우회 지연 격발 엔진]
-# - 자정 이전에 익일 새벽 시간(032500)을 KIS 서버에 전송 시 과거 시간으로 오판하여 Reject하는 한계를 수학적으로 원천 차단.
-# - 비동기 대기열(Background Task)에 주문을 등록하여 해당 목표 시간 1분 전에 자동 격발되도록 디커플링 아키텍처 대수술 완료.
+# 🚨 MODIFIED: [V71.24 일반주문 VWAP 팩트 롤백 대수술]
+# - KST 기반 지연 격발 엔진, 1시간 단위 타임 시프트(Time-Shift), 타임존 변환 데드코드를 전면 소각 완료.
+# - 코어 엔진이 지시서에 주입해준 EST 시간(152500, 155500)을 일반주문망으로 즉시 직결(Direct Pass)하는 팩트 락온 진공 압축.
 # ==========================================================
 import logging
 import datetime
@@ -401,7 +400,7 @@ class TelegramCallbacks:
                     logging.error(f"📸 👑 졸업 이미지 생성/발송 실패: {e}")
                     await query.edit_message_text("❌ 이미지 생성 중 오류가 발생했습니다.", parse_mode='HTML')
             
-        # 🚨 MODIFIED: [V71.22 KIS API 자정 패러독스(Midnight Paradox) 완벽 우회 지연 격발 엔진]
+        # 🚨 MODIFIED: [V71.24 일반주문 VWAP 팩트 롤백 대수술]
         elif action == "EXEC":
             t = sub
             ver = await asyncio.to_thread(self.cfg.get_version, t)
@@ -468,72 +467,58 @@ class TelegramCallbacks:
             msg = title
             all_success = True
        
-            est_tz = ZoneInfo('America/New_York')
-            is_dst = bool(datetime.datetime.now(est_tz).dst())
-            
-            kst_st = "032500" if is_dst else "042500"
-            kst_et = "035500" if is_dst else "045500"
-            
-            kst_now = datetime.datetime.now(ZoneInfo('Asia/Seoul'))
-
-            # NEW: 비동기 지연 격발 엔진 (자정 패러독스 회피용)
-            async def _delayed_vwap_fire(b_inst, tk, side, q, p, o_type, st, et, wait_s):
-                await asyncio.sleep(wait_s)
-                try:
-                    await asyncio.to_thread(b_inst.send_order, tk, side, q, p, o_type, start_time=st, end_time=et)
-                    logging.info(f"🚀 [{tk}] 지연 격발 완료: VWAP {q}주 전송 성공 (목표시간: {st})")
-                except Exception as e:
-                    logging.error(f"🚨 [{tk}] 지연 격발 실패: {e}")
-
-            # NEW: 제16경고 준수 및 런타임 붕괴 방어용 로컬 라우터
-            async def _process_order(o, label, fallback_err):
-                nonlocal all_success, msg
-                if o['type'] == "VWAP":
-                    st_hour = int(kst_st[:2])
-                    st_minute = int(kst_st[2:4])
-                    target_dt = kst_now.replace(hour=st_hour, minute=st_minute, second=0, microsecond=0)
-                    
-                    if kst_now.hour >= 12 and st_hour < 12:
-                        target_dt += datetime.timedelta(days=1)
-                        
-                    wait_sec = (target_dt - kst_now).total_seconds() - 60 
-                    
-                    if wait_sec > 0:
-                        asyncio.create_task(_delayed_vwap_fire(
-                            self.broker, t, o['side'], o['qty'], o['price'], o['type'], kst_st, kst_et, wait_sec
-                        ))
-                        status_icon = f'✅(대기열 등록: {wait_sec/3600:.1f}h 후 자동격발)'
-                        # 대기열 등록을 논리적 성공으로 간주함.
-                        is_success = True
-                    else:
-                        res = await asyncio.to_thread(self.broker.send_order, t, o['side'], o['qty'], o['price'], o['type'], start_time=kst_st, end_time=kst_et)
-                        is_success = res.get('rt_cd') == '0'
-                        if not is_success: all_success = False
-                        err_msg = res.get('msg1', fallback_err)
-                        status_icon = '✅' if is_success else f'❌({err_msg})'
-                else:
-                    res = await asyncio.to_thread(self.broker.send_reservation_order, t, o['side'], o['qty'], o['price'], o['type'])
-                    is_success = res.get('rt_cd') == '0'
-                    if not is_success: all_success = False
-                    err_msg = res.get('msg1', fallback_err)
-                    status_icon = '✅' if is_success else f'❌({err_msg})'
-                
-                msg += f"└ {label}: {o['desc']} {o['qty']}주: {status_icon}\n"
-                await asyncio.sleep(0.2)
-
+            # 🚨 MODIFIED: [V71.24 일반주문 VWAP 팩트 롤백 대수술]
+            # 지연 격발(Delayed Execution), 타임 시프트(Time-Shift), KST 동적 변환 등 거대한 데드코드를 흔적도 없이 100% 영구 소각.
+            # 코어 엔진이 지시서(plan)에 담아준 미국 현지 시간(EST)을 추출하여 일반주문망에 다이렉트 패스(Direct Pass)하도록 진공 압축.
             target_orders = plan.get('core_orders', plan.get('orders', []))
+            
             for o in target_orders:
-                await _process_order(o, "1차 필수", "오류")
+                if o['type'] == "VWAP":
+                    res = await asyncio.to_thread(
+                        self.broker.send_order, 
+                        t, o['side'], o['qty'], o['price'], o['type'],
+                        start_time=o.get('start_time', '152500'), end_time=o.get('end_time', '155500')
+                    )
+                else:
+                    res = await asyncio.to_thread(
+                        self.broker.send_reservation_order, 
+                        t, o['side'], o['qty'], o['price'], o['type']
+                    )
                 
+                is_success = res.get('rt_cd') == '0'
+                if not is_success:
+                    all_success = False
+                
+                err_msg = res.get('msg1', '오류')
+                status_icon = '✅' if is_success else f'❌({err_msg})'
+                msg += f"└ 1차 필수: {o['desc']} {o['qty']}주: {status_icon}\n"
+                await asyncio.sleep(0.2) 
+            
             target_bonus = plan.get('bonus_orders', [])
             for o in target_bonus:
-                await _process_order(o, "2차 보너스", "잔금패스")
+                if o['type'] == "VWAP":
+                    res = await asyncio.to_thread(
+                        self.broker.send_order, 
+                        t, o['side'], o['qty'], o['price'], o['type'],
+                        start_time=o.get('start_time', '152500'), end_time=o.get('end_time', '155500')
+                    )
+                else:
+                    res = await asyncio.to_thread(
+                        self.broker.send_reservation_order, 
+                        t, o['side'], o['qty'], o['price'], o['type']
+                    )
+                
+                is_success = res.get('rt_cd') == '0'
+                err_msg = res.get('msg1', '잔금패스')
+                status_icon = '✅' if is_success else f'❌({err_msg})'
+                msg += f"└ 2차 보너스: {o['desc']} {o['qty']}주: {status_icon}\n"
+                await asyncio.sleep(0.2) 
             
             if len(target_orders) == 0 and len(target_bonus) == 0:
                  msg += "\n💤 <b>장전할 주문이 없습니다 (관망/예산소진)</b>"
             elif all_success and len(target_orders) > 0:
                 await asyncio.to_thread(self.cfg.set_lock, t, "REG")
-                msg += "\n🔒 <b>필수 주문 전송/대기열 등록 완료 (잠금 설정됨)</b>"
+                msg += "\n🔒 <b>필수 주문 전송 완료 (잠금 설정됨)</b>"
             else:
                 msg += "\n⚠️ <b>일부 필수 주문 실패 (매매 잠금 보류)</b>"
 

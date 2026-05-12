@@ -15,6 +15,9 @@
 # - START_TIME / END_TIME 이라는 존재하지 않는 키값을 던져 
 #   '❌(시작시간이 장시간을 벗어났습니다.)' 리젝을 유발하던 치명적 맹점 수술.
 # - KIS 공식 명세인 ALGO_ORD_STRT_TMD / ALGO_ORD_END_TMD 로 정밀 역배선 완료.
+# 🚨 NEW: [V71.23 KIS API 알고리즘 타임 파라미터 유령 Key 소각 및 팩트 교정]
+# - 과거 명세서 오판으로 삽입된 ALGO_ORD_STRT_TMD 키를 전면 철거.
+# - 팩트에 맞게 START_TIME / END_TIME 으로 100% 원상 복구 완료.
 # ==========================================================
 
 import requests
@@ -40,7 +43,6 @@ def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
         elif df.columns.nlevels == 2:
             price_fields = {'Close', 'High', 'Low', 'Open', 'Volume', 'Adj Close'}
             level0_vals = set(df.columns.get_level_values(0))
-           
             drop_level = 0 if not level0_vals.intersection(price_fields) else 1
             df.columns = df.columns.droplevel(drop_level)
     return df
@@ -67,7 +69,7 @@ class KoreaInvestmentBroker:
                     saved = json.load(f)
                 expire_time = datetime.datetime.strptime(saved['expire'], '%Y-%m-%d %H:%M:%S')
                 now_kst_naive = datetime.datetime.now(kst).replace(tzinfo=None)
-               
+        
                 if expire_time > now_kst_naive + datetime.timedelta(hours=1):
                     self.token = saved['token']
                     return
@@ -83,11 +85,13 @@ class KoreaInvestmentBroker:
         try:
             res = requests.post(url, headers={"content-type": "application/json"}, data=json.dumps(body), timeout=10)
             data = res.json()
+ 
             if 'access_token' in data:
                 self.token = data['access_token']
                 expire_str = (datetime.datetime.now(kst).replace(tzinfo=None) + datetime.timedelta(seconds=int(data['expires_in']))).strftime('%Y-%m-%d %H:%M:%S')
             
                 dir_name = os.path.dirname(self.token_file)
+               
                 if dir_name and not os.path.exists(dir_name):
                     os.makedirs(dir_name, exist_ok=True)
    
@@ -238,7 +242,7 @@ class KoreaInvestmentBroker:
                 headers = self._get_header("TTTS3012R")
                 url = f"{self.base_url}/uapi/overseas-stock/v1/trading/inquire-balance"
                 res_hold, resp_json = self._api_request("GET", url, headers, params=params_hold)
-                
+    
                 if res_hold and resp_json.get('rt_cd') == '0':
                     api_success = True
                     if cash <= 0:
@@ -254,7 +258,7 @@ class KoreaInvestmentBroker:
                         qty = int(self._safe_float(item.get('ovrs_cblc_qty', 0)))
                         ord_psbl_qty = int(self._safe_float(item.get('ord_psbl_qty', 0)))
                         avg = self._safe_float(item.get('pchs_avg_pric', 0))
-                    
+                
                         if qty > 0 and ord_psbl_qty == 0: ord_psbl_qty = qty
                         if qty > 0:
                             if ticker not in holdings: 
@@ -527,7 +531,7 @@ class KoreaInvestmentBroker:
                     break
             else:
                 break
-                
+             
         return valid_orders
 
     def cancel_all_orders_safe(self, ticker, side=None):
@@ -592,12 +596,13 @@ class KoreaInvestmentBroker:
                 "ORD_SVR_DVSN_CD": "0", "ORD_DVSN": ord_dvsn
             }
             
-            # 💡 [핵심 락온] KIS 명세서 팩트 기반 ALGO_ORD_STRT_TMD / ALGO_ORD_END_TMD 사용
+            # 🚨 NEW: [V71.23 KIS API 알고리즘 타임 파라미터 유령 Key 소각 및 팩트 교정]
+            # KIS 명세서 팩트 기반 START_TIME / END_TIME 절대 락온
             if order_type == "VWAP":
                 if start_time and end_time:
                     body["ALGO_ORD_TMD_DVSN_CD"] = "00"
-                    body["ALGO_ORD_STRT_TMD"] = start_time  # 🚨 KIS 명세 정규화
-                    body["ALGO_ORD_END_TMD"] = end_time     # 🚨 KIS 명세 정규화
+                    body["START_TIME"] = start_time  # 🚨 KIS 명세 팩트 복구
+                    body["END_TIME"] = end_time      # 🚨 KIS 명세 팩트 복구
                 else:
                     body["ALGO_ORD_TMD_DVSN_CD"] = "02"
 
