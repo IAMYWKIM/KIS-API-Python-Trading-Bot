@@ -36,7 +36,10 @@
 # KIS 자체 VWAP 알고리즘 위임에 따라 1분 단위 시뮬레이션의 의미가 상실된 런타임 엑스레이(Dry-Run) 진단 콜백 라우터를 전면 적출 완료.
 # 🚨 MODIFIED: [V71.14 지정가 VWAP 일반주문 역배선 팩트 락온]
 # - EXEC (수동 주문 실행) 콜백 라우터에서 일반 실시간 주문(send_order)을 호출하여 KIS 서버 리젝(Reject)을 유발하던 맹점 수술.
-# - VWAP(36) 명세에 맞게 일반주문(send_order)으로 역배선하고 그 외(LOC 등)는 예약주문(send_reservation_order)으로 배선 100% 팩트 복구 완료.
+# 🚨 MODIFIED: [V71.15 V-REV 수동 격발 렌더링 증발(Silent Skip) 버그 수술]
+# - 수동 주문(EXEC) 시 V-REV 모드의 `orders` 배열을 스캔하지 못해 
+#   API 통신 시도조차 하지 않고 실패로 오판하던 치명적 맹점(Data Starvation) 완벽 적출.
+# - core_orders 부재 시 orders로 Fallback하는 팩트 브릿지 이식 완료.
 # ==========================================================
 import logging
 import datetime
@@ -401,8 +404,7 @@ class TelegramCallbacks:
                     logging.error(f"📸 👑 졸업 이미지 생성/발송 실패: {e}")
                     await query.edit_message_text("❌ 이미지 생성 중 오류가 발생했습니다.", parse_mode='HTML')
             
-        # 🚨 MODIFIED: [V71.14 수동 주문 격발 궤도 역배선 및 로컬 캐시 의존성 영구 소각]
-        # V-REV 전환 차단벽 허물기, 스냅샷 팩트 최우선 로드 락온 및 지정가 VWAP 일반주문 팩트 락온 적용
+        # 🚨 MODIFIED: [V71.15 수동 주문 격발 궤도 역배선 및 데이터 증발 완벽 수술]
         elif action == "EXEC":
             t = sub
             ver = await asyncio.to_thread(self.cfg.get_version, t)
@@ -471,11 +473,11 @@ class TelegramCallbacks:
             msg = title
             all_success = True
             
-            # 🚨 MODIFIED: [V71.14 수동 격발 시 VWAP 일반주문 라우팅 팩트 복구]
-            # - KIS 서버 리젝을 유발하던 잘못된 예약주문 분기를 전면 수술. 
-            # - 명세에 따라 VWAP(36)은 일반주문(send_order)으로, LOC/LIMIT 등은 예약주문(send_reservation_order)으로 직결 완료.
+            # 🚨 MODIFIED: [V71.15 수동 격발 V-REV 데이터 증발(Data Starvation) 맹점 완벽 수술]
+            # V-REV 모드의 스냅샷은 'orders' 키를 사용하므로, core_orders가 없을 경우 orders로 폴백하는 팩트 브릿지 이식 완료.
+            target_orders = plan.get('core_orders', plan.get('orders', []))
             
-            for o in plan.get('core_orders', []):
+            for o in target_orders:
                 if o['type'] == "VWAP":
                     res = await asyncio.to_thread(
                         self.broker.send_order, 
@@ -497,7 +499,8 @@ class TelegramCallbacks:
                 msg += f"└ 1차 필수: {o['desc']} {o['qty']}주: {status_icon}\n"
                 await asyncio.sleep(0.2) 
             
-            for o in plan.get('bonus_orders', []):
+            target_bonus = plan.get('bonus_orders', [])
+            for o in target_bonus:
                 if o['type'] == "VWAP":
                     res = await asyncio.to_thread(
                         self.broker.send_order, 
@@ -516,7 +519,9 @@ class TelegramCallbacks:
                 msg += f"└ 2차 보너스: {o['desc']} {o['qty']}주: {status_icon}\n"
                 await asyncio.sleep(0.2) 
             
-            if all_success and len(plan.get('core_orders', [])) > 0:
+            if len(target_orders) == 0 and len(target_bonus) == 0:
+                msg += "\n💤 <b>장전할 주문이 없습니다 (관망/예산소진)</b>"
+            elif all_success and len(target_orders) > 0:
                 await asyncio.to_thread(self.cfg.set_lock, t, "REG")
                 msg += "\n🔒 <b>필수 주문 전송 완료 (잠금 설정됨)</b>"
             else:
