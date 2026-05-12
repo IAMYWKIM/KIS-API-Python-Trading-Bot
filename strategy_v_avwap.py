@@ -2,8 +2,8 @@
 # FILE: strategy_v_avwap.py
 # ==========================================================
 # 🚨 MODIFIED: [V59.00 AVWAP 암살자 예산 100% 수혈 및 15:25 전량 덤핑 팩트 교정]
-# 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] SELL 사유 텍스트 내부에 남아있는 레거시 키워드 100% 영구 소각 완료.
-# 🚨 MODIFIED: [V59.04 프리마켓 락다운 쉴드 이식] 09:30 이전 매수 타격 원천 차단.
+# 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각]
+# 🚨 MODIFIED: [V59.04 프리마켓 락다운 쉴드 이식]
 # 🚨 MODIFIED: [V60.00 옴니 매트릭스 진입 차단망 전면 폐기 및 데드코드 소각]
 # 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각 작전 지시서 적용]
 # 🚨 NEW: [상대적 체력 연산 30.0% 셧다운 락온]
@@ -12,10 +12,10 @@
 # 🚨 MODIFIED: [V66.05 Split-Brain 시각적 디커플링 해결]
 # 🚨 NEW: [V71.01 시계열 체력 예외 허용 엔진(V-Turn Intercept) 이식]
 # 🚨 MODIFIED: [V71.08 AVWAP 암살자 덤핑 타임라인 전진 배치 팩트 교정]
-# 🚨 NEW: [3-Stage Apex Intercept (정점 요격) 전술 탑재]
-# - Stage 1: 체력 고갈 도달 시 락온 (APEX_PEAK_PRICE 갱신)
-# - Stage 2: 2연속 음봉 출현 시 안전장치 해제 (단, 신고가 갱신 시 Stage 2 잠금 및 노이즈 캔슬링 백신 적용)
-# - Stage 3: 최신 5분봉 음봉 꺾임 시 즉각 전량 덤핑 (Kill Shot)
+# 🚨 NEW: [V72.09 3-Stage Apex Intercept (정점 요격) 전술 탑재]
+# 🚨 MODIFIED: [V72.10 3단계 격발 차원 붕괴(버그) 완벽 수술] 
+# - SOXL 현재가와 SOXX 시가를 비교하던 하극상 맹점 원천 차단. 
+# - SOXX의 현재가(base_curr_p)와 SOXX의 5분 시가를 비교하도록 팩트 교정 완료.
 # ==========================================================
 import logging
 import datetime
@@ -69,7 +69,6 @@ class VAvwapHybridPlugin:
                     data['HA_LATCHED_BULL'] = False
                     data['dump_jitter_sec'] = random.randint(0, 180)
                     
-                    # NEW: [3-Stage Apex Intercept 상태 초기화]
                     data['APEX_STAGE_1'] = False
                     data['APEX_STAGE_2'] = False
                     data['APEX_PEAK_PRICE'] = 0.0
@@ -77,7 +76,6 @@ class VAvwapHybridPlugin:
                     data['date'] = today_str
                     self.save_state(ticker, now_est, data)
                     
-                # 기존 캐시에 없는 경우 기본값 강제 할당
                 data['APEX_STAGE_1'] = data.get('APEX_STAGE_1', False)
                 data['APEX_STAGE_2'] = data.get('APEX_STAGE_2', False)
                 data['APEX_PEAK_PRICE'] = data.get('APEX_PEAK_PRICE', 0.0)
@@ -223,7 +221,6 @@ class VAvwapHybridPlugin:
         ha_2_bullish_no_lower = False
         trend_sequence = "PENDING"
         
-        # 🚨 [제16경고 준수: 변수 스코프 전진 배치]
         is_pure_5m_2_bearish = False
         current_5m_is_bearish = False
 
@@ -264,14 +261,15 @@ class VAvwapHybridPlugin:
                         }).dropna()
 
                         if not df_5m.empty:
-                            # NEW: [3-Stage Apex Intercept] 순수 5분봉 음봉 판별 팩트 연산
                             df_5m['is_pure_bearish'] = df_5m['close'].astype(float) < df_5m['open'].astype(float)
                             if len(df_5m) >= 3:
                                 last_2_pure = df_5m.iloc[-3:-1]
                                 is_pure_5m_2_bearish = bool(last_2_pure['is_pure_bearish'].all())
                             
                             current_5m_open = float(df_5m['open'].iloc[-1])
-                            current_5m_is_bearish = (exec_curr_p < current_5m_open)
+                            # 🚨 MODIFIED: [V72.10 3단계 격발 차원 붕괴(버그) 수술] 
+                            # SOXL(exec_curr_p)이 아닌 기초지수 SOXX(base_curr_p)의 현재가와 시가를 비교하여 팩트 기반 음봉 판별 락온
+                            current_5m_is_bearish = (base_curr_p < current_5m_open)
 
                             df_5m['HA_Close'] = (df_5m['open'].astype(float) + df_5m['high'].astype(float) + df_5m['low'].astype(float) + df_5m['close'].astype(float)) / 4.0
                             ha_open = []
@@ -312,7 +310,7 @@ class VAvwapHybridPlugin:
         safe_qty = int(math.floor(float(avwap_qty)))
 
         # ---------------------------------------------------------
-        # NEW: [3-Stage Apex Intercept (정점 요격) 전술 상태 업데이트]
+        # [3-Stage Apex Intercept (정점 요격) 전술 상태 업데이트]
         # ---------------------------------------------------------
         persistent_state = self.load_state(exec_ticker, now_est)
         apex_stage_1 = persistent_state.get('APEX_STAGE_1', False)
@@ -323,21 +321,18 @@ class VAvwapHybridPlugin:
         actual_gap_dollar_apex = day_high - day_low
         actual_gap_pct_apex = (actual_gap_dollar_apex / prev_c) * 100.0 if prev_c > 0 else 0.0
 
-        # 1. 백신 주석 및 신고가 리셋 (Option B 정밀 락온)
         if day_high > apex_peak_price:
             apex_peak_price = day_high
             apex_changed = True
             if apex_stage_1 and apex_stage_2:
-                apex_stage_2 = False  # 방아쇠 잠금 (노이즈 캔슬링, 상태 1로 회귀)
+                apex_stage_2 = False
                 
-        # 2. Stage 1: 타겟 락온 (체력 고갈)
         if atr5 > 0 and actual_gap_pct_apex >= atr5:
             if not apex_stage_1:
                 apex_stage_1 = True
                 apex_peak_price = day_high
                 apex_changed = True
 
-        # 3. Stage 2: 방아쇠 안전장치 해제 (추세 꺾임)
         if apex_stage_1 and not apex_stage_2:
             if is_pure_5m_2_bearish:
                 apex_stage_2 = True
@@ -358,7 +353,7 @@ class VAvwapHybridPlugin:
             if safe_avg <= 0:
                 return _build_res('SELL', 'CORRUPT_PRICE_EMERGENCY_DUMP', qty=safe_qty, target_price=exec_curr_p)
 
-            # NEW: [3-Stage Apex Intercept (정점 요격) 3단계 격발]
+            # [3-Stage Apex Intercept (정점 요격) 3단계 격발]
             if apex_stage_2 and current_5m_is_bearish:
                 persistent_state['shutdown'] = True
                 self.save_state(exec_ticker, now_est, persistent_state)
@@ -468,4 +463,3 @@ class VAvwapHybridPlugin:
             if not cond3_met: fail_reasons.append("체력미달")
             if not cond_seq: fail_reasons.append("시계열체력하락세")
             return _build_res('WAIT', f'진입조건대기({",".join(fail_reasons)})')
-
