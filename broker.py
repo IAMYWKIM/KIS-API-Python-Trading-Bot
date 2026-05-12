@@ -11,6 +11,10 @@
 # 🚨 MODIFIED: [V61.01 숏(SOXS) 전면 소각 작전 지시서 적용] 싱글 롱 모멘텀 압축
 # 🚨 MODIFIED: [V71.05 KIS VWAP 30분 압축 타격 및 예약 주문 파이프라인 정밀 수술]
 # 🚨 MODIFIED: [V71.14 지정가 VWAP 일반주문(Regular Order) 100% 팩트 락온 및 예약주문 내 데드코드 전면 폐기]
+# 🚨 MODIFIED: [V71.16 KIS API 알고리즘 타임 파라미터 명세 100% 팩트 교정]
+# - START_TIME / END_TIME 이라는 존재하지 않는 키값을 던져 
+#   '❌(시작시간이 장시간을 벗어났습니다.)' 리젝을 유발하던 치명적 맹점 수술.
+# - KIS 공식 명세인 ALGO_ORD_STRT_TMD / ALGO_ORD_END_TMD 로 정밀 역배선 완료.
 # ==========================================================
 
 import requests
@@ -568,7 +572,7 @@ class KoreaInvestmentBroker:
         for o in target_orders: self.cancel_order(ticker, o.get('odno')); time.sleep(0.3)
         return len(target_orders)
 
-    # 🚨 MODIFIED: [V71.14 지정가 VWAP 일반주문(Regular Order) 100% 팩트 락온]
+    # 🚨 MODIFIED: [V71.16 KIS API 알고리즘 타임 파라미터 명세 100% 팩트 교정]
     def send_order(self, ticker, side, qty, price, order_type="LIMIT", start_time=None, end_time=None):
         try: order_qty = int(float(qty))
         except (TypeError, ValueError): return {'rt_cd': '999', 'msg1': f'유효하지 않은 주문 수량: {qty!r}'}
@@ -588,12 +592,12 @@ class KoreaInvestmentBroker:
                 "ORD_SVR_DVSN_CD": "0", "ORD_DVSN": ord_dvsn
             }
             
-            # 💡 [핵심 락온] 일반주문 API에 VWAP 분할시간 파라미터 필수 주입
+            # 💡 [핵심 락온] KIS 명세서 팩트 기반 ALGO_ORD_STRT_TMD / ALGO_ORD_END_TMD 사용
             if order_type == "VWAP":
                 if start_time and end_time:
                     body["ALGO_ORD_TMD_DVSN_CD"] = "00"
-                    body["START_TIME"] = start_time
-                    body["END_TIME"] = end_time
+                    body["ALGO_ORD_STRT_TMD"] = start_time  # 🚨 KIS 명세 정규화
+                    body["ALGO_ORD_END_TMD"] = end_time     # 🚨 KIS 명세 정규화
                 else:
                     body["ALGO_ORD_TMD_DVSN_CD"] = "02"
 
