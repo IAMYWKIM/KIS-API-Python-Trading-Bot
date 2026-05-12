@@ -15,6 +15,9 @@
 # 🚨 NEW: [V72.00 줍줍 텍스트 삭제 및 UI 렌더링 팩트 교정]
 # - 줍줍 기능 소각으로 인해 무의미해진 줍줍 가이던스(🧹) 렌더링 로직 전면 삭제.
 # - 구형 파이썬 호환성 방어를 위해 f-string 내부 백슬래시 문법 회피 래핑 적용.
+# 🚨 MODIFIED: [V72.05 장마감 실시간 팩트 스캔 및 스냅샷 디커플링 해제]
+# - 장마감 및 애프터마켓 구간(CLOSE/AFTER) 진입 시 무의미한 낡은 스냅샷 경고 텍스트 영구 소각.
+# - 뷰포트 하단에 오직 "⛔ 장마감/애프터마켓: 주문 불가" 팩트만 진공 압축 렌더링하여 UI 환각 해체 완료.
 # ==========================================================
 import os
 import math
@@ -457,9 +460,11 @@ class TelegramView:
             body_msg += "\n"
 
         final_msg = header_msg + body_msg
+        
+        # 🚨 MODIFIED: [V72.05 장마감 실시간 팩트 스캔 및 스냅샷 디커플링 해제]
+        # 장마감 이후 표출되던 무의미한 낡은 스냅샷 경고 텍스트를 영구 소각하고 "주문 불가" 팩트만 진공 압축 렌더링.
         if not is_trade_active:
-            fact_hour = 17 if bool(datetime.datetime.now(ZoneInfo('America/New_York')).dst()) else 18
-            final_msg += f"💡 <i>※ 표출된 계획은 {fact_hour}:05 KST 기준 박제된 스냅샷입니다.</i>\n\n⛔ 장마감/애프터마켓: 주문 불가"
+            final_msg += "\n\n⛔ 장마감/애프터마켓: 주문 불가"
             
         if any(t_info.get('version') == 'V_REV' for t_info in ticker_data):
             final_msg += "\n\n▶️ /avwap : 🔫 실시간 모멘텀 레이더 관제탑"

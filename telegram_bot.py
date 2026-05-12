@@ -20,6 +20,10 @@
 # - 제16경고(변수 스코프 전진 배치)에 의거 `l1_qty`, `l1_price`를 최상단으로 시프트(Scope Lift).
 # - 코어 엔진에서 수정된 제20경고 룰을 프론트엔드 UI 렌더링에 동기화하여, 
 #   기보유 상태 시 통합지시서 가이던스(Buy1, Buy2) 표출 앵커를 1지층 평단가(`l1_price`)로 100% 락온 완료.
+# 🚨 MODIFIED: [V72.05 장마감 실시간 팩트 스캔 및 스냅샷 디커플링 해제]
+# - 장마감 및 애프터마켓 구간(CLOSE/AFTER) 진입 시 `force_realtime` 락온 발동.
+# - 과거 `cached_snap` 의존성을 전면 철거하고 KIS 실잔고(`actual_qty`)를 연산 코어에 다이렉트 주입.
+# - `strategy.get_plan` 호출 시 `is_snapshot_mode=force_realtime`을 강제 주입하여 지시서를 실시간 연산.
 # ==========================================================
 import logging
 import datetime
@@ -543,16 +547,20 @@ class TelegramController:
             ver = await asyncio.to_thread(self.cfg.get_version, t)
             is_manual_vwap = await asyncio.to_thread(getattr(self.cfg, 'get_manual_vwap_mode', lambda x: False), t)
             
+            # 🚨 MODIFIED: [V72.05 장마감 실시간 팩트 스캔 및 스냅샷 디커플링 해제]
+            force_realtime = status_code in ["CLOSE", "AFTER"]
+            
             cached_snap = None
-            if ver == "V_REV":
-                # 🚨 MODIFIED: [V44.49] 스냅샷 로드 비동기 래핑
-                cached_snap = await asyncio.to_thread(self.strategy.v_rev_plugin.load_daily_snapshot, t)
-            elif ver == "V14":
-                 if is_manual_vwap:
-                    cached_snap = await asyncio.to_thread(self.strategy.v14_vwap_plugin.load_daily_snapshot, t)
-                 else:
-                    if hasattr(self.strategy, 'v14_plugin') and hasattr(self.strategy.v14_plugin, 'load_daily_snapshot'):
-                        cached_snap = await asyncio.to_thread(self.strategy.v14_plugin.load_daily_snapshot, t)
+            if not force_realtime:
+                if ver == "V_REV":
+                    # 🚨 MODIFIED: [V44.49] 스냅샷 로드 비동기 래핑
+                    cached_snap = await asyncio.to_thread(self.strategy.v_rev_plugin.load_daily_snapshot, t)
+                elif ver == "V14":
+                     if is_manual_vwap:
+                        cached_snap = await asyncio.to_thread(self.strategy.v14_vwap_plugin.load_daily_snapshot, t)
+                     else:
+                        if hasattr(self.strategy, 'v14_plugin') and hasattr(self.strategy.v14_plugin, 'load_daily_snapshot'):
+                            cached_snap = await asyncio.to_thread(self.strategy.v14_plugin.load_daily_snapshot, t)
             
             if dynamic_pct_obj and hasattr(dynamic_pct_obj, 'metric_val'):
                 real_val = float(dynamic_pct_obj.metric_val)
@@ -581,11 +589,13 @@ class TelegramController:
                 regime_data = None
 
             # 🚨 MODIFIED: [V44.49] get_plan 비동기 래핑
+            # 🚨 MODIFIED: [V72.05 장마감 실시간 팩트 스캔] force_realtime 플래그를 is_snapshot_mode에 강제 주입
             plan = await asyncio.to_thread(
                 self.strategy.get_plan,
                 t, curr, actual_avg, logic_qty, safe_prev_close, ma_5day=ma_5day,
-                market_type="REG", available_cash=allocated_cash[t],
-                is_simulation=True, regime_data=regime_data
+                market_type="REG", available_cash=allocated_cash.get(t, 0.0),
+                is_simulation=True, regime_data=regime_data,
+                is_snapshot_mode=force_realtime
             )
              
             # 🚨 MODIFIED: [V44.49] 파일 I/O 스캔 비동기 래핑 및 변수명 팩트 교정
