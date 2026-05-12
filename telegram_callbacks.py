@@ -40,6 +40,9 @@
 # 🚨 MODIFIED: [V71.26 KST 타임라인 동적 래핑 수술]
 # - 수동 주문(EXEC) 라우터 내에 폴백(Fallback)으로 방치되어 있던 '152500' 등 EST 하드코딩 찌꺼기를 100% 영구 소각.
 # - 퀀트 엔진이 서머타임을 판독하여 주입한 KST 팩트 시간만을 다이렉트 패스하도록 무결점 역배선 개통 완료.
+# 🚨 NEW: [V71.28 수동 주문(EXEC) 최신 예산 팩트 스냅샷 강제 갱신 엔진 탑재]
+# - 승승장군님의 지시에 따라, 17:05 KST 당시 예산 부족으로 박제된 옛날 스냅샷(매수 0주)을 수동 주문 시 무조건 소각(Nuke).
+# - 현재 KIS 계좌의 확보된 실시간 잔고(예: 1.5만 달러)를 팩트로 끌어와 매수 덫까지 완벽히 장전된 최신 스냅샷으로 영구 오버라이드.
 # ==========================================================
 import logging
 import datetime
@@ -403,67 +406,73 @@ class TelegramCallbacks:
                     logging.error(f"📸 👑 졸업 이미지 생성/발송 실패: {e}")
                     await query.edit_message_text("❌ 이미지 생성 중 오류가 발생했습니다.", parse_mode='HTML')
             
+        # 🚨 MODIFIED: [V71.28 수동 주문(EXEC) 최신 예산 팩트 스냅샷 강제 갱신 엔진 탑재]
         elif action == "EXEC":
             t = sub
             ver = await asyncio.to_thread(self.cfg.get_version, t)
 
             await query.answer()
-            await query.edit_message_text(f"🚀 {t} 수동 강제 전송 시작 (스냅샷 팩트 기반)...")
+            await query.edit_message_text(f"🚀 {t} 수동 강제 전송 시작 (최신 잔고 스냅샷 강제 갱신 중)...")
             
             async with self.tx_lock:
                 cash, holdings = await asyncio.to_thread(self.broker.get_account_balance)
                 
             if holdings is None:
                 return await query.edit_message_text("❌ API 통신 오류로 잔고를 확인할 수 없어 실행을 차단합니다. 잠시 후 다시 시도해 주세요.")
+
+            # 🚨 NEW: [스냅샷 강제 갱신 (Snapshot Override) 락온]
+            # 17:05 KST 당시 예산 부족으로 박제된 낡은 스냅샷(매수 0주)을 수동 주문 시 무조건 찢어버리고,
+            # 확보된 실시간 잔고를 기반으로 매수 덫까지 100% 장전된 최신 스냅샷을 영구 각인합니다.
+            def _nuke_old_snapshot():
+                est = ZoneInfo('America/New_York')
+                now_est = datetime.datetime.now(est)
+                if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 4):
+                    target_date = now_est - datetime.timedelta(days=1)
+                else:
+                    target_date = now_est
+                today_str = target_date.strftime("%Y-%m-%d")
                 
-            cached_snap = None
+                for prefix in ["REV", "V14VWAP", "V14"]:
+                    fpath = f"data/daily_snapshot_{prefix}_{today_str}_{t}.json"
+                    if os.path.exists(fpath):
+                        try: os.remove(fpath)
+                        except: pass
+            
+            await asyncio.to_thread(_nuke_old_snapshot)
+
+            active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
+            _, allocated_cash = await asyncio.to_thread(controller._calculate_budget_allocation, cash, active_tickers)
+            h = holdings.get(t, {'qty':0, 'avg':0})
+            curr_p = float(await asyncio.to_thread(self.broker.get_current_price, t) or 0.0)
+            prev_c = float(await asyncio.to_thread(self.broker.get_previous_close, t) or 0.0)
+            safe_avg = float(h.get('avg') or 0.0)
+            safe_qty = int(float(h.get('qty') or 0))
+            
+            status_code, _ = await controller._get_market_status()
+            if status_code in ["AFTER", "CLOSE", "PRE"]:
+                try:
+                    def get_yf_close():
+                        df = yf.Ticker(t).history(period="5d", interval="1d")
+                        return float(df['Close'].iloc[-1]) if not df.empty else None
+                    yf_close = await asyncio.wait_for(asyncio.to_thread(get_yf_close), timeout=3.0)
+                    if yf_close and yf_close > 0:
+                        prev_c = yf_close
+                except Exception as e:
+                    logging.debug(f"YF 정규장 종가 롤오버 스캔 실패 ({t}): {e}")
+                if curr_p > 0 and prev_c == 0.0:
+                    prev_c = curr_p
+         
+            ma_5day = await asyncio.to_thread(self.broker.get_5day_ma, t)
             is_manual_vwap = await asyncio.to_thread(getattr(self.cfg, 'get_manual_vwap_mode', lambda x: False), t)
             
-            if ver == "V_REV":
-                cached_snap = await asyncio.to_thread(self.strategy.v_rev_plugin.load_daily_snapshot, t)
-            elif ver == "V14":
-                if is_manual_vwap:
-                    cached_snap = await asyncio.to_thread(self.strategy.v14_vwap_plugin.load_daily_snapshot, t)
-                else:
-                    if hasattr(self.strategy, 'v14_plugin') and hasattr(self.strategy.v14_plugin, 'load_daily_snapshot'):
-                        cached_snap = await asyncio.to_thread(self.strategy.v14_plugin.load_daily_snapshot, t)
+            logic_qty_v14 = safe_qty
+            # 스냅샷이 막 소각되었으므로 is_snapshot_mode=True 를 강제 주입하여 실시간 예산으로 최신 지시서를 영구 박제합니다.
+            plan = await asyncio.to_thread(self.strategy.get_plan, t, curr_p, safe_avg, logic_qty_v14, prev_c, ma_5day=ma_5day, market_type="REG", available_cash=allocated_cash.get(t, 0.0), is_simulation=True, is_snapshot_mode=True)
             
-            if cached_snap and 'orders' in cached_snap:
-                plan = cached_snap
-            else:
-                active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
-                _, allocated_cash = await asyncio.to_thread(controller._calculate_budget_allocation, cash, active_tickers)
-                h = holdings.get(t, {'qty':0, 'avg':0})
-                curr_p = float(await asyncio.to_thread(self.broker.get_current_price, t) or 0.0)
-                prev_c = float(await asyncio.to_thread(self.broker.get_previous_close, t) or 0.0)
-                safe_avg = float(h.get('avg') or 0.0)
-                safe_qty = int(float(h.get('qty') or 0))
-                
-                status_code, _ = await controller._get_market_status()
-                if status_code in ["AFTER", "CLOSE", "PRE"]:
-                    try:
-                        def get_yf_close():
-                            df = yf.Ticker(t).history(period="5d", interval="1d")
-                            return float(df['Close'].iloc[-1]) if not df.empty else None
-                        yf_close = await asyncio.wait_for(asyncio.to_thread(get_yf_close), timeout=3.0)
-                        if yf_close and yf_close > 0:
-                            prev_c = yf_close
-                    except Exception as e:
-                        logging.debug(f"YF 정규장 종가 롤오버 스캔 실패 ({t}): {e}")
-                    if curr_p > 0 and prev_c == 0.0:
-                        prev_c = curr_p
-             
-                ma_5day = await asyncio.to_thread(self.broker.get_5day_ma, t)
-                logic_qty_v14 = safe_qty
-                if is_manual_vwap and cached_snap and "total_q" in cached_snap:
-                    logic_qty_v14 = cached_snap["total_q"]
-
-                plan = await asyncio.to_thread(self.strategy.get_plan, t, curr_p, safe_avg, logic_qty_v14, prev_c, ma_5day=ma_5day, market_type="REG", available_cash=allocated_cash.get(t, 0.0), is_simulation=True)
-                
-                if safe_qty == 0:
-                    for o in plan.get('core_orders', []):
-                        if o['side'] == 'BUY' and 'Buy1' in o.get('desc', ''):
-                            o['price'] = round(prev_c * 1.15, 2)
+            if safe_qty == 0:
+                for o in plan.get('core_orders', []):
+                    if o['side'] == 'BUY' and 'Buy1' in o.get('desc', ''):
+                        o['price'] = round(prev_c * 1.15, 2)
 
             title = f"💎 <b>[{t}] 예방적 덫 수동 주문 실행</b>\n"
             msg = title
@@ -472,8 +481,6 @@ class TelegramCallbacks:
             target_orders = plan.get('core_orders', plan.get('orders', []))
             
             for o in target_orders:
-                # 🚨 MODIFIED: [V71.26 KST 타임라인 동적 래핑 수술]
-                # 코어 엔진이 지시서에 주입해준 KST 팩트 타임을 순수하게 다이렉트 패스(Direct Pass)
                 if o['type'] == "VWAP":
                     res = await asyncio.to_thread(
                         self.broker.send_order, 
@@ -497,8 +504,6 @@ class TelegramCallbacks:
             
             target_bonus = plan.get('bonus_orders', [])
             for o in target_bonus:
-                # 🚨 MODIFIED: [V71.26 KST 타임라인 동적 래핑 수술]
-                # 코어 엔진이 지시서에 주입해준 KST 팩트 타임을 순수하게 다이렉트 패스(Direct Pass)
                 if o['type'] == "VWAP":
                     res = await asyncio.to_thread(
                         self.broker.send_order, 
