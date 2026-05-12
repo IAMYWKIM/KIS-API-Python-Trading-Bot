@@ -26,9 +26,11 @@
 # 🚨 MODIFIED: [V72.01 V-REV 1회 예산(15%) 하드 마진 캡(Cap) 락온]
 # 🚨 MODIFIED: [V72.02 제20경고 준수: V-REV 매수 앵커 디커플링 및 하극상 역전 방어 락온]
 # 🚨 MODIFIED: [V72.11 V-REV 지층 융합 맹점 영구 소각 및 100% 독립 LIFO 덫 장전 락온]
-# - 1층과 상위 층의 평단가를 하향 평준화시켜 묶어버리는 잭팟(Jackpot) 융합 맹점(V72.06) 완벽 적출.
-# - 17:05 예약 지시서는 예외 없이 1층(1.006)과 상위층(1.005)의 팩트 타점으로 100% 격리(Decoupling) 장전.
-# - 무의미한 Pop1, 잔여잭팟 텍스트를 전면 소각하고 1층탈출, 상위층탈출, 통합탈출 등 팩트 기반 UI로 동기화 완료.
+# 🚨 MODIFIED: [V72.13 V-REV 1층 독립 및 상위층 총평단가 연동 엑시트 전술 이식]
+# - 상위층(Upper) 매도 덫 타점(`trigger_upper`) 연산 시, 낡은 상위층 단독 평단가(`upper_avg`) 의존성을 영구 소각.
+# - 큐 장부 SSOT 기반 총 평단가(`avg_price`)를 절대 앵커로 삼아 `avg_price * 1.010` (+1% 수익) 팩트 교정 완료.
+# - 1층은 기존대로 1층 고유 타점(`l1_price * 1.006`)을 유지하여 가벼운 현금흐름 창출 궤도 100% 락온.
+# - UI 렌더링 텍스트를 '1층탈출', '총평단탈출', '통합탈출'로 직관적 팩트 렌더링 미러링 완료.
 # ==========================================================
 import math
 import os
@@ -201,6 +203,7 @@ class ReversionStrategy:
     def get_dynamic_plan(self, ticker, curr_p, prev_c, current_weight, vwap_status, min_idx, alloc_cash, q_data, is_snapshot_mode=False, market_type="REG"):
         self._load_state_if_needed(ticker)
 
+        # 🚨 [제20경고 팩트 검증] 큐(Queue) 장부의 순수 평단가 역산. KIS 평단가(actual_avg) 절대 참조 금지.
         valid_q_data = [item for item in q_data if float(item.get('price', 0.0)) > 0]
         total_q = sum(int(item.get("qty", 0)) for item in valid_q_data)
         total_inv = sum(float(item.get('qty', 0)) * float(item.get('price', 0.0)) for item in valid_q_data)
@@ -215,12 +218,11 @@ class ReversionStrategy:
             l1_price = sum(float(item.get('qty', 0)) * float(item.get('price', 0.0)) for item in lots_1) / l1_qty if l1_qty > 0 else 0.0
          
         upper_qty = total_q - l1_qty
-        upper_inv = total_inv - (l1_qty * l1_price)
-        upper_avg = upper_inv / upper_qty if upper_qty > 0 else 0.0
 
-        # 🚨 MODIFIED: [V72.11 V-REV 지층 융합 맹점(trigger_jackpot) 영구 소각 및 철저한 LIFO 분리 타점 락온]
+        # 🚨 MODIFIED: [V72.13 V-REV 1층 독립 및 상위층 총평단가 연동 엑시트 전술 이식]
+        # 상위층의 엑시트 앵커를 낡은 upper_avg에서 큐 장부의 진성 총 평단가(avg_price)로 교체하고 +1% 잭팟 타점 부여.
         trigger_l1 = round(l1_price * 1.006, 2)
-        trigger_upper = round(upper_avg * 1.005, 2) if upper_qty > 0 else 0.0
+        trigger_upper = round(avg_price * 1.010, 2) if upper_qty > 0 else 0.0
 
         cached_plan = self.load_daily_snapshot(ticker)
         
@@ -287,8 +289,6 @@ class ReversionStrategy:
             available_l1 = min(l1_qty, rem_qty_total)
             available_upper = min(upper_qty, rem_qty_total - available_l1)
             
-            # 🚨 MODIFIED: [V72.11 V-REV 지층 융합 맹점 영구 소각 및 100% 독립 LIFO 덫 장전 락온]
-            # 인위적인 타점 하향 평준화 병합을 전면 소각하고, 각 지층이 고유의 팩트 타점에서 100% 개별 독립 탈출하도록 방화벽 구축.
             sell_dict = {}
             if available_l1 > 0 and trigger_l1 > 0:
                 sell_dict[trigger_l1] = sell_dict.get(trigger_l1, 0) + available_l1
@@ -299,13 +299,13 @@ class ReversionStrategy:
                 s_qty = sell_dict[price]
                 ord_type = "VWAP" if s_qty >= 10 else "LOC"
                 
-                # 팩트 기반 직관적 UI 디커플링 렌더링
+                # 🚨 MODIFIED: [V72.13 UI 미러링 팩트 교정]
                 if price == trigger_l1 and price == trigger_upper:
                     desc_str = "통합탈출"
                 elif price == trigger_l1:
                     desc_str = "1층탈출"
                 elif price == trigger_upper:
-                    desc_str = "상위층탈출"
+                    desc_str = "총평단탈출"
                 else:
                     desc_str = "잔여탈출"
                     

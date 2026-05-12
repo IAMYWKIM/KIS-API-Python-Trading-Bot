@@ -4,9 +4,11 @@
 # (상단 주석 생략...)
 # 🚨 MODIFIED: [V72.06 V-REV 최저가순 매도 타점 통합 및 잭팟 렌더링 대수술]
 # 🚨 MODIFIED: [V72.12 UI 렌더링 팩트 교정 및 LIFO 독립 탈출 미러링]
-# - 잭팟(Jackpot) 강제 병합 및 하향 평준화 데드코드(temp_qty, target_l1_final 등) 전면 적출.
-# - 코어 엔진과 완벽히 동일한 수학적 로직으로 1층(L1)과 상위 층(Upper)을 100% 독립 렌더링 락온.
-# - 낡은 텍스트(Pop1, 잔여잭팟)를 소각하고 '1층탈출', '상위층탈출' 팩트 기반 텍스트로 오버라이드 완료.
+# 🚨 MODIFIED: [V72.13 V-REV 1층 독립 및 상위층 총평단가 연동 엑시트 전술 이식]
+# - 텔레그램 UI 렌더링 시 상위층(Upper) 타점 연산에 사용되던 상위층 단독 평단가(upper_avg) 의존성을 전면 소각.
+# - 코어 엔진과 동일하게 큐(Queue) 장부의 순수 총 투자금 기반 '총 평단가(q_avg_price)'를 절대 앵커로 삼아 trigger_upper를 연산하도록 팩트 교정 완료.
+# - KIS 증권사 평단가(actual_avg)는 철저히 배제(디커플링).
+# - 렌더링 텍스트를 "1층탈출", "총평단탈출", "통합탈출"로 직관적 팩트 미러링 완료.
 # ==========================================================
 import logging
 import datetime
@@ -485,7 +487,6 @@ class TelegramController:
             v_rev_q_lots = 0
             v_rev_guidance = ""
             
-            # 🚨 NEW: [V72.03 제16경고 준수: 스코프 전진 배치]
             l1_qty = 0
             l1_price = 0.0
 
@@ -498,7 +499,6 @@ class TelegramController:
                 v_rev_q_lots = len(q_list)
                 v_rev_q_qty = sum(item.get('qty', 0) for item in q_list)
                 
-                # 🚨 NEW: [V72.03 앵커 팩트 스캔]
                 if q_list:
                     l1_qty = int(float(q_list[-1].get('qty', 0)))
                     l1_price = float(q_list[-1].get('price', 0.0))
@@ -509,27 +509,27 @@ class TelegramController:
             
                 tag = "VWAP" if is_manual_vwap else "LOC"
                  
-                # 🚨 MODIFIED: [V72.06 V-REV 최저가순 매도 타점 렌더링 동기화 수술]
                 snap_sells_for_ui = [o for o in cached_snap.get("orders", []) if o.get('side') == 'SELL'] if cached_snap else []
                 if cached_snap and snap_sells_for_ui and logic_qty > 0:
                     for o in snap_sells_for_ui:
-                         desc_label = o.get('desc', '매도').split('(')[0] # Extract "Pop1", "전체잭팟" etc.
+                         desc_label = o.get('desc', '매도').split('(')[0]
                          v_rev_guidance += f" 🔵 {desc_label} ${o['price']:.2f} <b>{o['qty']}주</b> ({tag})\n"
                          
                 elif q_list and logic_qty > 0:
                     trigger_l1 = round(l1_price * 1.006, 2)
                     
-                    upper_qty = sum(int(float(item.get('qty', 0))) for item in q_list[:-1])
-                    trigger_upper = 0.0
-                    if upper_qty > 0:
-                         upper_invested = sum(int(float(item.get('qty', 0))) * float(item.get('price', 0.0)) for item in q_list[:-1])
-                         upper_avg = upper_invested / upper_qty
-                         trigger_upper = round(upper_avg * 1.005, 2)
+                    # 🚨 MODIFIED: [V72.13 UI 렌더링 팩트 교정 및 LIFO 독립 탈출 미러링]
+                    valid_q_data = [item for item in q_list if float(item.get('price', 0.0)) > 0]
+                    total_q = sum(int(float(item.get("qty", 0))) for item in valid_q_data)
+                    total_inv = sum(float(item.get('qty', 0)) * float(item.get('price', 0.0)) for item in valid_q_data)
+                    q_avg_price = (total_inv / total_q) if total_q > 0 else 0.0
+                    
+                    upper_qty = total_q - l1_qty
+                    trigger_upper = round(q_avg_price * 1.010, 2) if upper_qty > 0 else 0.0
                          
                     available_l1 = min(l1_qty, logic_qty)
                     available_upper = min(upper_qty, logic_qty - available_l1)
                     
-                    # 🚨 MODIFIED: [V72.12 UI 렌더링 팩트 교정 및 LIFO 독립 탈출 미러링]
                     sell_dict = {}
                     if available_l1 > 0 and trigger_l1 > 0:
                         sell_dict[trigger_l1] = sell_dict.get(trigger_l1, 0) + available_l1
@@ -544,14 +544,13 @@ class TelegramController:
                         elif price == trigger_l1:
                             desc_str = "1층탈출"
                         elif price == trigger_upper:
-                            desc_str = "상위층탈출"
+                            desc_str = "총평단탈출"
                         else:
                             desc_str = "잔여탈출"
                         v_rev_guidance += f" 🔵 {desc_str} ${price:.2f} <b>{s_qty}주</b> ({tag})\n"
                 else:
                     v_rev_guidance += " 🔵 매도: 대기 물량 없음 (관망)\n"
                
-                # 🚨 MODIFIED: [V72.03 UI 시각적 디커플링 해제 및 매수 앵커 수혈 락온]
                 safe_anchor = l1_price if l1_price > 0.0 else safe_prev_close
                 if safe_anchor > 0:
                     b1_price = round(safe_prev_close * 1.15 if is_zero_start_fact else safe_anchor * 0.995, 2)
