@@ -15,6 +15,9 @@
 # 🚨 MODIFIED: [V71.12 로컬 캐시 의존성 영구 소각 및 코어 압축]
 # - KIS 실시간 팩트 스캔 엔진 도입에 따라, 파일 파편화를 유발하는 로컬 예약 캐시 영속화 보조 함수(_save_resv_odno_sync) 전면 적출.
 # - 호출 루프 내 해당 비동기 배선 완벽 철거 및 코드 진공 압축 완료.
+# 🚨 NEW: [V71.14 사일런트 스킵(Silent Skip) 맹점 원천 수술 및 관망 팩트 보고망 이식]
+# - 예산 고갈 및 매도 타점 미도달로 전송할 덫(주문)이 0건일 때 봇이 조용히 침묵하던 UX 결함 해결.
+# - 주문이 없을 경우 즉시 "💤 관망 모드 유지 (주문 0건)" 상태를 텔레그램으로 명시적 타전하도록 방어막 구축.
 # ==========================================================
 import logging
 import datetime
@@ -136,13 +139,21 @@ async def scheduled_regular_trade(context):
                 )
                 
                 plans[t] = plan
-                if plan.get('core_orders', []) or plan.get('orders', []):
-                    is_rev = plan.get('is_reverse', False)
-                    msgs[t] += f"🔄 <b>[{t}] 리버스(VWAP) 예약 덫 장전 완료</b>\n" if is_rev else f"💎 <b>[{t}] 정규장(LOC/VWAP) 예약 덫 장전 완료</b>\n"
 
             for t in sorted_tickers:
                 if t not in plans: continue
                 target_orders = plans[t].get('core_orders', plans[t].get('orders', []))
+                target_bonus = plans[t].get('bonus_orders', [])
+                
+                # 🚨 NEW: [V71.14 사일런트 스킵 맹점 원천 수술] 주문 0건 시 관망 팩트 텔레그램 타전망 이식
+                if not target_orders and not target_bonus:
+                    msg_skip = f"💤 <b>[{t}] 관망 모드 유지 (주문 0건)</b>\n▫️ 가용 예산이 모두 소진되었고 장전할 매도 덫이 없어 금일 정규장은 시스템 관망합니다."
+                    await context.bot.send_message(chat_id=context.job.chat_id, text=msg_skip, parse_mode='HTML')
+                    continue
+                
+                is_rev = plans[t].get('is_reverse', False)
+                msgs[t] += f"🔄 <b>[{t}] 리버스(VWAP) 예약 덫 장전 완료</b>\n" if is_rev else f"💎 <b>[{t}] 정규장(LOC/VWAP) 예약 덫 장전 완료</b>\n"
+
                 for o in target_orders:
                     # 🚨 [라우팅 수술] send_order -> send_reservation_order 역배선 및 시간 주입
                     res = await asyncio.to_thread(
@@ -162,6 +173,8 @@ async def scheduled_regular_trade(context):
             for t in sorted_tickers:
                 if t not in plans: continue
                 target_bonus = plans[t].get('bonus_orders', [])
+                if not target_bonus: continue
+                
                 for o in target_bonus:
                     # 🚨 [라우팅 수술] send_order -> send_reservation_order 역배선 및 시간 주입
                     res = await asyncio.to_thread(

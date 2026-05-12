@@ -25,6 +25,9 @@
 # 🚨 MODIFIED: [V71.13 런타임 붕괴 방어 및 타임라인 전진 배치 수술]
 # - 들여쓰기 붕괴(IndentationError) 팩트 무결점 교정.
 # - start_time 파라미터 153000 하드코딩을 152500으로 전진 배치하여 V-REV 덤핑 복원 타임라인(15:25 EST)과 100% 동기화 완료.
+# 🚨 NEW: [V71.14 예약 덫 무조건 장전 헌법 복구 및 족쇄 철거]
+# - 1분 타임 슬라이싱 시절의 잔재인 `curr_p >= trigger_l1` 가격 족쇄를 전면 적출.
+# - 예약 덫(Limit VWAP)이므로 현재가와 무관하게 100% 무조건 KIS 서버에 Pop1, Pop2 매도 덫을 깔아두도록 퀀트 제1헌법 복구 완료.
 # ==========================================================
 import math
 import os
@@ -265,7 +268,7 @@ class ReversionStrategy:
             q1 = math.floor(b1_budget / p1_trigger) if p1_trigger > 0 else 0
             q2 = math.floor(b2_budget / p2_trigger) if p2_trigger > 0 else 0
             
-            # 🚨 MODIFIED: [V71.13 런타임 붕괴 방어 및 타임라인 전진 배치 수술] start_time 153000 -> 152500 교정
+            # 🚨 MODIFIED: [V71.13 런타임 붕괴 방어 및 타임라인 전진 배치 수술]
             start_t, end_t = "152500", "155500"
             
             if q1 > 0: orders.append({"side": "BUY", "qty": q1, "price": p1_trigger, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "VWAP매수(Buy1)"})
@@ -287,21 +290,21 @@ class ReversionStrategy:
         rem_qty_total = max(0, int(total_q) - int(self.executed["SELL_QTY"].get(ticker, 0)))
         
         if rem_qty_total > 0:
-            # 🚨 MODIFIED: [V71.13 런타임 붕괴 방어 및 타임라인 전진 배치 수술] start_time 153000 -> 152500 교정
+            # 🚨 MODIFIED: [V71.13 런타임 붕괴 방어 및 타임라인 전진 배치 수술]
             start_t, end_t = "152500", "155500"
             
-            if curr_p >= trigger_jackpot:
-                orders.append({"side": "SELL", "qty": rem_qty_total, "price": trigger_jackpot, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "전량대박익절"})
-            else:
-                available_l1 = min(l1_qty, rem_qty_total)
-                l1_queued = 0
-                if available_l1 > 0 and curr_p >= trigger_l1:
-                    orders.append({"side": "SELL", "qty": available_l1, "price": trigger_l1, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "Pop1(VWAP)"})
-                    l1_queued = available_l1
-                    
-                available_upper = min(upper_qty, rem_qty_total - l1_queued)
-                if available_upper > 0 and trigger_upper > 0 and curr_p >= trigger_upper:
-                    orders.append({"side": "SELL", "qty": available_upper, "price": trigger_upper, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "Pop2(VWAP)"})
+            # 🚨 MODIFIED: [V71.14 예약 덫 무조건 장전 헌법 복구]
+            # 과거 1분 타격 시절의 잔재인 `curr_p >= target` 족쇄 전면 철거.
+            # 예약 덫이므로 현재가와 무관하게 무조건 KIS 서버에 Pop1/Pop2 분할로 깔아두어 지정가 도달 시 체결되도록 100% 해방.
+            available_l1 = min(l1_qty, rem_qty_total)
+            l1_queued = 0
+            if available_l1 > 0 and trigger_l1 > 0:
+                orders.append({"side": "SELL", "qty": available_l1, "price": trigger_l1, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "Pop1(VWAP)"})
+                l1_queued = available_l1
+                
+            available_upper = min(upper_qty, rem_qty_total - l1_queued)
+            if available_upper > 0 and trigger_upper > 0:
+                orders.append({"side": "SELL", "qty": available_upper, "price": trigger_upper, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "Pop2(VWAP)"})
         
         plan_result = {
             "orders": orders, 
