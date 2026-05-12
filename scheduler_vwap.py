@@ -29,6 +29,7 @@
 # 1분 타임 슬라이싱 루프 내부에서 갭 스위칭(Gap Hijack) 진입을 가로막던 omni_filter 호출 의존성을 완벽히 끊어내고 런타임 붕괴(AttributeError) 뇌관 해체.
 # 🚨 MODIFIED: [V66.09 V-REV VWAP 런타임 엑스레이 이식]
 # 🚨 NEW: [KIS VWAP 알고리즘 권한 위임 수술] 1분마다 매수/매도 주문을 쏘던 자체 타임 슬라이싱 타격망 100% 영구 소각. KIS 예약 덫 체결 관망 및 갭 하이재킹(Gap Hijack) 섀도우 오버라이드망으로 롤 완벽 격상.
+# 🚨 NEW: [V71.10 섀도우 오버라이드 덫 파기 팩트 스캔] 갭 하이재킹 격발 시 로컬 캐시 조회 파기 로직 전면 소각 및 KIS 실원장(get_reservation_orders) 다이렉트 연동 아키텍처 이식.
 # ==========================================================
 import logging
 import datetime
@@ -113,7 +114,7 @@ async def scheduled_vwap_init_and_cancel(context):
             for t in active_tickers:
                 version = await asyncio.to_thread(cfg.get_version, t)
                 is_manual_vwap = await asyncio.to_thread(getattr(cfg, 'get_manual_vwap_mode', lambda x: False), t)
-                
+        
                 if version == "V_REV" and is_manual_vwap:
                     continue
                 
@@ -124,7 +125,7 @@ async def scheduled_vwap_init_and_cancel(context):
                             msg = f"🌅 <b>[{t}] KIS VWAP/LOC 예약 덫 관측 및 섀도우 오버라이드망 기상</b>\n"
                             msg += f"▫️ 장 마감 33분 전 진입을 확인하여 KIS 서버의 예약 덫 체결을 관망합니다.\n"
                             msg += f"▫️ 기초자산 갭 이탈 감지 시 즉각 개입(Gap Hijack)하는 섀도우 모드로 전환합니다. ⚔️"
-                            
+            
                             vwap_cache[f"REV_{t}_nuked"] = True
                             await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML', disable_notification=True)
                             await asyncio.sleep(1.0)
@@ -244,37 +245,40 @@ async def scheduled_vwap_trade(context):
                                 df_b = df_1min_base.copy()
                                 if 'time_est' in df_b.columns:
                                     df_b = df_b[(df_b['time_est'] >= '093000') & (df_b['time_est'] <= '155900')]
-                                
+                                 
                                 if not df_b.empty:
                                     df_b['tp'] = (df_b['high'].astype(float) + df_b['low'].astype(float) + df_b['close'].astype(float)) / 3.0
                                     df_b['vol'] = df_b['volume'].astype(float)
                                     df_b['vol_tp'] = df_b['tp'] * df_b['vol']
-                                    
+                                   
                                     c_vol = df_b['vol'].sum()
                                     base_vwap = df_b['vol_tp'].sum() / c_vol if c_vol > 0 else base_curr_p
-                                    
+                                     
                                     gap_pct = ((base_curr_p - base_vwap) / base_vwap * 100.0) if base_vwap > 0 else 0.0
                                     gap_thresh = await asyncio.to_thread(getattr(cfg, 'get_vrev_gap_threshold', lambda x: -0.67), t)
                                     
                                     if gap_pct <= gap_thresh:
                                         logging.info(f"⚡ [{t}] Gap Hijack Triggered! gap: {gap_pct:.2f}%, thresh: {gap_thresh}%")
                                         
-                                        cache_file = f"data/resv_odno_cache_{t}.json"
+                                        # 🚨 NEW: [섀도우 오버라이드 덫 파기 팩트 스캔] KIS 실원장 기반 덫 취소 (로컬 캐시 소각)
                                         nuked_count = 0
-                                        if os.path.exists(cache_file):
-                                            try:
-                                                with open(cache_file, 'r', encoding='utf-8') as f:
-                                                    c_data = json.load(f)
-                                                date_str = c_data.get('date', '').replace('-', '')
-                                                for req in c_data.get('orders', []):
+                                        try:
+                                            est_now = datetime.datetime.now(ZoneInfo('America/New_York'))
+                                            d_str = est_now.strftime('%Y%m%d')
+                                            
+                                            resv_orders = await asyncio.to_thread(broker.get_reservation_orders, t, d_str, d_str)
+                                            for req in resv_orders:
+                                                odno = req.get('odno')
+                                                ord_dt = req.get('ord_dt', d_str)
+                                                if odno:
                                                     try:
-                                                        await asyncio.to_thread(broker.cancel_reservation_order, date_str, req['odno'])
+                                                        await asyncio.to_thread(broker.cancel_reservation_order, ord_dt, odno)
                                                         nuked_count += 1
                                                     except Exception as e:
                                                         logging.error(f"🚨 [{t}] 예약 덫 취소 실패: {e}")
-                                                os.remove(cache_file)
-                                            except Exception as e:
-                                                logging.error(f"🚨 [{t}] 예약 덫 캐시 접근 에러: {e}")
+                                            logging.info(f"⚡ [{t}] KIS 실원장 스캔: 예약 덫 {nuked_count}건 팩트 파기 완료.")
+                                        except Exception as e:
+                                            logging.error(f"🚨 [{t}] KIS 실원장 예약 덫 스캔 에러: {e}")
                                         
                                         await asyncio.sleep(2.0)
                                         
@@ -310,7 +314,7 @@ async def scheduled_vwap_trade(context):
                                                 vwap_cache[f"REV_{t}_gap_hijack_fired"] = True
                                                 msg = f"⚡ <b>[{t}] 🤖 모멘텀 자율주행 (Gap Hijack) 섀도우 오버라이드 격발!</b>\n"
                                                 msg += f"▫️ 기초자산({base_tkr}) VWAP 이탈률(<b>{gap_pct:+.2f}%</b>)이 임계치(<b>{gap_thresh}%</b>)를 하향 돌파했습니다.\n"
-                                                msg += f"▫️ KIS 예약 덫({nuked_count}건)을 즉각 파기(Nuke)하고, 잔여 예산 100%를 매도 1호가로 전량 스윕(Sweep) 타격했습니다!\n"
+                                                msg += f"▫️ KIS 예약 덫({nuked_count}건)을 즉각 파기(Nuke)하고, 잔여 예산 100%를 매도 1호가로 일괄 스윕(Sweep) 타격했습니다!\n"
                                                 msg += f"▫️ 스윕 수량: <b>{buy_qty}주</b> (단가: ${exec_price:.2f})"
                                                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
                                                 
@@ -318,7 +322,7 @@ async def scheduled_vwap_trade(context):
                                                     await asyncio.to_thread(strategy.v_rev_plugin.record_execution, t, "BUY", buy_qty, exec_price)
                                                 if queue_ledger:
                                                     await asyncio.to_thread(queue_ledger.add_lot, t, buy_qty, exec_price, "GAP_HIJACK_BUY")
-                                                
+                                
                         except Exception as e:
                             logging.error(f"🚨 갭 스위칭 스캔 에러: {e}")
 

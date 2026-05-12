@@ -26,6 +26,8 @@
 # 관제탑 환각 방지를 위해 HA_LATCHED_BULL 상태 변경 시 즉각 파일(JSON)에 원자적(Atomic)으로 각인(save_state)하는 무결성 검증 완료. 제4헌법 완벽 준수.
 # 🚨 NEW: [V71.01 시계열 체력 예외 허용 엔진(V-Turn Intercept) 이식]
 # 하락 추세(Time_High < Time_Low) 판독 시에도, 진폭이 ATR5의 50% 이상 도달 및 현재가가 당일 미드포인트 이상 회복 시 V자 반등으로 판별하여 예외적으로 롱(SOXL) 진입을 허용하는 디커플링 아키텍처 대수술 완료.
+# 🚨 MODIFIED: [V71.08 AVWAP 암살자 덤핑 타임라인 전진 배치 팩트 교정]
+# 제11경고 5조 헌법에 따라 덤핑 앵커를 15:25 EST에서 15:20 EST로 시프트하여 15:17~15:20 지터 타격 락온 완료.
 # ==========================================================
 import logging
 import datetime
@@ -177,7 +179,7 @@ class VAvwapHybridPlugin:
                 "prev_close": prev_close,
                 "prev_vwap": prev_vwap,
                 "avg_vol_20": avg_vol_20
-            }
+             }
 
         except Exception as e:
             logging.error(f"🚨 [V_AVWAP] YF 기초자산 매크로 컨텍스트 추출 실패 ({base_ticker}): {e}")
@@ -216,9 +218,10 @@ class VAvwapHybridPlugin:
         time_0410 = datetime.time(4, 10)
         time_0930 = datetime.time(9, 30)
         
-        # NEW: [V66.00 AVWAP 덤핑 지터 분산 타격 락온] 동적 타임스탬프 연산
+        # 🚨 MODIFIED: [V71.08 AVWAP 암살자 덤핑 타임라인 전진 배치 팩트 교정]
+        # 제11경고 5조 헌법에 따라 덤핑 앵커를 15:25 EST에서 15:20 EST로 시프트하여 15:17~15:20 지터 타격 락온
         dump_jitter_sec = avwap_state.get('dump_jitter_sec', 0)
-        base_dump_dt = datetime.datetime.combine(now_est.date(), datetime.time(15, 25)).replace(tzinfo=ZoneInfo('America/New_York'))
+        base_dump_dt = datetime.datetime.combine(now_est.date(), datetime.time(15, 20)).replace(tzinfo=ZoneInfo('America/New_York'))
         dynamic_dump_dt = base_dump_dt - datetime.timedelta(seconds=dump_jitter_sec)
         time_dynamic_dump = dynamic_dump_dt.time()
 
@@ -308,7 +311,7 @@ class VAvwapHybridPlugin:
         safe_qty = int(math.floor(float(avwap_qty)))
 
         # ---------------------------------------------------------
-        # 1. 매도 (보유 중일 때) 로직 - 동적 지터(15:22~15:25) 무조건 덤핑 락온
+        # 1. 매도 (보유 중일 때) 로직 - 동적 지터(15:17~15:20) 무조건 덤핑 락온
         # ---------------------------------------------------------
         if safe_qty > 0:
             safe_avg = avwap_avg_price if avwap_avg_price > 0 else exec_curr_p
@@ -317,7 +320,7 @@ class VAvwapHybridPlugin:
                 # MODIFIED: [V59.02 잔재 데드코드 영구 소각] 레거시 키워드 (조기퇴근) 100% 삭제
                 return _build_res('SELL', 'CORRUPT_PRICE_EMERGENCY_DUMP', qty=safe_qty, target_price=exec_curr_p)
 
-            # 🚨 MODIFIED: [V66.00 AVWAP 동적 지터 덤핑 락온] 동적 타임스탬프 도달 시 무조건 전량 팩트 덤핑
+            # 🚨 MODIFIED: [V71.08 AVWAP 암살자 덤핑 타임라인 전진 배치 팩트 교정] 동적 타임스탬프 도달 시 무조건 전량 팩트 덤핑
             if curr_time >= time_dynamic_dump:
                 avwap_state["shutdown"] = True
                 self.save_state(exec_ticker, now_est, avwap_state)
@@ -354,7 +357,7 @@ class VAvwapHybridPlugin:
         if not is_regular_session:
             return _build_res('WAIT', '프리마켓_노이즈_원천차단_정규장_개장_대기')
 
-        # 🚨 MODIFIED: [V66.00 AVWAP 동적 지터 덤핑 락온] 신규 진입 영구동결 시간 교정
+        # 🚨 MODIFIED: [V71.08 AVWAP 암살자 덤핑 타임라인 전진 배치 팩트 교정] 신규 진입 영구동결 시간 교정
         if curr_time >= time_dynamic_dump:
             avwap_state["shutdown"] = True
             self.save_state(exec_ticker, now_est, avwap_state)
@@ -443,4 +446,3 @@ class VAvwapHybridPlugin:
             if not cond_seq: 
                 fail_reasons.append("시계열체력하락세")
             return _build_res('WAIT', f'진입조건대기({",".join(fail_reasons)})')
-

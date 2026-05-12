@@ -34,8 +34,10 @@
 # 🚨 MODIFIED: [런타임 즉사 방어] SYNC_ZERO 콜백 라우터 내 IndentationError 팩트 무결점 4배수 교정 완료.
 # 🚨 MODIFIED: [V71.02 XRAY 엔진 라우팅 영구 소각]
 # KIS 자체 VWAP 알고리즘 위임에 따라 1분 단위 시뮬레이션의 의미가 상실된 런타임 엑스레이(Dry-Run) 진단 콜백 라우터를 전면 적출 완료.
-# 🚨 MODIFIED: [V71.04 수동 주문(EXEC) 통합 스냅샷 격발 및 캐시 영속화 엔진 이식]
-# V-REV 전환 차단벽 허물기, 스냅샷 팩트 최우선 로드 락온 및 예약주문 번호 로컬 캐시 멱등성 영속화
+# 🚨 MODIFIED: [V71.11 수동 주문 격발 궤도 역배선 및 로컬 캐시 의존성 영구 소각]
+# - EXEC (수동 주문 실행) 콜백 라우터에서 일반 실시간 주문(send_order)을 호출하여 KIS 서버 리젝(Reject)을 유발하던 맹점 수술.
+# - 예약주문(send_reservation_order)으로 전면 교체 및 start_time, end_time 파라미터 강제 인젝션 완료.
+# - KIS 실원장 스캔 엔진 이식에 따라 무의미해진 로컬 예약 캐시(resv_odno_cache) 의존성 영구 적출 완료.
 # ==========================================================
 import logging
 import datetime
@@ -136,7 +138,7 @@ class TelegramCallbacks:
             if not getattr(self, 'queue_ledger', None):
                 from queue_ledger import QueueLedger
                 self.queue_ledger = QueueLedger()
-            
+             
             q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
             total_q = sum(item.get("qty", 0) for item in q_data)
             
@@ -162,7 +164,7 @@ class TelegramCallbacks:
             if not getattr(self, 'queue_ledger', None):
                 from queue_ledger import QueueLedger
                 self.queue_ledger = QueueLedger()
-                
+                 
             q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
             if not q_data:
                  await query.answer("⚠️ 큐(Queue)가 텅 비어있어 수혈할 잔여 물량이 없습니다.", show_alert=True)
@@ -178,7 +180,7 @@ class TelegramCallbacks:
                     
                     if res.get('rt_cd') == '0':
                         await asyncio.to_thread(self.queue_ledger.pop_lots, ticker, emergency_qty)
-                        
+                         
                         msg = f"🚨 <b>[{ticker}] 수동 긴급 수혈 (Emergency MOC) 격발 완료!</b>\n"
                         msg += f"▫️ 포트폴리오 매니저의 승인 하에 최근 로트 <b>{emergency_qty}주</b>를 시장가(MOC)로 강제 청산했습니다.\n"
                         await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
@@ -220,7 +222,7 @@ class TelegramCallbacks:
                         await asyncio.to_thread(self.queue_ledger.delete_lot, ticker, target_date)
                      
                     await query.answer("✅ 지층 삭제 완료. KIS 원장과 동기화합니다.", show_alert=False)
-             
+              
                     if ticker not in self.sync_engine.sync_locks:
                          self.sync_engine.sync_locks[ticker] = asyncio.Lock()
                     if not self.sync_engine.sync_locks[ticker].locked():
@@ -351,7 +353,7 @@ class TelegramCallbacks:
                         msg, markup = self.view.create_ledger_dashboard(target['ticker'], qty, avg, invested, sold, safe_trades, 0, 0, is_history=True)
                         
                     await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-            
+             
             elif sub == "LIST":
                 if hasattr(controller, 'cmd_history'):
                     await controller.cmd_history(update, context)
@@ -470,32 +472,34 @@ class TelegramCallbacks:
             msg = title
             all_success = True
             
-            # 🚨 [제13헌법 철거/재장전을 위한 락온] 타 스케줄러의 캐시 로직 재사용
-            from scheduler_regular import _save_resv_odno_sync
+            # 🚨 MODIFIED: [V71.11 수동 주문 격발 궤도 역배선 및 로컬 캐시 의존성 영구 소각]
+            # - EXEC (수동 주문 실행) 콜백 라우터에서 일반 실시간 주문(send_order)을 호출하여 KIS 서버 리젝을 유발하던 맹점 수술.
+            # - 예약주문(send_reservation_order)으로 전면 교체 및 start_time, end_time 파라미터 강제 인젝션 완료.
+            # - KIS 실원장 스캔 엔진 이식에 따라 무의미해진 로컬 예약 캐시(resv_odno_cache) 의존성(_save_resv_odno_sync) 영구 적출.
             
             for o in plan.get('core_orders', []):
-                res = await asyncio.to_thread(self.broker.send_order, t, o['side'], o['qty'], o['price'], o['type'])
+                res = await asyncio.to_thread(
+                    self.broker.send_reservation_order, 
+                    t, o['side'], o['qty'], o['price'], o['type'],
+                    start_time=o.get('start_time'), end_time=o.get('end_time')
+                )
                 is_success = res.get('rt_cd') == '0'
                 if not is_success:
                     all_success = False
-                    
-                odno = res.get('odno', '') if isinstance(res, dict) else ''
-                if is_success and odno:
-                    await asyncio.to_thread(_save_resv_odno_sync, t, odno, o['type'], o['side'])
-                    
+                
                 err_msg = res.get('msg1', '오류')
                 status_icon = '✅' if is_success else f'❌({err_msg})'
                 msg += f"└ 1차 필수: {o['desc']} {o['qty']}주: {status_icon}\n"
                 await asyncio.sleep(0.2) 
-                
+            
             for o in plan.get('bonus_orders', []):
-                res = await asyncio.to_thread(self.broker.send_order, t, o['side'], o['qty'], o['price'], o['type'])
+                res = await asyncio.to_thread(
+                    self.broker.send_reservation_order, 
+                    t, o['side'], o['qty'], o['price'], o['type'],
+                    start_time=o.get('start_time'), end_time=o.get('end_time')
+                )
                 is_success = res.get('rt_cd') == '0'
                 
-                odno = res.get('odno', '') if isinstance(res, dict) else ''
-                if is_success and odno:
-                    await asyncio.to_thread(_save_resv_odno_sync, t, odno, o['type'], o['side'])
-                    
                 err_msg = res.get('msg1', '잔금패스')
                 status_icon = '✅' if is_success else f'❌({err_msg})'
                 msg += f"└ 2차 보너스: {o['desc']} {o['qty']}주: {status_icon}\n"
@@ -564,7 +568,7 @@ class TelegramCallbacks:
                 msg, markup = self.view.get_v14_mode_selection_menu(ticker)
                 await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
                 return
-                
+        
             await asyncio.to_thread(self.cfg.set_version, ticker, new_ver)
             await asyncio.to_thread(self.cfg.set_upward_sniper_mode, ticker, False)
             if hasattr(self.cfg, 'set_avwap_hybrid_mode'):
@@ -595,7 +599,7 @@ class TelegramCallbacks:
             if holdings is None:
                 await context.bot.send_message(chat_id, "🚨 API 통신 지연으로 잔고를 확인할 수 없어 전환을 차단합니다. 잠시 후 다시 시도해 주세요.")
                 return
-                
+           
             kis_qty = int(float(holdings.get(ticker, {}).get('qty', 0)))
             max_qty = await self._get_max_holdings_qty(ticker, kis_qty)
             
@@ -605,7 +609,7 @@ class TelegramCallbacks:
                 msg += "증권사 앱에서 수동으로 전량 매도하셨다면, 채팅창에 <code>/reset</code>을 입력하여 장부를 초기화한 후 다시 시도해주세요."
                 await query.edit_message_text(msg, parse_mode='HTML')
                 return
-            
+             
             if max_qty > 0 and current_ver != target_ver:
                 msg = f"🚨 <b>[ 퀀트 모드 전환 강제 차단 ]</b>\n\n"
                 msg += f"현재 <b>[{ticker}] {max_qty}주</b>를 보유 중입니다. (삼중 교차 검증)\n"
@@ -624,7 +628,7 @@ class TelegramCallbacks:
                 # 🚨 NEW: [KIS VWAP 알고리즘 대통합 수술] 수동/자동 분기 전면 소각 및 자동 예약 락온
                 await asyncio.to_thread(self.cfg.set_manual_vwap_mode, ticker, True)
                 mode_txt = "🕒 KIS VWAP 알고리즘 예약 주문 자동 장전"
-                    
+                     
                 await query.edit_message_text(f"✅ <b>[{ticker}]</b> 퀀트 엔진이 <b>V_REV 역추세 하이브리드</b>로 전환되었습니다.\n▫️ <b>운용 방식:</b> {mode_txt}\n▫️ /sync 지시서를 확인해 주십시오.", parse_mode='HTML')
             
             elif mode_type in ["V14_LOC", "V14_VWAP"]:
@@ -655,7 +659,7 @@ class TelegramCallbacks:
             if context.job_queue:
                  for job in context.job_queue.jobs():
                      if job.data is not None:
-                        render_app_data = job.data
+                         render_app_data = job.data
             
             tracking_cache = render_app_data.setdefault('sniper_tracking', {})
             

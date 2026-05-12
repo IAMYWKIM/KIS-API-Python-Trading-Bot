@@ -12,64 +12,17 @@
 # - 17:05 KST에 실시간 주문(send_order)을 발송하여 전량 거절(Reject) 당하던 런타임 맹점 원천 차단.
 # - 예약 주문(send_reservation_order)으로 100% 역배선(Rewiring) 완료.
 # - 지시서의 start_time, end_time 파라미터를 다이렉트 인젝션하여 30분 압축 타임라인 락온.
+# 🚨 MODIFIED: [V71.12 로컬 캐시 의존성 영구 소각 및 코어 압축]
+# - KIS 실시간 팩트 스캔 엔진 도입에 따라, 파일 파편화를 유발하는 로컬 예약 캐시 영속화 보조 함수(_save_resv_odno_sync) 전면 적출.
+# - 호출 루프 내 해당 비동기 배선 완벽 철거 및 코드 진공 압축 완료.
 # ==========================================================
 import logging
 import datetime
 from zoneinfo import ZoneInfo
 import asyncio
 import random
-import os
-import json
-import tempfile
 
 from scheduler_core import is_market_open, get_budget_allocation
-
-def _save_resv_odno_sync(ticker, odno, ord_type, side):
-    """
-    제13헌법(예약 덫 철거 및 재장전 락온)을 수행하기 위해, 
-    17:05 KST에 전송된 예약 주문 번호(ODNO)를 로컬 캐시에 영속화합니다.
-    """
-    cache_file = f"data/resv_odno_cache_{ticker}.json"
-    data = {}
-    if os.path.exists(cache_file):
-        try:
-            with open(cache_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except Exception:
-            pass
-    
-    est = ZoneInfo('America/New_York')
-    now_est = datetime.datetime.now(est)
-    
-    if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 4):
-        logical_date = now_est - datetime.timedelta(days=1)
-    else:
-        logical_date = now_est
-    today_str = logical_date.strftime('%Y-%m-%d')
-    
-    if data.get('date') != today_str:
-        data = {'date': today_str, 'orders': []}
-        
-    data['orders'].append({
-        'odno': odno,
-        'type': ord_type,
-        'side': side,
-        'timestamp': now_est.strftime('%H:%M:%S')
-    })
-    
-    try:
-        os.makedirs('data', exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir='data', text=True)
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, cache_file)
-    except Exception as e:
-        if os.path.exists(tmp):
-            try: os.remove(tmp)
-            except OSError: pass
-        logging.error(f"🚨 [{ticker}] 예약주문 ODNO 캐싱 실패 (제4헌법 위반 위험): {e}")
 
 async def scheduled_regular_trade(context):
     try:
@@ -199,11 +152,8 @@ async def scheduled_regular_trade(context):
                     )
                     is_success = res.get('rt_cd') == '0'
                     if not is_success: all_success_map[t] = False
-                    
-                    odno = res.get('odno', '') if isinstance(res, dict) else ''
-                    if is_success and odno:
-                        await asyncio.to_thread(_save_resv_odno_sync, t, odno, o['type'], o['side'])
 
+                    # 🚨 [V71.12 로컬 캐시 의존성 영구 소각] _save_resv_odno_sync 호출부 전면 적출 완료.
                     err_msg = res.get('msg1', '오류')
                     status_icon = '✅' if is_success else f'❌({err_msg})'
                     msgs[t] += f"└ 1차 필수: {o['desc']} {o['qty']}주 (${o['price']}): {status_icon}\n"
@@ -220,11 +170,8 @@ async def scheduled_regular_trade(context):
                         start_time=o.get('start_time'), end_time=o.get('end_time')
                     )
                     is_success = res.get('rt_cd') == '0'
-                    
-                    odno = res.get('odno', '') if isinstance(res, dict) else ''
-                    if is_success and odno:
-                        await asyncio.to_thread(_save_resv_odno_sync, t, odno, o['type'], o['side'])
 
+                    # 🚨 [V71.12 로컬 캐시 의존성 영구 소각] _save_resv_odno_sync 호출부 전면 적출 완료.
                     err_msg = res.get('msg1', '잔금패스')
                     status_icon = '✅' if is_success else f'❌({err_msg})'
                     msgs[t] += f"└ 2차 보너스: {o['desc']} {o['qty']}주 (${o['price']}): {status_icon}\n"
@@ -267,7 +214,7 @@ async def scheduled_regular_trade(context):
         else:
             logging.warning(f"정규장 예약 덫 조건 미충족 ({attempt}/{MAX_RETRIES}): {fail_reason}")
             if attempt == 1:
-                await context.bot.send_message(
+                 await context.bot.send_message(
                     chat_id=context.job.chat_id, 
                     text=f"⚠️ <b>[API 통신 지연 감지]</b>\n한투 서버 불안정. 1분 뒤 재시도합니다! 🛡️\n<code>사유: {fail_reason}</code>", 
                     parse_mode='HTML'

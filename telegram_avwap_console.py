@@ -40,6 +40,8 @@
 # 🚨 MODIFIED: [V71.02 관제탑 V-Turn 팩트 동기화(UI 디커플링 해체) 수술]
 # 코어 엔진에 이식된 V-Turn Intercept(찐바닥 예외 허용) 조건을 관제탑에도 100% 팩트 이식.
 # 진폭 50% 돌파 및 당일 미드포인트 회복 감지 시 '하락세' 텍스트를 'V자 반등(찐바닥 포착)'으로 동적 오버라이드.
+# 🚨 MODIFIED: [V71.08 AVWAP 암살자 덤핑 타임라인 전진 배치 팩트 교정]
+# 제11경고 5조 헌법에 따라 관제탑 덤핑 앵커를 15:25 EST에서 15:20 EST로 시프트하여 15:17~15:20 지터 타격 락온 시각화 완비.
 # ==========================================================
 import logging
 import datetime
@@ -122,7 +124,7 @@ class AvwapConsolePlugin:
              
             if df_1m is not None and not df_1m.empty:
                 df = df_1m.copy()
-                 
+                  
                 # 🚨 [Time-Split Radar] 세션에 따른 데이터 슬라이싱 (노이즈 소각)
                 if 'time_est' in df.columns:
                     if is_regular_session:
@@ -149,7 +151,7 @@ class AvwapConsolePlugin:
           
                     if base_curr_p == 0.0:
                         base_curr_p = float(df['close'].iloc[-1])
-                    
+                     
                     recent_5 = df.tail(5)
                     sum_vol_5 = recent_5['vol'].sum()
                     if sum_vol_5 > 0:
@@ -313,7 +315,7 @@ class AvwapConsolePlugin:
             if base_prev_c > 0 and base_day_high > 0 and base_day_low > 0:
                 is_neg_gap_state = (base_day_high < base_prev_c) and (base_day_low < base_prev_c)
                 cond1_met = not is_neg_gap_state
-                    
+                
             if prev_c > 0 and day_high > 0 and day_low > 0:
                 actual_gap_dollar = day_high - day_low
                 actual_gap_pct = (actual_gap_dollar / prev_c) * 100.0
@@ -379,9 +381,9 @@ class AvwapConsolePlugin:
             msg += f"   {c3_str} 상대 잔여 체력 30% 이상 (현재: {rem_relative_pct:.1f}%)\n"
             msg += f"▫️ 타격 상태: {trend_str}\n"
 
-            # 🚨 MODIFIED: [V66.00 AVWAP 지터 분산 타격 락온] 동적 덤핑 시간 연산
+            # 🚨 MODIFIED: [V71.08 AVWAP 지터 분산 타격 락온] 동적 덤핑 시간 연산 시프트 (15:20 앵커)
             dump_jitter_sec = tracking_cache.get(f"AVWAP_DUMP_JITTER_{t}", 0)
-            base_dump_dt = datetime.datetime.combine(now_est.date(), datetime.time(15, 25)).replace(tzinfo=ZoneInfo('America/New_York'))
+            base_dump_dt = datetime.datetime.combine(now_est.date(), datetime.time(15, 20)).replace(tzinfo=ZoneInfo('America/New_York'))
             dynamic_dump_dt = base_dump_dt - datetime.timedelta(seconds=dump_jitter_sec)
             dynamic_dump_str = dynamic_dump_dt.strftime("%H:%M:%S")
 
@@ -434,14 +436,14 @@ class AvwapConsolePlugin:
                 msg += f"               <b>({exh_5:.0f}% 소진 / 고가 기준)</b>\n"
 
             curr_time = now_est.time()
-            # 🚨 MODIFIED: [V66.00 AVWAP 동적 지터 분산 타격 락온] 타임 쉴드 전진 배치 변수 소각 및 동적 덤핑 타임 적용
+            # 🚨 MODIFIED: [V71.08 AVWAP 동적 지터 분산 타격 락온] 타임 쉴드 전진 배치 변수 소각 및 15:20 앵커 동적 덤핑 타임 적용
             time_dynamic_dump = dynamic_dump_dt.time()
             
             status_txt = "👀 타점 스캔중"
             if not is_avwap_active:
                 status_txt = "⚪ 모드 비활성 (레이더 관측 중)"
             elif is_shutdown: 
-                # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 15:25 전량 덤핑 후 물리적 잔량 발생 시 팩트 기반 렌더링으로 진공 압축
+                # 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각] 전량 덤핑 후 물리적 잔량 발생 시 팩트 기반 렌더링으로 진공 압축
                 if avwap_qty > 0:
                      status_txt = "🌙 미체결 잔량 오버나이트 롤오버"
                 else:

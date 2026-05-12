@@ -10,6 +10,9 @@
 # 🚨 MODIFIED: [치명적 경고 3] 텔레그램 지시서 조회(min_idx < 0) 시 스냅샷 반환 디커플링 및 실시간 타격 분리 락온.
 # 🚨 MODIFIED: [치명적 경고 19] UnboundLocalError 원천 봉쇄를 위한 변수 스코프 전진 배치 수술 완료.
 # 🚨 NEW: [KIS VWAP 알고리즘 대통합 수술] 1분 단위 타임 슬라이싱 연산 및 잔차 버킷 파편화 궤적을 100% 영구 소각하고, 할당된 1회분 총 예산을 단일 KIS VWAP 덫 예약 주문 플랜으로 통짜 스냅샷 산출하여 반환하도록 아키텍처 대수술 완료.
+# 🚨 MODIFIED: [V71.09 30분 압축 타임라인 팩트 교정]
+# - V14 VWAP의 덫 주문 시 start_time("152500")과 end_time("155500") 파라미터가 누락된 데이터 기아 현상 해결 및 종일 타격 패러독스 원천 차단.
+# - 코드 내부의 들여쓰기 붕괴(IndentationError) 팩트 교정.
 # ==========================================================
 import math
 import logging
@@ -59,7 +62,7 @@ class V14VwapStrategy:
                     self.state_loaded[ticker] = today_str
                     return
             except Exception:
-                 pass
+                pass
                  
         self.executed["BUY_BUDGET"][ticker] = 0.0
         self.executed["SELL_QTY"][ticker] = 0
@@ -75,23 +78,23 @@ class V14VwapStrategy:
                 "BUY_BUDGET": float(self.executed.get("BUY_BUDGET", {}).get(ticker, 0.0)),
                 "SELL_QTY": int(self.executed.get("SELL_QTY", {}).get(ticker, 0))
             }
-         }
+        }
         temp_path = None
         try:
-             dir_name = os.path.dirname(state_file)
-             os.makedirs(dir_name, exist_ok=True) 
-             fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
-             with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                 json.dump(data, f, ensure_ascii=False, indent=4)
-                 f.flush()
-                 os.fsync(f.fileno()) 
-             os.replace(temp_path, state_file)
-             temp_path = None
+            dir_name = os.path.dirname(state_file)
+            os.makedirs(dir_name, exist_ok=True) 
+            fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+                f.flush()
+                os.fsync(f.fileno()) 
+            os.replace(temp_path, state_file)
+            temp_path = None
         except Exception as e:
             logging.critical(f"🚨 [STATE SAVE FAILED] {ticker} 상태 저장 실패. 봇 기억상실 위험! 원인: {e}")
             if temp_path and os.path.exists(temp_path):
-                 try: os.unlink(temp_path)
-                 except OSError: pass
+                try: os.unlink(temp_path)
+                except OSError: pass
 
     def refund_residual(self, ticker, bucket, refund_value):
         # MODIFIED: 잔차 버킷 소각에 따라 환불 로직 바이패스 락온
@@ -105,8 +108,8 @@ class V14VwapStrategy:
             return
 
         data = {
-             "date": today_str,
-             "plan": plan_data
+            "date": today_str,
+            "plan": plan_data
         }
         temp_path = None
         try:
@@ -114,24 +117,24 @@ class V14VwapStrategy:
             os.makedirs(dir_name, exist_ok=True)
             fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                 json.dump(data, f, ensure_ascii=False, indent=4)
-                 f.flush()
-                 os.fsync(f.fileno()) 
+                json.dump(data, f, ensure_ascii=False, indent=4)
+                f.flush()
+                os.fsync(f.fileno()) 
             os.replace(temp_path, snap_file)
             temp_path = None
         except Exception as e:
             logging.critical(f"🚨 [SNAPSHOT SAVE FAILED] {ticker} 스냅샷 저장 실패. 지시서 보존 불가! 원인: {e}")
             if temp_path and os.path.exists(temp_path):
-                 try: os.unlink(temp_path)
-                 except OSError: pass
+                try: os.unlink(temp_path)
+                except OSError: pass
 
     def load_daily_snapshot(self, ticker):
         snap_file = self._get_snapshot_file(ticker)
         if os.path.exists(snap_file):
             try:
                 with open(snap_file, 'r', encoding='utf-8') as f:
-                     data = json.load(f)
-                     return data.get("plan")
+                    data = json.load(f)
+                    return data.get("plan")
             except Exception:
                 pass
         return None
@@ -139,7 +142,7 @@ class V14VwapStrategy:
     def ensure_failsafe_snapshot(self, ticker, current_price, total_qty, avwap_qty, avg_price, prev_close, alloc_cash):
         snap = self.load_daily_snapshot(ticker)
         if snap is not None:
-             return snap
+            return snap
             
         pure_qty = max(0, total_qty - avwap_qty)
         
@@ -147,10 +150,10 @@ class V14VwapStrategy:
         legacy_qty = pure_qty
         legacy_avg = avg_price
         try:
-             recs = [r for r in self.cfg.get_ledger() if r['ticker'] == ticker and not str(r.get("date", "")).startswith(today_str_est)]
-             ledger_qty, ledger_avg, _, _ = self.cfg.calculate_holdings(ticker, recs)
-             legacy_qty = ledger_qty
-             legacy_avg = ledger_avg if ledger_qty > 0 else avg_price
+            recs = [r for r in self.cfg.get_ledger() if r['ticker'] == ticker and not str(r.get("date", "")).startswith(today_str_est)]
+            ledger_qty, ledger_avg, _, _ = self.cfg.calculate_holdings(ticker, recs)
+            legacy_qty = ledger_qty
+            legacy_avg = ledger_avg if ledger_qty > 0 else avg_price
         except Exception:
             pass
             
@@ -208,6 +211,9 @@ class V14VwapStrategy:
         process_status = "예방적방어선"
         is_zero_start_fact = False
         
+        # 🚨 MODIFIED: [V71.09 30분 압축 타임라인 팩트 교정] 종일 타격 패러독스 차단을 위한 시간 인젝션
+        start_t, end_t = "152500", "155500"
+
         # MODIFIED: [KIS VWAP 알고리즘 대통합 수술] 1분 단위 타임 슬라이싱 연산을 소각하고 단일 KIS VWAP 덫 예약 주문(type: "VWAP") 플랜으로 통짜 반환
         if qty == 0:
             is_zero_start_fact = True
@@ -215,24 +221,24 @@ class V14VwapStrategy:
             buy_star_price = p_buy 
             
             q_buy = math.floor(dynamic_budget / p_buy) if p_buy > 0 else 0
-            if q_buy > 0: core_orders.append({"side": "BUY", "price": p_buy, "qty": q_buy, "type": "VWAP", "desc": "🆕새출발(VWAP)"})
+            if q_buy > 0: core_orders.append({"side": "BUY", "price": p_buy, "qty": q_buy, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "🆕새출발(VWAP)"})
             process_status = "✨새출발"
         else:
             p_avg = self._ceil(avg_price)
             if t_val < (split / 2):
                 q_avg = math.floor((dynamic_budget * 0.5) / p_avg) if p_avg > 0 else 0
                 q_star = math.floor((dynamic_budget * 0.5) / buy_star_price) if buy_star_price > 0 else 0
-                if q_avg > 0: core_orders.append({"side": "BUY", "price": p_avg, "qty": q_avg, "type": "VWAP", "desc": "⚓평단매수(VWAP)"})
-                if q_star > 0: core_orders.append({"side": "BUY", "price": buy_star_price, "qty": q_star, "type": "VWAP", "desc": "💫별값매수(VWAP)"})
+                if q_avg > 0: core_orders.append({"side": "BUY", "price": p_avg, "qty": q_avg, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "⚓평단매수(VWAP)"})
+                if q_star > 0: core_orders.append({"side": "BUY", "price": buy_star_price, "qty": q_star, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "💫별값매수(VWAP)"})
             else:
                 q_star = math.floor(dynamic_budget / buy_star_price) if buy_star_price > 0 else 0
-                if q_star > 0: core_orders.append({"side": "BUY", "price": buy_star_price, "qty": q_star, "type": "VWAP", "desc": "💫별값매수(VWAP)"})
+                if q_star > 0: core_orders.append({"side": "BUY", "price": buy_star_price, "qty": q_star, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "💫별값매수(VWAP)"})
             
             q_sell = math.ceil(qty / 4)
             if q_sell > 0:
-                core_orders.append({"side": "SELL", "price": star_price, "qty": q_sell, "type": "VWAP", "desc": "🌟별값매도(VWAP)"})
-                if qty - q_sell > 0:
-                    core_orders.append({"side": "SELL", "price": target_price, "qty": qty - q_sell, "type": "LIMIT", "desc": "🎯목표매도(V)"})
+                core_orders.append({"side": "SELL", "price": star_price, "qty": q_sell, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "🌟별값매도(VWAP)"})
+            if qty - q_sell > 0:
+                core_orders.append({"side": "SELL", "price": target_price, "qty": qty - q_sell, "type": "LIMIT", "desc": "🎯목표매도(V)"})
 
         if is_zero_start_fact and market_type != "AFTER":
              core_orders = [o for o in core_orders if o.get("side") != "SELL"]

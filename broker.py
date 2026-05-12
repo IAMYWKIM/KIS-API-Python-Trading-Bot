@@ -13,6 +13,9 @@
 # - KIS 명세에 따라 VWAP 주문 시 ORD_DVSN="36" 및 ALGO_ORD_TMD_DVSN_CD="00"(시간지정) 락온.
 # 🚨 MODIFIED: [V71.06 지정가 VWAP(Limit VWAP) 절대 락온 수술]
 # - 시장가(0) 강제 변환 로직을 전면 소각하고, 지시서에 명시된 지정가를 FT_ORD_UNPR3에 100% 다이렉트 주입하여 '가격 불만족 시 체결 거부' 방어막 확립.
+# NEW: [V71.07 KIS 예약주문 실원장 다이렉트 스캔 및 LOC 강제 인젝션]
+# - 로컬 캐시 의존성을 소각하고 get_reservation_orders 엔진을 신설하여 페이징 무결성 확보.
+# - LOC 예약 주문 시 ORD_DVSN="34" 파라미터 다이렉트 인젝션 라우팅 교정 완료.
 # ==========================================================
 
 import requests
@@ -38,6 +41,7 @@ def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
         elif df.columns.nlevels == 2:
             price_fields = {'Close', 'High', 'Low', 'Open', 'Volume', 'Adj Close'}
             level0_vals = set(df.columns.get_level_values(0))
+           
             drop_level = 0 if not level0_vals.intersection(price_fields) else 1
             df.columns = df.columns.droplevel(drop_level)
     return df
@@ -87,7 +91,7 @@ class KoreaInvestmentBroker:
                 dir_name = os.path.dirname(self.token_file)
                 if dir_name and not os.path.exists(dir_name):
                     os.makedirs(dir_name, exist_ok=True)
-              
+   
                 fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
                 try:
                     with os.fdopen(fd, 'w', encoding='utf-8') as f:
@@ -119,7 +123,7 @@ class KoreaInvestmentBroker:
             'expired', '인증', 'authorization', 'egt0001', 'egt0002', 'oauth', 
             '접근토큰이 만료', '토큰이 유효하지'
         ])
-        
+    
         for attempt in range(2): 
             try:
                 if method.upper() == "GET":
@@ -224,7 +228,7 @@ class KoreaInvestmentBroker:
             dncl_amt = self._safe_float(o2.get('frcr_dncl_amt_2', 0))       
             sll_amt = self._safe_float(o2.get('frcr_sll_amt_smtl', 0))      
             buy_amt = self._safe_float(o2.get('frcr_buy_amt_smtl', 0))      
-            
+             
             raw_bp = dncl_amt + sll_amt - buy_amt
             cash = max(0.0, math.floor((raw_bp * 0.9945) * 100) / 100.0)
 
@@ -236,7 +240,7 @@ class KoreaInvestmentBroker:
                 headers = self._get_header("TTTS3012R")
                 url = f"{self.base_url}/uapi/overseas-stock/v1/trading/inquire-balance"
                 res_hold, resp_json = self._api_request("GET", url, headers, params=params_hold)
-                
+                 
                 if res_hold and resp_json.get('rt_cd') == '0':
                     api_success = True
                     if cash <= 0:
@@ -244,14 +248,15 @@ class KoreaInvestmentBroker:
                         if isinstance(o2, list): o2 = o2[0] if len(o2) > 0 else {}
                         new_cash = self._safe_float(o2.get('ovrs_ord_psbl_amt', 0))
                         if new_cash > cash: cash = new_cash
-                    
+                     
                     for item in (resp_json.get('output1') or []):
                         ticker = item.get('ovrs_pdno')
                         if not ticker: continue
+ 
                         qty = int(self._safe_float(item.get('ovrs_cblc_qty', 0)))
                         ord_psbl_qty = int(self._safe_float(item.get('ord_psbl_qty', 0)))
                         avg = self._safe_float(item.get('pchs_avg_pric', 0))
-                        
+                         
                         if qty > 0 and ord_psbl_qty == 0: ord_psbl_qty = qty
                         if qty > 0:
                             if ticker not in holdings: 
@@ -488,6 +493,49 @@ class KoreaInvestmentBroker:
             else: return False
         return valid_orders
 
+    # NEW: [V71.07 KIS 예약주문 실원장 다이렉트 스캔 결속]
+    # - 로컬 캐시 의존성을 전면 소각하고 KIS API(TTTT3039R)를 다이렉트로 호출하는 무결점 코어 엔진 이식
+    # - 페이징 처리 루프를 통해 데이터 기아 현상 100% 원천 차단
+    def get_reservation_orders(self, ticker, start_date, end_date):
+        excg_cd = self._get_exchange_code(ticker, target_api="ORDER")
+        valid_orders = []
+        fk200, nk200 = "", ""
+        
+        for attempt in range(15):
+            params = {
+                "CANO": self.cano,
+                "ACNT_PRDT_CD": self.acnt_prdt_cd,
+                "INQR_STRT_DT": start_date,
+                "INQR_END_DT": end_date,
+                "INQR_DVSN_CD": "00",
+                "OVRS_EXCG_CD": excg_cd,
+                "PRDT_TYPE_CD": "",
+                "CTX_AREA_FK200": fk200,
+                "CTX_AREA_NK200": nk200
+            }
+            
+            res, resp_json = self._api_request("GET", f"{self.base_url}/uapi/overseas-stock/v1/trading/order-resv-list", self._get_header("TTTT3039R"), params=params)
+            
+            if res and resp_json.get('rt_cd') == '0':
+                output = resp_json.get('output', [])
+                if isinstance(output, dict): output = [output]
+                
+                valid_orders.extend([item for item in output if item.get('pdno') == ticker])
+                
+                tr_cont = res.headers.get('tr_cont', '') if hasattr(res, 'headers') else ''
+                fk200 = (resp_json.get('ctx_area_fk200', '') or '').strip()
+                nk200 = (resp_json.get('ctx_area_nk200', '') or '').strip()
+                
+                if tr_cont in ['M', 'F'] and nk200:
+                    time.sleep(0.3)
+                    continue
+                else:
+                    break
+            else:
+                break
+                
+        return valid_orders
+
     def cancel_all_orders_safe(self, ticker, side=None):
         for i in range(3):
             orders = self.get_unfilled_orders_detail(ticker)
@@ -571,6 +619,7 @@ class KoreaInvestmentBroker:
         return self._call_api("TTTS6038U", "/uapi/overseas-stock/v1/trading/daytime-order-rvsecncl", "POST", body=body)
 
     # 🚨 MODIFIED: [V71.06 지정가 VWAP(Limit VWAP) 절대 락온 수술]
+    # NEW: [V71.07 LOC 예약주문 강제 인젝션 라우팅 교정 완료]
     def send_reservation_order(self, ticker, side, qty, price, order_type="LIMIT", start_time=None, end_time=None):
         """ 💡 KIS 명세에 따라 VWAP 주문 시 ORD_DVSN '36' 및 지정가 가격 락온 지원 """
         try: order_qty = int(float(qty))
@@ -585,7 +634,7 @@ class KoreaInvestmentBroker:
             "OVRS_EXCG_CD": excg_cd, "FT_ORD_QTY": str(order_qty)
         }
         
-        # 🚨 [팩트 패치] 지정가 VWAP (Limit VWAP) 락온
+        # 🚨 [팩트 패치] 지정가 VWAP (Limit VWAP) 및 LOC 락온
         if order_type == "VWAP":
             body["ORD_DVSN"] = "36" # 36: VWAP 지원
             
@@ -601,6 +650,10 @@ class KoreaInvestmentBroker:
             else:
                 # ※ 종결시간 미입력 시 정규장 종료시까지 '02' 고정
                 body["ALGO_ORD_TMD_DVSN_CD"] = "02"
+        elif order_type == "LOC":
+            # 🚨 NEW: [LOC 예약주문 강제 인젝션]
+            body["ORD_DVSN"] = "34" # 34: LOC (장마감지정가)
+            body["FT_ORD_UNPR3"] = final_price
         else:
             body["ORD_DVSN"] = "00" # 일반 지정가 예약
             body["FT_ORD_UNPR3"] = final_price
