@@ -36,10 +36,9 @@
 # KIS 자체 VWAP 알고리즘 위임에 따라 1분 단위 시뮬레이션의 의미가 상실된 런타임 엑스레이(Dry-Run) 진단 콜백 라우터를 전면 적출 완료.
 # 🚨 MODIFIED: [V71.14 지정가 VWAP 일반주문 역배선 팩트 락온]
 # 🚨 MODIFIED: [V71.15 V-REV 수동 격발 렌더링 증발(Silent Skip) 버그 수술]
-# 🚨 MODIFIED: [V71.18 KIS 서버 타임존(KST) 팩트 동기화 및 Reject 완벽 수술]
-# - KIS 서버는 VWAP 알고리즘 시작/종료 시간을 KST(한국시간)로 요구하므로, 
-#   지시서의 EST 시간('152500')을 그대로 쏘면 장시간 이탈 오류(ALGO주문시작시간 입력오류)로 100% Reject 당함.
-# - EST 시간을 KST 시간으로 동적 래핑(_est_to_kst_str)하여 팩트 주입하는 무결점 컨버터 엔진 이식 완료.
+# 🚨 MODIFIED: [V71.19 KST 타임 하드코딩 팩트 락온]
+# - KIS 서버 타임존 컨버터(_est_to_kst_str)의 복잡성을 소각.
+# - 포트폴리오 매니저(승승장군님)의 지시에 따라 서머타임 기준 KST '042500', '045500'을 다이렉트 하드코딩 인젝션 완료.
 # ==========================================================
 import logging
 import datetime
@@ -404,8 +403,7 @@ class TelegramCallbacks:
                     logging.error(f"📸 👑 졸업 이미지 생성/발송 실패: {e}")
                     await query.edit_message_text("❌ 이미지 생성 중 오류가 발생했습니다.", parse_mode='HTML')
             
-        # 🚨 MODIFIED: [V71.18 KIS 서버 타임존(KST) 팩트 동기화 수술]
-        # V-REV 전환 차단벽 허물기, 스냅샷 팩트 최우선 로드 락온 및 예약주문 번호 로컬 캐시 멱등성 영속화
+        # 🚨 MODIFIED: [V71.19 KST 타임 하드코딩 팩트 락온]
         elif action == "EXEC":
             t = sub
             ver = await asyncio.to_thread(self.cfg.get_version, t)
@@ -474,27 +472,14 @@ class TelegramCallbacks:
             msg = title
             all_success = True
             
-            # 🚨 MODIFIED: [V71.18 KIS 서버 타임존(KST) 팩트 동기화 수술]
-            # KIS 서버는 VWAP 시작/종료 시간을 KST(한국시간)로 요구하므로 EST를 KST로 동적 래핑
-            def _est_to_kst_str(t_str):
-                try:
-                    est_tz = ZoneInfo('America/New_York')
-                    kst_tz = ZoneInfo('Asia/Seoul')
-                    now_est = datetime.datetime.now(est_tz)
-                    h, m, s = int(t_str[:2]), int(t_str[2:4]), int(t_str[4:])
-                    dt_est = datetime.datetime.combine(now_est.date(), datetime.time(h, m, s), tzinfo=est_tz)
-                    return dt_est.astimezone(kst_tz).strftime('%H%M%S')
-                except Exception:
-                    return t_str
-
             target_orders = plan.get('core_orders', plan.get('orders', []))
             
             for o in target_orders:
-                st = o.get('start_time') or "152500"
-                et = o.get('end_time') or "155500"
-                
-                kst_st = _est_to_kst_str(st)
-                kst_et = _est_to_kst_str(et)
+                # 🚨 MODIFIED: [V71.19 KST 타임 하드코딩 팩트 락온]
+                # 승승장군님 지시에 따라 복잡한 동적 래핑을 소각하고 
+                # 한국시간 새벽 04:25 ~ 04:55 (042500, 045500)을 다이렉트로 꽂아 넣습니다.
+                kst_st = "042500"
+                kst_et = "045500"
 
                 if o['type'] == "VWAP":
                     res = await asyncio.to_thread(
@@ -519,11 +504,9 @@ class TelegramCallbacks:
             
             target_bonus = plan.get('bonus_orders', [])
             for o in target_bonus:
-                st = o.get('start_time') or "152500"
-                et = o.get('end_time') or "155500"
-
-                kst_st = _est_to_kst_str(st)
-                kst_et = _est_to_kst_str(et)
+                # 🚨 MODIFIED: [V71.19 KST 타임 하드코딩 팩트 락온]
+                kst_st = "042500"
+                kst_et = "045500"
 
                 if o['type'] == "VWAP":
                     res = await asyncio.to_thread(
