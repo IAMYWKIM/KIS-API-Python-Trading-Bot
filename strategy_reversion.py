@@ -22,7 +22,8 @@
 # 🚨 NEW: [KIS VWAP 알고리즘 대통합 수술] 1분 단위 타임 슬라이싱 연산 및 잔차 버킷 파편화 궤적을 100% 영구 소각하고, 할당된 1회분 총 예산을 단일 KIS VWAP 덫 예약 주문 플랜으로 통짜 스냅샷 산출하여 반환하도록 아키텍처 대수술 완료.
 # 🚨 MODIFIED: [V71.05 KIS VWAP 30분 압축 타격 타임라인 락온]
 # - 종일 타격 패러독스를 방어하기 위해 지시서 생성 시 start_time(153000), end_time(155500) 파라미터를 팩트 인젝션하여 30분 압축 타임라인 확립 완료.
-# 🚨 MODIFIED: [V71.09 30분 압축 타임라인 팩트 교정]
+# 🚨 MODIFIED: [V71.13 런타임 붕괴 방어 및 타임라인 전진 배치 수술]
+# - 들여쓰기 붕괴(IndentationError) 팩트 무결점 교정.
 # - start_time 파라미터 153000 하드코딩을 152500으로 전진 배치하여 V-REV 덤핑 복원 타임라인(15:25 EST)과 100% 동기화 완료.
 # ==========================================================
 import math
@@ -228,13 +229,13 @@ class ReversionStrategy:
             if cached_plan:
                 is_zero_start_session = cached_plan.get("is_zero_start", cached_plan.get("snapshot_total_q", cached_plan.get("total_q", -1)) == 0)
             else:
-                 today_str_est = self._get_logical_date_str()
+                today_str_est = self._get_logical_date_str()
                 legacy_lots = [item for item in valid_q_data if not str(item.get("date", "")).startswith(today_str_est)]
                 legacy_q = sum(int(item.get("qty", 0)) for item in legacy_lots)
                 is_zero_start_session = (legacy_q == 0)
 
         if is_zero_start_session or total_q == 0:
-             side = "BUY"
+            side = "BUY"
             p1_trigger = round(prev_c * 1.15, 2)
             p2_trigger = round(prev_c * 0.999, 2)
         else:
@@ -261,13 +262,13 @@ class ReversionStrategy:
             b1_budget = rem_budget * 0.5
             b2_budget = rem_budget - b1_budget
             
-             q1 = math.floor(b1_budget / p1_trigger) if p1_trigger > 0 else 0
+            q1 = math.floor(b1_budget / p1_trigger) if p1_trigger > 0 else 0
             q2 = math.floor(b2_budget / p2_trigger) if p2_trigger > 0 else 0
             
-            # 🚨 MODIFIED: [V71.09 30분 압축 타임라인 팩트 교정] start_time 153000 -> 152500 교정
+            # 🚨 MODIFIED: [V71.13 런타임 붕괴 방어 및 타임라인 전진 배치 수술] start_time 153000 -> 152500 교정
             start_t, end_t = "152500", "155500"
             
-             if q1 > 0: orders.append({"side": "BUY", "qty": q1, "price": p1_trigger, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "VWAP매수(Buy1)"})
+            if q1 > 0: orders.append({"side": "BUY", "qty": q1, "price": p1_trigger, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "VWAP매수(Buy1)"})
             if q2 > 0: orders.append({"side": "BUY", "qty": q2, "price": p2_trigger, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": "VWAP매수(Buy2)"})
             
             if total_q > 0:
@@ -276,7 +277,7 @@ class ReversionStrategy:
                     required_n = math.ceil(b2_budget / curr_p) - q2
                     if required_n > 5:
                         max_n = min(required_n, 50)
-                 
+                
                 for n in range(1, max_n + 1):
                     if (q2 + n) > 0:
                         grid_p2 = round(b2_budget / (q2 + n), 2)
@@ -284,9 +285,9 @@ class ReversionStrategy:
                             orders.append({"side": "BUY", "qty": 1, "price": grid_p2, "type": "VWAP", "start_time": start_t, "end_time": end_t, "desc": f"VWAP줍줍({n})"})
             
         rem_qty_total = max(0, int(total_q) - int(self.executed["SELL_QTY"].get(ticker, 0)))
-         
+        
         if rem_qty_total > 0:
-            # 🚨 MODIFIED: [V71.09 30분 압축 타임라인 팩트 교정] start_time 153000 -> 152500 교정
+            # 🚨 MODIFIED: [V71.13 런타임 붕괴 방어 및 타임라인 전진 배치 수술] start_time 153000 -> 152500 교정
             start_t, end_t = "152500", "155500"
             
             if curr_p >= trigger_jackpot:
