@@ -37,6 +37,7 @@
 # 🚨 MODIFIED: [V71.20 서머타임 동적 감지 및 KST 타임라인 락온]
 # - 포트폴리오 매니저(승승장군님)의 지시에 따라 서머타임 여부를 실시간 스캔하여 KST '032500' / '042500' 등 분기 주입 완료.
 # - 제16경고 준수: 타임 변수 스코프를 루프 외부로 전진 배치하여 런타임 무결성 확보.
+# 🚨 NEW: [런타임 좀비화 방어] EMERGENCY_EXEC, DEL_Q 라우터 내 IndentationError 팩트 무결점 교정 완료.
 # ==========================================================
 import logging
 import datetime
@@ -157,7 +158,7 @@ class TelegramCallbacks:
             
             if status_code not in ["PRE", "REG"]:
                 await query.answer("❌ [격발 차단] 현재 장운영시간(정규장/프리장)이 아닙니다.", show_alert=True)
-               return
+                return
              
             if not getattr(self, 'queue_ledger', None):
                 from queue_ledger import QueueLedger
@@ -165,8 +166,8 @@ class TelegramCallbacks:
      
             q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
             if not q_data:
-                 await query.answer("⚠️ 큐(Queue)가 텅 비어있어 수혈할 잔여 물량이 없습니다.", show_alert=True)
-                 return
+                await query.answer("⚠️ 큐(Queue)가 텅 비어있어 수혈할 잔여 물량이 없습니다.", show_alert=True)
+                return
             
             await query.answer("⏳ KIS 서버에 수동 긴급 수혈(MOC) 명령을 격발합니다...", show_alert=False)
             
@@ -222,7 +223,7 @@ class TelegramCallbacks:
                     await query.answer("✅ 지층 삭제 완료. KIS 원장과 동기화합니다.", show_alert=False)
                
                     if ticker not in self.sync_engine.sync_locks:
-                         self.sync_engine.sync_locks[ticker] = asyncio.Lock()
+                        self.sync_engine.sync_locks[ticker] = asyncio.Lock()
                     if not self.sync_engine.sync_locks[ticker].locked():
                         await self.sync_engine.process_auto_sync(ticker, chat_id, context, silent_ledger=True)
         
@@ -468,8 +469,6 @@ class TelegramCallbacks:
             all_success = True
        
             # NEW: [V71.20 서머타임 동적 감지 및 KST 타임라인 락온]
-            # 제3헌법에 의거 EST 기준으로 서머타임을 판별하고, 
-            # KIS 서버가 요구하는 한국 시간(KST) 파라미터를 동적으로 산출하여 서머타임 패러독스를 원천 소각합니다.
             est_tz = ZoneInfo('America/New_York')
             is_dst = bool(datetime.datetime.now(est_tz).dst())
             
