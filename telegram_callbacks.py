@@ -48,6 +48,9 @@
 # 🚨 MODIFIED: [V72.01 V-REV 수동 주문(EXEC) 시각적 디커플링 해체]
 # - 수동 주문 실행 시 V-REV 모드임에도 V14 고유의 '💎' 아이콘이 하드코딩되어 
 #   표출되던 시각적 환각(UI 디커플링) 현상을 모드별 맞춤 아이콘('⚖️' / '💎')으로 100% 팩트 교정 완료.
+# 🚨 MODIFIED: [V72.15 settlement 콜백 라우팅 증발 맹점 영구 복원]
+# - V59/V61 대수술 중 누락되었던 SET_VER, SET_VER_CONFIRM, AVWAP 라우터를 100% 팩트 복구.
+# - 0주 상태에서만 코어 스위칭이 가능하도록 0주 락온(Lock-on) 방어막 완벽 이식.
 # ==========================================================
 import logging
 import datetime
@@ -397,13 +400,13 @@ class TelegramCallbacks:
                         revenue=target_hist['revenue'],
                         end_date=target_hist['end_date']
                     )
-            
+             
                     if img_path and os.path.exists(img_path):
                         with open(img_path, 'rb') as f_out:
                             if img_path.lower().endswith('.gif'):
-                                await context.bot.send_animation(chat_id=chat_id, animation=f_out)
+                                 await context.bot.send_animation(chat_id=chat_id, animation=f_out)
                             else:
-                                await context.bot.send_photo(chat_id=chat_id, photo=f_out)
+                                 await context.bot.send_photo(chat_id=chat_id, photo=f_out)
                         await query.delete_message()
                     else:
                         await query.edit_message_text("❌ 이미지 생성에 실패했습니다.", parse_mode='HTML')
@@ -411,7 +414,6 @@ class TelegramCallbacks:
                     logging.error(f"📸 👑 졸업 이미지 생성/발송 실패: {e}")
                     await query.edit_message_text("❌ 이미지 생성 중 오류가 발생했습니다.", parse_mode='HTML')
             
-        # 🚨 MODIFIED: [V71.28 수동 주문(EXEC) 최신 예산 팩트 스냅샷 강제 갱신 엔진 탑재]
         elif action == "EXEC":
             t = sub
             ver = await asyncio.to_thread(self.cfg.get_version, t)
@@ -426,8 +428,6 @@ class TelegramCallbacks:
                 return await query.edit_message_text("❌ API 통신 오류로 잔고를 확인할 수 없어 실행을 차단합니다. 잠시 후 다시 시도해 주세요.")
 
             # 🚨 NEW: [스냅샷 강제 갱신 (Snapshot Override) 락온]
-            # 17:05 KST 당시 예산 부족으로 박제된 낡은 스냅샷(매수 0주)을 수동 주문 시 무조건 찢어버리고,
-            # 확보된 실시간 잔고를 기반으로 매수 덫까지 100% 장전된 최신 스냅샷을 영구 각인합니다.
             def _nuke_old_snapshot():
                 est = ZoneInfo('America/New_York')
                 now_est = datetime.datetime.now(est)
@@ -448,8 +448,6 @@ class TelegramCallbacks:
             active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
             
             # 🚨 MODIFIED: [V71.29 수동 주문 예산 기아 맹점 수술] 
-            # 텔레그램 보조 함수(_calculate_budget_allocation)가 V-REV 예산을 $0.0으로 
-            # 덮어쓰던 하극상 오류를 적출하고, 실제 코어 엔진으로 배선 직접 연결 완료.
             from scheduler_core import get_budget_allocation
             _, allocated_cash = await asyncio.to_thread(get_budget_allocation, cash, active_tickers, self.cfg)
             
@@ -545,103 +543,64 @@ class TelegramCallbacks:
 
             await context.bot.send_message(chat_id, msg, parse_mode='HTML')
 
-        elif action == "AVWAP_SET":
-            action_type = sub
+        # 🚨 MODIFIED: [V72.15 settlement 콜백 라우팅 증발 맹점 영구 복원]
+        # V59/V61 대수술 중 누락되었던 SET_VER 라우터 100% 팩트 복원
+        elif action == "SET_VER":
+            await query.answer()
             ticker = data[2]
             
-            if 'app_data' not in context.bot_data:
-                context.bot_data['app_data'] = {}
-            render_app_data = context.bot_data['app_data']
-            
-            if context.job_queue:
-                 for job in context.job_queue.jobs():
-                     if job.data is not None:
-                        render_app_data = job.data
-            
-            tracking_cache = render_app_data.setdefault('sniper_tracking', {})
-            
-            if action_type == "REFRESH":
-                try:
-                    from telegram_avwap_console import AvwapConsolePlugin
-                    plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
-                    msg, markup = await plugin.get_console_message(render_app_data)
-                    await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                    await query.answer("🔄 관제탑 스크린을 최신 팩트로 갱신했습니다.", show_alert=False)
-                except Exception as e:
-                    if "Message is not modified" in str(e):
-                            await query.answer("✅ 시장 변화가 없어 최신 상태가 유지 중입니다.", show_alert=False)
-                    else:
-                        await query.answer(f"갱신 에러: {e}", show_alert=True)
-            
-            elif action_type == "SYNC_ZERO":
-                try:
-                    est = ZoneInfo('America/New_York')
-                    now_est = datetime.datetime.now(est)
-                    
-                    tracking_cache[f"AVWAP_QTY_{ticker}"] = 0
-                    tracking_cache[f"AVWAP_BOUGHT_{ticker}"] = False
-                    tracking_cache[f"AVWAP_SHUTDOWN_{ticker}"] = True
-                    tracking_cache[f"AVWAP_AVG_{ticker}"] = 0.0
-
-                    if hasattr(self.strategy, 'v_avwap_plugin'):
-                        state_data = {
-                            'bought': False,
-                            'shutdown': True,
-                            'qty': 0,
-                            'avg_price': 0.0,
-                            'strikes': tracking_cache.get(f"AVWAP_STRIKES_{ticker}", 0),
-                            'daily_bought_qty': tracking_cache.get(f"AVWAP_DAILY_BOUGHT_{ticker}", 0),
-                            'daily_sold_qty': tracking_cache.get(f"AVWAP_DAILY_SOLD_{ticker}", 0),
-                            'first_scan_done': tracking_cache.get(f"AVWAP_FIRST_SCAN_DONE_{ticker}", False),
-                            'first_scan_passed': tracking_cache.get(f"AVWAP_FIRST_SCAN_PASSED_{ticker}", False),
-                            'dump_jitter_sec': tracking_cache.get(f"AVWAP_DUMP_JITTER_{ticker}", 0)
-                        }
-                        await asyncio.to_thread(self.strategy.v_avwap_plugin.save_state, ticker, now_est, state_data)
-                    
-                    from telegram_avwap_console import AvwapConsolePlugin
-                    plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
-                    msg, markup = await plugin.get_console_message(render_app_data)
-                    await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-        
-                    await query.answer(f"🧯 [{ticker}] 암살자 수동 청산 동기화 완료! 당일 영구 동결(Shutdown) 상태로 전환됩니다.", show_alert=True)
-                except Exception as e:
-                    logging.error(f"🚨 암살자 수동 청산 동기화 에러: {e}")
-                    await query.answer(f"동기화 에러: {e}", show_alert=True)
-
-        elif action == "MODE":
-            mode_val = sub
-            ticker = data[2] if len(data) > 2 else "SOXL"
-            
-            if mode_val == "AVWAP_WARN":
-                msg, markup = self.view.get_avwap_warning_menu(ticker)
-                await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                return
-            elif mode_val in ["AVWAP_ON", "AVWAP_OFF"]:
-                is_on = (mode_val == "AVWAP_ON")
-                await asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, ticker, is_on)
-                await query.answer(f"✅ AVWAP 암살자 {'가동' if is_on else '해제'} 완료", show_alert=False)
+            try:
+                _, holdings = await asyncio.to_thread(self.broker.get_account_balance)
+                kis_qty = int(float(holdings.get(ticker, {}).get('qty', 0))) if holdings else 0
+            except Exception:
+                kis_qty = 0
                 
-                active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
-                atr_data = {t: (0.0, 0.0) for t in active_tickers}
-                app_data = context.bot_data.get('app_data', {})
-                tracking_cache = app_data.get('sniper_tracking', {})
-                
-                msg, markup = self.view.get_settlement_message(active_tickers, self.cfg, atr_data, tracking_cache)
-                try:
-                    await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                except Exception:
-                    pass
+            max_qty = await self._get_max_holdings_qty(ticker, kis_qty)
+            
+            if max_qty > 0:
+                await query.edit_message_text(f"🛑 <b>[{ticker} 모드 전환 차단]</b>\n\n현재 계좌 또는 장부에 단 1주라도 잔고({max_qty}주)가 존재하면 코어 스위칭이 불가능합니다.\n전량 익절(0주) 후 0주 새출발 상태에서 다시 시도해 주십시오.", parse_mode='HTML')
                 return
+                
+            if sub == "V_REV":
+                msg, markup = self.view.get_vrev_mode_selection_menu(ticker)
+            elif sub == "V14":
+                msg, markup = self.view.get_v14_mode_selection_menu(ticker)
+            else:
+                return
+            await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
 
+        # 🚨 MODIFIED: [V72.15 settlement 콜백 라우팅 증발 맹점 영구 복원]
+        # V59/V61 대수술 중 누락되었던 SET_VER_CONFIRM 라우터 100% 팩트 복원
+        elif action == "SET_VER_CONFIRM":
             await query.answer()
-            current_ver = await asyncio.to_thread(self.cfg.get_version, ticker)
-            if current_ver == "V_REV" and mode_val == "ON":
-                await context.bot.send_message(chat_id, f"🚨 {current_ver} 모드에서는 로직 충돌 방지를 위해 상방 스나이퍼를 켤 수 없습니다!")
-                return
-
-            await asyncio.to_thread(self.cfg.set_upward_sniper_mode, ticker, mode_val == "ON")
-            await query.edit_message_text(f"✅ <b>[{ticker}]</b> 상방 스나이퍼 모드 변경 완료: {'🎯 ON (가동중)' if mode_val == 'ON' else '⚪ OFF (대기중)'}", parse_mode='HTML')
+            ticker = data[2]
             
+            if sub == "V_REV":
+                await asyncio.to_thread(self.cfg.set_version, ticker, "V_REV")
+                await asyncio.to_thread(self.cfg.set_reverse_state, ticker, True, 0, 0.0)
+                await asyncio.to_thread(self.cfg.set_manual_vwap_mode, ticker, False) 
+                msg = f"✅ <b>[{ticker}] V-REV 역추세 모드(VWAP 자동) 락온 완료!</b>\n▫️ 다음 타격부터 역추세 엔진이 전면 가동됩니다."
+            elif sub == "V14_LOC":
+                await asyncio.to_thread(self.cfg.set_version, ticker, "V14")
+                await asyncio.to_thread(self.cfg.set_reverse_state, ticker, False, 0, 0.0)
+                await asyncio.to_thread(self.cfg.set_manual_vwap_mode, ticker, False)
+                msg = f"✅ <b>[{ticker}] V14 오리지널 (LOC 단일 타격) 락온 완료!</b>\n▫️ 다음 타격부터 오리지널 무매법이 가동됩니다."
+            elif sub == "V14_VWAP":
+                await asyncio.to_thread(self.cfg.set_version, ticker, "V14")
+                await asyncio.to_thread(self.cfg.set_reverse_state, ticker, False, 0, 0.0)
+                await asyncio.to_thread(self.cfg.set_manual_vwap_mode, ticker, True)
+                msg = f"✅ <b>[{ticker}] V14 오리지널 (VWAP 자동) 락온 완료!</b>\n▫️ 다음 타격부터 VWAP 알고리즘에 위임합니다."
+            else:
+                return
+                
+            await query.edit_message_text(msg, parse_mode='HTML')
+
+        # 🚨 MODIFIED: [V72.15 settlement 콜백 라우팅 증발 맹점 영구 복원]
+        # V59/V61 대수술 중 누락되었던 AVWAP 관제탑 호출 배선 100% 개통 완료
+        elif action == "AVWAP":
+            if sub == "MENU":
+                await controller.cmd_avwap(update, context)
+
         elif action == "TICKER":
             await query.answer()
             if sub == "ALL":
