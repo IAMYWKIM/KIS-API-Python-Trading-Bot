@@ -5,13 +5,10 @@
 # 🚨 MODIFIED: [V72.06 V-REV 최저가순 매도 타점 통합 및 잭팟 렌더링 대수술]
 # 🚨 MODIFIED: [V72.12 UI 렌더링 팩트 교정 및 LIFO 독립 탈출 미러링]
 # 🚨 MODIFIED: [V72.13 V-REV 1층 독립 및 상위층 총평단가 연동 엑시트 전술 이식]
-# - 텔레그램 UI 렌더링 시 상위층(Upper) 타점 연산에 사용되던 상위층 단독 평단가(upper_avg) 의존성을 전면 소각.
-# - 코어 엔진과 동일하게 큐(Queue) 장부의 순수 총 투자금 기반 '총 평단가(q_avg_price)'를 절대 앵커로 삼아 trigger_upper를 연산하도록 팩트 교정 완료.
-# - KIS 증권사 평단가(actual_avg)는 철저히 배제(디커플링).
-# - 렌더링 텍스트를 "1층탈출", "총평단탈출", "통합탈출"로 직관적 팩트 미러링 완료.
 # 🚨 MODIFIED: [V72.17 제20경고 준수: V-REV 매수 데드존 구축 및 앵커 최저가 락온]
-# - V-REV 지시서 가이던스 렌더링 시 사용되는 매수 타점 앵커를 min(safe_prev_close, l1_price)로 교체.
-# - 1지층 평단가 단일 의존성을 도려내어 갭상승 시의 렌더링 오류(시각적 환각)를 원천 차단하고 코어 엔진과 100% 팩트 동기화 완료.
+# 🚨 MODIFIED: [V72.18 수동 VWAP 경고문 영구 소각 및 UI 팩트 교정]
+# - KIS 자체 VWAP 알고리즘 자동화에 따라 의미가 상실된 수동 VWAP 설정 경고 문구
+#   (V앱 30분 전 세팅 경고)를 텔레그램 지시서 렌더링 로직에서 100% 영구 적출 완료.
 # ==========================================================
 import logging
 import datetime
@@ -572,11 +569,7 @@ class TelegramController:
                 else:
                     v_rev_guidance += " 🔴 매수 대기: 타점 연산 대기 중\n"
 
-                if is_manual_vwap:
-                    v_rev_guidance += "\n🚨 <b>[ ⛔ 치명적 경고: 수동 VWAP 설정 ]</b> 🚨\n"
-                    v_rev_guidance += "한투 앱(V앱)에서 수동 주문을 거실 때, <b>절대로 '하루 종일'로 설정하지 마십시오!</b>\n"
-                    v_rev_guidance += "작동 시간은 반드시 \n<b>[장 마감 30분 전 ~ 장 마감]</b>\n으로만 세팅하셔야 창출됩니다.\n"
-                    v_rev_guidance += "장중 내내 작동하게 둘 경우 V-REV 코어 전략의 수익률이 심각하게 파괴됩니다.\n"
+                # 🚨 MODIFIED: [V72.18 수동 VWAP 경고문 영구 소각] KIS 자체 VWAP 자동화에 따라 수동 설정 경고 텍스트 100% 전면 철거.
 
             is_avwap_hybrid_on = False
             if hasattr(self.cfg, 'get_avwap_hybrid_mode'):
