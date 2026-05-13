@@ -9,6 +9,9 @@
 # 🚨 MODIFIED: [V72.18 수동 VWAP 경고문 영구 소각 및 UI 팩트 교정]
 # - KIS 자체 VWAP 알고리즘 자동화에 따라 의미가 상실된 수동 VWAP 설정 경고 문구
 #   (V앱 30분 전 세팅 경고)를 텔레그램 지시서 렌더링 로직에서 100% 영구 적출 완료.
+# 🚨 MODIFIED: [V72.25 관제탑 새로고침 덮어쓰기(Edit) 단일 뷰포트 락온]
+# - cmd_avwap 호출 시 버튼 클릭 이벤트인 경우 새 메시지(reply_text)를 발송하지 않고
+#   기존 메시지를 덮어쓰기(edit_text)하여 UI 환각 및 트래픽 병목을 원천 차단함.
 # ==========================================================
 import logging
 import datetime
@@ -109,7 +112,7 @@ class TelegramController:
         sorted_tickers = sorted(tickers, key=lambda x: 0 if x == "SOXL" else (1 if x == "TQQQ" else 2))
         allocated = {}
         rem_cash = cash
-        
+     
         for tx in sorted_tickers:
             rev_state = self.cfg.get_reverse_state(tx)
             is_rev = rev_state.get("is_active", False)
@@ -163,7 +166,7 @@ class TelegramController:
         chat_id = update.effective_chat.id
         
         state = self.user_states.get(chat_id)
-        
+     
         if "장부 조회" in text:
             return await self.cmd_record(update, context)
         elif "시드 변경" in text:
@@ -183,10 +186,21 @@ class TelegramController:
             
         await self.states_handler.handle_message(update, context, self)
 
+    # MODIFIED: [V72.25 관제탑 새로고침 덮어쓰기(Edit) 단일 뷰포트 락온]
     async def cmd_avwap(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update): return
-        target_msg = update.callback_query.message if update.callback_query else update.message
-        status_msg = await target_msg.reply_text("⏳ <b>[AVWAP 듀얼 모멘텀 관제탑]</b>\n레이더망을 가동하여 시장 데이터를 스캔 중...", parse_mode='HTML')
+        
+        loading_text = "⏳ <b>[AVWAP 듀얼 모멘텀 관제탑]</b>\n레이더망을 가동하여 시장 데이터를 스캔 중..."
+        
+        if update.callback_query:
+            status_msg = update.callback_query.message
+            try:
+                await status_msg.edit_text(loading_text, parse_mode='HTML')
+            except Exception:
+                pass
+        else:
+            status_msg = await update.message.reply_text(loading_text, parse_mode='HTML')
+            
         try:
             from telegram_avwap_console import AvwapConsolePlugin
             plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
@@ -196,6 +210,7 @@ class TelegramController:
                     jobs = context.job_queue.jobs() if context.job_queue else []
                     if jobs and len(jobs) > 0 and jobs[0].data is not None: app_data = jobs[0].data
                 except Exception: app_data = {}
+ 
             msg, markup = await asyncio.wait_for(plugin.get_console_message(app_data), timeout=10.0)
             await status_msg.edit_text(msg, reply_markup=markup, parse_mode='HTML')
         except asyncio.TimeoutError:
@@ -525,7 +540,7 @@ class TelegramController:
                     
                     upper_qty = total_q - l1_qty
                     trigger_upper = round(q_avg_price * 1.010, 2) if upper_qty > 0 else 0.0
-                         
+                    
                     available_l1 = min(l1_qty, logic_qty)
                     available_upper = min(upper_qty, logic_qty - available_l1)
                     
@@ -604,7 +619,7 @@ class TelegramController:
                     try:
                          df_1min_base = await asyncio.wait_for(asyncio.to_thread(self.broker.get_1min_candles_df, avwap_base_ticker), timeout=3.0)
                          base_curr_p = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, avwap_base_ticker), timeout=3.0) or 0.0)
-             
+              
                          if hasattr(self.strategy, 'v_avwap_plugin'):
                              avwap_state_dict = {"strikes": tracking_cache.get(f"AVWAP_STRIKES_{t}", 0), "cooldown_active": tracking_cache.get(f"AVWAP_COOLDOWN_{t}", False)}
                              
