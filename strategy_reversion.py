@@ -36,6 +36,8 @@
 # - start_t, end_t 산출 시 KST 역산 데드코드를 전면 소각하고 KIS 서버 요구 스펙인 152500/155500 EST 락온
 # 🚨 MODIFIED: [V72.24 자전거래(Wash Sale) 락온 방어막 복구]
 # - 매수 타점 연산 직후 매도 최소가를 스캔하여 자전거래 의심 주문을 차단하는 캡핑 로직 100% 원복 수술 완료.
+# 🚨 MODIFIED: [V72.25 KST 타임라인 동적 래핑 수술]
+# - KIS 서버 리젝 방어를 위해 EST 기반 팩트 타겟을 런타임에 KST로 동적 변환하여 주입하도록 아키텍처 수술 완료.
 # ==========================================================
 import math
 import os
@@ -228,7 +230,7 @@ class ReversionStrategy:
             lots_1 = [item for item in valid_q_data if item.get('date') == dates_in_queue[0]]
             l1_qty = sum(int(item.get('qty', 0)) for item in lots_1)
             l1_price = sum(float(item.get('qty', 0)) * float(item.get('price', 0.0)) for item in lots_1) / l1_qty if l1_qty > 0 else 0.0
-         
+        
         upper_qty = total_q - l1_qty
 
         # 🚨 MODIFIED: [V72.13 V-REV 1층 독립 및 상위층 총평단가 연동 엑시트 전술 이식]
@@ -295,9 +297,16 @@ class ReversionStrategy:
             q1 = math.floor(b1_budget / p1_trigger) if p1_trigger > 0 else 0
             q2 = math.floor(b2_budget / p2_trigger) if p2_trigger > 0 else 0
             
-            # 🚨 MODIFIED: [V72.19 VWAP 알고리즘 타임라인 EST 절대 락온]
-            start_t = "152500"
-            end_t = "155500"
+            # 🚨 MODIFIED: [V72.25 KST 타임라인 동적 래핑 수술]
+            est_zone = ZoneInfo('America/New_York')
+            kst_zone = ZoneInfo('Asia/Seoul')
+            now_est = datetime.now(est_zone)
+            
+            start_dt_kst = now_est.replace(hour=15, minute=25, second=0).astimezone(kst_zone)
+            end_dt_kst = now_est.replace(hour=15, minute=55, second=0).astimezone(kst_zone)
+            
+            start_t = start_dt_kst.strftime("%H%M%S")
+            end_t = end_dt_kst.strftime("%H%M%S")
             
             if q1 > 0:
                 ord_type = "VWAP" if q1 >= 10 else "LOC"
@@ -309,9 +318,16 @@ class ReversionStrategy:
                 orders.append({"side": "BUY", "qty": q2, "price": p2_trigger, "type": ord_type, "start_time": start_t if ord_type == "VWAP" else None, "end_time": end_t if ord_type == "VWAP" else None, "desc": desc_str})
         
         if rem_qty_total > 0:
-            # 🚨 MODIFIED: [V72.19 VWAP 알고리즘 타임라인 EST 절대 락온]
-            start_t = "152500"
-            end_t = "155500"
+            # 🚨 MODIFIED: [V72.25 KST 타임라인 동적 래핑 수술]
+            est_zone = ZoneInfo('America/New_York')
+            kst_zone = ZoneInfo('Asia/Seoul')
+            now_est = datetime.now(est_zone)
+            
+            start_dt_kst = now_est.replace(hour=15, minute=25, second=0).astimezone(kst_zone)
+            end_dt_kst = now_est.replace(hour=15, minute=55, second=0).astimezone(kst_zone)
+            
+            start_t = start_dt_kst.strftime("%H%M%S")
+            end_t = end_dt_kst.strftime("%H%M%S")
             
             sell_dict = {}
             if available_l1 > 0 and trigger_l1 > 0:

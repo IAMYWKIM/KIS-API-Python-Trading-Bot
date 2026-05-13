@@ -8,6 +8,8 @@
 # 🚨 MODIFIED: [V72.19 VWAP 알고리즘 타임라인 EST 절대 락온]
 # - get_plan 내부의 start_t, end_t 산출 시 서머타임 분기 연산(KST 역산)을 전면 적출하고
 #   KIS 서버 요구 스펙에 맞춰 152500과 155500으로 EST 절대 락온
+# 🚨 MODIFIED: [V72.25 KST 타임라인 동적 래핑 수술]
+# - KIS 서버 리젝 방어를 위해 EST 기반 팩트 타겟을 런타임에 KST로 동적 변환하여 주입하도록 아키텍처 수술 완료.
 # ==========================================================
 import math
 import logging
@@ -57,7 +59,7 @@ class V14VwapStrategy:
                     return
             except Exception:
                 pass
-                 
+                  
         self.executed["BUY_BUDGET"][ticker] = 0.0
         self.executed["SELL_QTY"][ticker] = 0
         self.state_loaded[ticker] = today_str
@@ -203,9 +205,17 @@ class V14VwapStrategy:
         process_status = "예방적방어선"
         is_zero_start_fact = False
         
-        # 🚨 MODIFIED: [V72.19 VWAP 알고리즘 타임라인 EST 절대 락온]
-        start_t = "152500"
-        end_t = "155500"
+        # 🚨 MODIFIED: [V72.25 KST 타임라인 동적 래핑 수술]
+        # - KIS 서버 리젝 방어를 위해 EST 기반 팩트 타겟을 런타임에 KST로 동적 변환하여 주입하도록 아키텍처 수술 완료.
+        est_zone = ZoneInfo('America/New_York')
+        kst_zone = ZoneInfo('Asia/Seoul')
+        now_est = datetime.now(est_zone)
+        
+        start_dt_kst = now_est.replace(hour=15, minute=25, second=0).astimezone(kst_zone)
+        end_dt_kst = now_est.replace(hour=15, minute=55, second=0).astimezone(kst_zone)
+        
+        start_t = start_dt_kst.strftime("%H%M%S")
+        end_t = end_dt_kst.strftime("%H%M%S")
 
         if qty == 0:
             is_zero_start_fact = True
