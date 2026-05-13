@@ -27,10 +27,10 @@
 # 🚨 MODIFIED: [V72.02 제20경고 준수: V-REV 매수 앵커 디커플링 및 하극상 역전 방어 락온]
 # 🚨 MODIFIED: [V72.11 V-REV 지층 융합 맹점 영구 소각 및 100% 독립 LIFO 덫 장전 락온]
 # 🚨 MODIFIED: [V72.13 V-REV 1층 독립 및 상위층 총평단가 연동 엑시트 전술 이식]
-# - 상위층(Upper) 매도 덫 타점(`trigger_upper`) 연산 시, 낡은 상위층 단독 평단가(`upper_avg`) 의존성을 영구 소각.
-# - 큐 장부 SSOT 기반 총 평단가(`avg_price`)를 절대 앵커로 삼아 `avg_price * 1.010` (+1% 수익) 팩트 교정 완료.
-# - 1층은 기존대로 1층 고유 타점(`l1_price * 1.006`)을 유지하여 가벼운 현금흐름 창출 궤도 100% 락온.
-# - UI 렌더링 텍스트를 '1층탈출', '총평단탈출', '통합탈출'로 직관적 팩트 렌더링 미러링 완료.
+# 🚨 MODIFIED: [V72.17 제20경고 준수: V-REV 매수 데드존 구축 및 앵커 최저가 락온]
+# - 기보유 상태(0주 초과) 진입 시, 낡은 단일 앵커(l1_price) 의존성을 전면 소각.
+# - min(prev_c, l1_price) 공식으로 앵커를 강제 락온하여 갭상승 시 고점 추격 매수를 원천 차단.
+# - Buy1, Buy2 타점이 절대적으로 팩트 최저가를 기준으로 산출되도록 아키텍처 대수술 완료.
 # ==========================================================
 import math
 import os
@@ -243,7 +243,8 @@ class ReversionStrategy:
             p2_trigger = round(prev_c * 0.999, 2)
         else:
             side = "SELL" if curr_p > prev_c else "BUY"
-            safe_anchor = l1_price if l1_price > 0.0 else prev_c
+            # 🚨 MODIFIED: [V72.17 제20경고 준수: V-REV 매수 데드존 구축 및 앵커 최저가 락온]
+            safe_anchor = min(prev_c, l1_price) if l1_price > 0.0 else prev_c
             p1_trigger = round(safe_anchor * 0.995, 2)
             p2_trigger = round(safe_anchor * 0.9725, 2)
 

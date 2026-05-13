@@ -9,6 +9,9 @@
 # - 코어 엔진과 동일하게 큐(Queue) 장부의 순수 총 투자금 기반 '총 평단가(q_avg_price)'를 절대 앵커로 삼아 trigger_upper를 연산하도록 팩트 교정 완료.
 # - KIS 증권사 평단가(actual_avg)는 철저히 배제(디커플링).
 # - 렌더링 텍스트를 "1층탈출", "총평단탈출", "통합탈출"로 직관적 팩트 미러링 완료.
+# 🚨 MODIFIED: [V72.17 제20경고 준수: V-REV 매수 데드존 구축 및 앵커 최저가 락온]
+# - V-REV 지시서 가이던스 렌더링 시 사용되는 매수 타점 앵커를 min(safe_prev_close, l1_price)로 교체.
+# - 1지층 평단가 단일 의존성을 도려내어 갭상승 시의 렌더링 오류(시각적 환각)를 원천 차단하고 코어 엔진과 100% 팩트 동기화 완료.
 # ==========================================================
 import logging
 import datetime
@@ -41,7 +44,7 @@ class TelegramController:
  
         self.admin_id = self.cfg.get_chat_id()
         self.sync_locks = {} 
-     
+   
         self.tx_lock = tx_lock or asyncio.Lock()
         
         self.queue_ledger = queue_ledger
@@ -365,7 +368,6 @@ class TelegramController:
             schedule = await asyncio.wait_for(asyncio.to_thread(_check_schedule), timeout=10.0)
             if not schedule.empty:
                 market_open = schedule.iloc[0]['market_open'].astimezone(est)
-                
                 switch_time = market_open + datetime.timedelta(minutes=30)
                 if now_est >= switch_time:
                     is_sniper_active_time = True
@@ -392,7 +394,7 @@ class TelegramController:
             prev_close = await asyncio.to_thread(self.broker.get_previous_close, t)
             ma_5day = await asyncio.to_thread(self.broker.get_5day_ma, t)
             day_high, day_low = await asyncio.to_thread(self.broker.get_day_high_low, t)
-             
+            
             actual_avg = float(h['avg']) if h['avg'] else 0.0
             actual_qty = int(h['qty'])
             
@@ -535,7 +537,7 @@ class TelegramController:
                         sell_dict[trigger_l1] = sell_dict.get(trigger_l1, 0) + available_l1
                     if available_upper > 0 and trigger_upper > 0:
                         sell_dict[trigger_upper] = sell_dict.get(trigger_upper, 0) + available_upper
-                        
+                    
                     for price in sorted(sell_dict.keys()):
                         s_qty = sell_dict[price]
                         
@@ -551,7 +553,8 @@ class TelegramController:
                 else:
                     v_rev_guidance += " 🔵 매도: 대기 물량 없음 (관망)\n"
                
-                safe_anchor = l1_price if l1_price > 0.0 else safe_prev_close
+                # 🚨 MODIFIED: [V72.17 제20경고 준수: V-REV 매수 데드존 구축 및 앵커 최저가 락온]
+                safe_anchor = min(safe_prev_close, l1_price) if l1_price > 0.0 else safe_prev_close
                 if safe_anchor > 0:
                     b1_price = round(safe_prev_close * 1.15 if is_zero_start_fact else safe_anchor * 0.995, 2)
                     b2_price = round(safe_prev_close * 0.999 if is_zero_start_fact else safe_anchor * 0.9725, 2)
@@ -565,7 +568,7 @@ class TelegramController:
                         v_rev_guidance += f" 🔴 매수2(Buy2) ${b2_price:.2f} <b>{b2_qty}주</b> ({tag})\n"
                  
                     if is_zero_start_fact:
-                         v_rev_guidance += " 🚫 <code>[0주 새출발] 기준 평단가 부재로 줍줍 생략 (1층 확보에 예산 100% 집중)</code>\n"
+                        v_rev_guidance += " 🚫 <code>[0주 새출발] 기준 평단가 부재로 줍줍 생략 (1층 확보에 예산 100% 집중)</code>\n"
                 else:
                     v_rev_guidance += " 🔴 매수 대기: 타점 연산 대기 중\n"
 
