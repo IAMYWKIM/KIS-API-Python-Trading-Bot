@@ -46,6 +46,8 @@
 # - 달력 API 정상 빈 데이터 반환 시 무조건 휴장일로 간주하고 스케줄을 스킵하도록 락온.
 # 🚨 MODIFIED: [V72.22 백그라운드 태스크 가비지 컬렉터 증발 맹점 완벽 수술]
 # - 본진 덫 지연 복원 비동기 태스크(asyncio.create_task)가 GC에 의해 소각되지 않도록 강한 참조(Strong Reference) 세트(Set)에 락온.
+# 🚨 MODIFIED: [V72.26 KIS VWAP 체결 0주 오판 락다운 해체 수술]
+# - KIS VWAP 알고리즘이 매도를 집행하는 15:25 EST 부터 16:00 EST 구간에서는 실잔고가 0주가 되더라도 수동매매 오판 비상 알람을 강제 바이패스.
 # ==========================================================
 import logging
 import datetime
@@ -172,6 +174,12 @@ async def scheduled_sniper_monitor(context):
                             if _vwap_cache_ref.get(f"REV_{t}_sweep_msg_sent"):
                                 continue
                         
+                            # 🚨 MODIFIED: [V72.26 KIS VWAP 체결 0주 오판 락다운 해체 수술]
+                            # KIS VWAP 알고리즘이 매도를 집행하는 15:25 EST 부터 16:00 EST 구간에서는 
+                            # 실잔고가 0주가 되더라도 정상 체결로 판독하여 수동매매 오판 비상 알람을 강제 바이패스
+                            if datetime.time(15, 25) <= now_est.time() <= datetime.time(16, 0):
+                                continue
+
                             if not tracking_cache.get(f"REV_{t}_panic_sell_warn"):
                                 tracking_cache[f"REV_{t}_panic_sell_warn"] = True
                                 await context.bot.send_message(
@@ -230,7 +238,7 @@ async def scheduled_sniper_monitor(context):
                         exec_curr_p = 0.0
                          
                     if exec_curr_p <= 0: continue
-                    
+    
                     try:
                         base_curr_p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_current_price, target_base), timeout=10.0)
                         base_curr_p = float(base_curr_p_val or 0.0)
@@ -238,7 +246,7 @@ async def scheduled_sniper_monitor(context):
                         base_curr_p = 0.0
                     except Exception:
                         base_curr_p = 0.0
-                   
+       
                     if base_curr_p <= 0: continue
                     
                     if not tracking_cache.get(f"AVWAP_DAY_OPEN_{target_base}"):
@@ -256,14 +264,15 @@ async def scheduled_sniper_monitor(context):
                         except asyncio.TimeoutError:
                             fetched_open = 0.0
                         except Exception:
-                            fetched_open = 0.0
+                             fetched_open = 0.0
              
                         if fetched_open > 0:
                             tracking_cache[f"AVWAP_DAY_OPEN_{target_base}"] = fetched_open
-                          
+  
                     base_day_open = tracking_cache.get(f"AVWAP_DAY_OPEN_{target_base}", 0.0)
  
                     prev_c, day_high, day_low, atr5, base_day_high, base_day_low = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+                 
                     df_1min_t = None
                     df_1min_base = None
                     try:
@@ -276,13 +285,13 @@ async def scheduled_sniper_monitor(context):
                             asyncio.gather(prev_c_task, atr_task, df_t_task, df_base_task, return_exceptions=True),
                             timeout=10.0
                         )
-                         
+   
                         prev_c = float(res_prev) if not isinstance(res_prev, Exception) and res_prev else 0.0
                         atr5 = float(res_atr[0]) if not isinstance(res_atr, Exception) and res_atr else 0.0
-                          
+       
                         df_1min_t = res_df_t if not isinstance(res_df_t, Exception) else None
                         df_1min_base = res_df_base if not isinstance(res_df_base, Exception) else None
-                          
+              
                         if df_1min_t is not None and not df_1min_t.empty:
                             df_t_copy = df_1min_t.copy()
                             if 'time_est' in df_t_copy.columns and is_regular_session:
@@ -301,7 +310,7 @@ async def scheduled_sniper_monitor(context):
                     except asyncio.TimeoutError:
                         logging.warning("⚠️ AVWAP 파라미터 병렬 스캔 타임아웃. 0.0 폴백.")
                     except Exception as e:
-                        logging.debug(f"AVWAP 파라미터 병렬 스캔 실패: {e}")
+                         logging.debug(f"AVWAP 파라미터 병렬 스캔 실패: {e}")
                   
                     # 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 상태 스캔]
                     is_apex_on = await asyncio.to_thread(getattr(cfg, 'get_avwap_apex_mode', lambda x: True), t)
@@ -329,7 +338,7 @@ async def scheduled_sniper_monitor(context):
                         base_day_high=base_day_high, base_day_low=base_day_low,
                         is_apex_on=is_apex_on # 🚨 NEW: 정점요격 가동 상태 파라미터 다이렉트 수혈
                     )
-                  
+         
                     action = decision.get("action")
                     reason = decision.get("reason", "")
          
@@ -361,7 +370,7 @@ async def scheduled_sniper_monitor(context):
                                                 nuked += 1
                                             except Exception as e:
                                                 logging.error(f"🚨 [{tk}] 본진 예약 덫 취소 실패: {e}")
-                                    
+                    
                                     unfilled = await asyncio.to_thread(b_inst.get_unfilled_orders_detail, tk)
                                     if isinstance(unfilled, list):
                                         for uo in unfilled:
@@ -378,7 +387,7 @@ async def scheduled_sniper_monitor(context):
                                     logging.info(f"🔫 [{tk}] AVWAP 출격: 본진의 예약 및 일반 덫 {nuked}건 전면 철거 완료 (KIS 실원장 팩트 스캔).")
                                 except Exception as e:
                                     logging.error(f"🚨 [{tk}] 덫 실시간 스캔 실패: {e}")
-                            
+                          
                             await _cancel_resv_orders_live(broker, t)
 
                             has_unfilled = False
@@ -421,7 +430,7 @@ async def scheduled_sniper_monitor(context):
                                     except Exception as e_cancel:
                                         logging.warning(f"⚠️ [{t}] AVWAP 매수 잔여 취소 실패: {e_cancel}")
                  
-                            if ccld_qty > 0:
+                                if ccld_qty > 0:
                                     avwap_free_cash -= (ccld_qty * price)
                                      
                                     msg = f"⚔️ <b>[AVWAP] 단타 암살자 딥매수 타격 성공!</b>\n▫️ 타겟: {t}\n▫️ 타점: ${price}\n▫️ 팩트 체결수량: {ccld_qty}주 (목표 {qty}주)\n▫️ 사유: {reason}"
@@ -531,7 +540,7 @@ async def scheduled_sniper_monitor(context):
                                         shutdown_flag = True
                                         new_avg = 0.0
                                         avwap_free_cash += (ccld_qty * exec_price)
-                                         
+                                        
                                         # 🚨 NEW: [V71.09 전투 사령부 자전거래 락다운 및 덫 복원 라우팅 수술]
                                         # 15:25 EST 정각까지 비동기 대기 후 send_reservation_order 및 일반주문(VWAP) 기반 지연 재장전
                                         async def _delayed_restore_resv_orders(b_inst, tk, strat_inst, n_est):
@@ -599,7 +608,7 @@ async def scheduled_sniper_monitor(context):
                                     tracking_cache[f"AVWAP_SHUTDOWN_{t}"] = shutdown_flag
                                     tracking_cache[f"AVWAP_QTY_{t}"] = new_qty
                                     tracking_cache[f"AVWAP_AVG_{t}"] = new_avg
-                                    
+                                     
                                     state_data = {
                                         'bought': tracking_cache[f"AVWAP_BOUGHT_{t}"],
                                         'shutdown': shutdown_flag,
@@ -645,7 +654,7 @@ async def scheduled_sniper_monitor(context):
                     curr_p = 0.0
                 except Exception:
                     curr_p = 0.0
-                    
+                   
                 if curr_p <= 0:
                     continue
 
