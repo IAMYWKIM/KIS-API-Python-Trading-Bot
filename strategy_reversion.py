@@ -34,6 +34,8 @@
 # 🚨 MODIFIED: [V72.19 V-REV 스냅샷 데이터 기아 방어 전진 배치 및 EST 절대 락온]
 # - get_dynamic_plan 최상단에 is_snapshot_mode False 시 cached_plan 즉시 반환 쉴드 장착
 # - start_t, end_t 산출 시 KST 역산 데드코드를 전면 소각하고 KIS 서버 요구 스펙인 152500/155500 EST 락온
+# 🚨 MODIFIED: [V72.24 자전거래(Wash Sale) 락온 방어막 복구]
+# - 매수 타점 연산 직후 매도 최소가를 스캔하여 자전거래 의심 주문을 차단하는 캡핑 로직 100% 원복 수술 완료.
 # ==========================================================
 import math
 import os
@@ -83,7 +85,7 @@ class ReversionStrategy:
                     return
             except Exception:
                 pass
-                 
+                  
         self.executed["BUY_BUDGET"][ticker] = 0.0
         self.executed["SELL_QTY"][ticker] = 0
         self.state_loaded[ticker] = today_str
@@ -256,6 +258,26 @@ class ReversionStrategy:
             p1_trigger = round(safe_anchor * 0.995, 2)
             p2_trigger = round(safe_anchor * 0.9725, 2)
 
+        # 🚨 MODIFIED: [V72.24 자전거래(Wash Sale) 락온 방어막 복구]
+        # p1_trigger와 p2_trigger 결정 직후 최소 매도가(min_sell)를 도출하여 자전거래 원천 차단
+        rem_qty_total = max(0, int(total_q) - int(self.executed["SELL_QTY"].get(ticker, 0)))
+        available_l1 = min(l1_qty, rem_qty_total) if rem_qty_total > 0 else 0
+        available_upper = min(upper_qty, rem_qty_total - available_l1) if rem_qty_total > 0 else 0
+        
+        if rem_qty_total > 0:
+            active_sells = []
+            if available_l1 > 0 and trigger_l1 > 0:
+                active_sells.append(trigger_l1)
+            if available_upper > 0 and trigger_upper > 0:
+                active_sells.append(trigger_upper)
+                
+            if active_sells:
+                min_sell = min(active_sells)
+                if p1_trigger >= min_sell:
+                    p1_trigger = max(0.01, round(min_sell - 0.01, 2))
+                if p2_trigger >= min_sell:
+                    p2_trigger = max(0.01, round(min_sell - 0.01, 2))
+
         orders = []
 
         total_spent = float(self.executed["BUY_BUDGET"].get(ticker, 0.0))
@@ -274,8 +296,6 @@ class ReversionStrategy:
             q2 = math.floor(b2_budget / p2_trigger) if p2_trigger > 0 else 0
             
             # 🚨 MODIFIED: [V72.19 VWAP 알고리즘 타임라인 EST 절대 락온]
-            # KST 역산에 의한 042500/052500 KIS 서버 리젝(Reject) 맹독성 데드코드를 영구 소각하고, 
-            # KIS 명세에 맞는 EST 152500 / 155500 절대 락온
             start_t = "152500"
             end_t = "155500"
             
@@ -287,16 +307,11 @@ class ReversionStrategy:
                 ord_type = "VWAP" if q2 >= 10 else "LOC"
                 desc_str = "VWAP매수(Buy2)" if ord_type == "VWAP" else "LOC매수(Buy2)"
                 orders.append({"side": "BUY", "qty": q2, "price": p2_trigger, "type": ord_type, "start_time": start_t if ord_type == "VWAP" else None, "end_time": end_t if ord_type == "VWAP" else None, "desc": desc_str})
-            
-        rem_qty_total = max(0, int(total_q) - int(self.executed["SELL_QTY"].get(ticker, 0)))
         
         if rem_qty_total > 0:
             # 🚨 MODIFIED: [V72.19 VWAP 알고리즘 타임라인 EST 절대 락온]
             start_t = "152500"
             end_t = "155500"
-            
-            available_l1 = min(l1_qty, rem_qty_total)
-            available_upper = min(upper_qty, rem_qty_total - available_l1)
             
             sell_dict = {}
             if available_l1 > 0 and trigger_l1 > 0:
