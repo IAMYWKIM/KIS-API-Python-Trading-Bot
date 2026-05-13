@@ -39,7 +39,7 @@
 # MODIFIED: [V71.14 지정가 VWAP 일반주문 역배선 팩트 락온]
 # - 본진 덫 지연 복원 시 VWAP 주문 파라미터 충돌(TypeError)을 유발하던 send_reservation_order 맹독성 오호출 영구 소각.
 # - VWAP(36)은 KIS 명세에 따라 send_order로 직결하도록 팩트 라우팅 분기 처리 완료.
-# 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 탑재]
+# 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 탑재 및 IndentationError 수술]
 # config에서 APEX 스위치 상태를 매 분 비동기로 스캔하여 get_avwap_decision 코어로 팩트 수혈.
 # ==========================================================
 import logging
@@ -515,7 +515,7 @@ async def scheduled_sniper_monitor(context):
                                             msg += f"\n🛡️ 금일 해당 종목의 동적 타임스탑(지터 분산) 청산 완료. 암살자 작전을 <b>영구 동결(Shutdown)</b>합니다. (사유: {reason})"
                                         shutdown_flag = True
                                         new_avg = 0.0
-                                         avwap_free_cash += (ccld_qty * exec_price)
+                                        avwap_free_cash += (ccld_qty * exec_price)
                                       
                                         # 🚨 NEW: [V71.09 전투 사령부 자전거래 락다운 및 덫 복원 라우팅 수술]
                                         # 15:25 EST 정각까지 비동기 대기 후 send_reservation_order 및 일반주문(VWAP) 기반 지연 재장전
