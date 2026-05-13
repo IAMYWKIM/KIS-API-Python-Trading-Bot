@@ -35,6 +35,11 @@
 # - 정규장 V-REV 매수 예산 산출 공식(V72.01 하드 마진 캡)과 갭 하이재킹의 예산 연산 로직이 서로 다르게 작동하던 치명적 수학적 디커플링 원천 차단.
 # - get_budget_allocation 파이프라인을 섀도우 오버라이드망에 다이렉트 결속시켜, 하이재킹 타격 시에도 "1일 할당량(15%) 초과 금지" 룰이 100% 팩트 연동되도록 아키텍처 대수술 완료.
 # 🚨 NEW: [V72.18 갭 하이재킹 예약 원장 맵핑 누수 및 일반 미체결 이중 방화벽 락온]
+# 🚨 MODIFIED: [V72.21 휴장일 맹독성 페일 오픈(Fail-Open) 팩트 교정]
+# - 달력 API 정상 빈 데이터 반환 시 휴장일로 명확히 간주하고 안전 종료(Return)하도록 수술.
+# 🚨 MODIFIED: [V72.23 섀도우 오버라이드망 기상 시간 디커플링 수술]
+# - 15:25 EST 정각 진입 시 vwap_start_time 미달로 오판되어 100% 스킵되는 버그를 막기 위해
+#   유효 스캔 윈도우를 장 마감 36분 전으로 넓혀 15:25 진입을 넉넉히 수용하도록 팩트 락온.
 # ==========================================================
 import logging
 import datetime
@@ -75,11 +80,9 @@ async def scheduled_vwap_init_and_cancel(context):
     try:
         schedule = await asyncio.wait_for(asyncio.to_thread(_get_market_close), timeout=10.0)
         if schedule.empty:
-            logging.warning("⚠️ [vwap_init] 달력 API 빈 값 반환. 평일 강제 마감시간(16:00 EST) 폴백 가동.")
-            if now_est.weekday() < 5:
-                market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
-            else:
-                return
+            # 🚨 MODIFIED: [V72.21 휴장일 맹독성 페일 오픈 팩트 교정]
+            logging.info("💤 [vwap_init] 달력 API 빈 데이터 반환. 금일은 미국 증시 휴장일입니다.")
+            return
         else:
             market_close = schedule.iloc[0]['market_close'].astimezone(est)
     except asyncio.TimeoutError:
@@ -95,7 +98,9 @@ async def scheduled_vwap_init_and_cancel(context):
         else:
             return
         
-    vwap_start_time = market_close - datetime.timedelta(minutes=33, seconds=15)
+    # 🚨 MODIFIED: [V72.23 섀도우 오버라이드망 기상 시간 디커플링 수술]
+    # 메인 코어의 15:25 EST 격발을 온전히 수용하기 위해 타임 윈도우를 장 마감 36분 전으로 확장
+    vwap_start_time = market_close - datetime.timedelta(minutes=36, seconds=0)
     vwap_end_time = market_close 
     
     if not (vwap_start_time <= now_est <= vwap_end_time):
@@ -164,11 +169,9 @@ async def scheduled_vwap_trade(context):
     try:
         schedule = await asyncio.wait_for(asyncio.to_thread(_get_market_close), timeout=10.0)
         if schedule.empty:
-            logging.warning("⚠️ [vwap_trade] 달력 API 빈 값 반환. 평일 강제 마감시간(16:00 EST) 폴백 가동.")
-            if now_est.weekday() < 5:
-                market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
-            else:
-                return
+            # 🚨 MODIFIED: [V72.21 휴장일 맹독성 페일 오픈 팩트 교정]
+            logging.info("💤 [vwap_trade] 달력 API 빈 데이터 반환. 금일은 미국 증시 휴장일입니다.")
+            return
         else:
             market_close = schedule.iloc[0]['market_close'].astimezone(est)
     except asyncio.TimeoutError:
@@ -184,7 +187,9 @@ async def scheduled_vwap_trade(context):
         else:
             return
         
-    vwap_start_time = market_close - datetime.timedelta(minutes=33, seconds=15)
+    # 🚨 MODIFIED: [V72.23 섀도우 오버라이드망 기상 시간 디커플링 수술]
+    # 메인 코어의 15:25 EST 격발을 온전히 수용하기 위해 타임 윈도우를 장 마감 36분 전으로 확장
+    vwap_start_time = market_close - datetime.timedelta(minutes=36, seconds=0)
     vwap_end_time = market_close 
     
     if not (vwap_start_time <= now_est <= vwap_end_time):
@@ -225,14 +230,14 @@ async def scheduled_vwap_trade(context):
                     if version == "V_REV":
                         if vwap_cache.get(f"REV_{t}_gap_hijack_fired"):
                             continue
-                             
+                          
                         base_tkr = base_map.get(t, 'SOXX')
                         try:
                             base_curr_p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_current_price, base_tkr), timeout=10.0)
                             base_curr_p = float(base_curr_p_val or 0.0)
                         except Exception:
                             base_curr_p = 0.0
-                             
+                              
                         try:
                             df_1min_base = await asyncio.wait_for(asyncio.to_thread(broker.get_1min_candles_df, base_tkr), timeout=10.0)
                             if df_1min_base is not None and not df_1min_base.empty:
@@ -282,7 +287,7 @@ async def scheduled_vwap_trade(context):
                                                                 nuked_count += 1
                                                             except Exception as e:
                                                                 logging.error(f"🚨 [{t}] 일반 덫(VWAP/LOC) 취소 실패: {e}")
-                                                                
+                                            
                                             logging.info(f"⚡ [{t}] KIS 실원장 스캔: 예약 및 일반 덫 {nuked_count}건 팩트 파기 완료.")
                                         except Exception as e:
                                             logging.error(f"🚨 [{t}] KIS 실원장 덫 스캔 에러: {e}")
@@ -327,12 +332,12 @@ async def scheduled_vwap_trade(context):
                                                 msg += f"▫️ KIS 예약 덫({nuked_count}건)을 즉각 파기(Nuke)하고, 잔여 예산 100%를 매도 1호가로 일괄 스윕(Sweep) 타격했습니다!\n"
                                                 msg += f"▫️ 스윕 수량: <b>{buy_qty}주</b> (단가: ${exec_price:.2f})"
                                                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
-                                                 
+                                                
                                                 if hasattr(strategy, 'v_rev_plugin'):
                                                     await asyncio.to_thread(strategy.v_rev_plugin.record_execution, t, "BUY", buy_qty, exec_price)
                                                 if queue_ledger:
                                                     await asyncio.to_thread(queue_ledger.add_lot, t, buy_qty, exec_price, "GAP_HIJACK_BUY")
-                                     
+                                      
                         except Exception as e:
                             logging.error(f"🚨 갭 스위칭 스캔 에러: {e}")
 

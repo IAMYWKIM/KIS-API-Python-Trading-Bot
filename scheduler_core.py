@@ -7,7 +7,9 @@
 # MODIFIED: [V44.47 KST 타임 패러독스 영구 소각] 서머타임 분기 함수 통합 및 EST 절대 시간 기반으로 100% 디커플링 락온 완료.
 # NEW: [콜드 스타트 런타임 붕괴 방어] scheduled_auto_sync 내부 tx_lock None 가드 이식.
 # NEW: [전역 타임아웃 이식] scheduled_force_reset 이벤트 루프 교착 방어 타임아웃 래퍼 적용.
-# 🚨 NEW: [달력 API 결측 연쇄 기절 방어] is_market_open 평일 강제 개장(Fail-Open) 락온 이식 완료.
+# 🚨 MODIFIED: [V72.21 휴장일 맹독성 페일 오픈(Fail-Open) 팩트 교정]
+# - 달력 API가 정상적으로 빈 데이터를 반환한 것은 휴장일이므로 페일 오픈을 쏘지 않고 정상적으로 False(휴장)를 반환하도록 로직 전면 수술 완료.
+# - 통신 예외(Exception) 발생 시에만 평일 강제 개장으로 폴백하도록 방어막 정상화.
 # 🚨 MODIFIED: [V-REV SSOT 팩트 교정] scheduled_force_reset 내 낡은 is_active 의존성 영구 소각 및 version 락온.
 # 🚨 MODIFIED: [V72.01 V-REV 예산 뻥튀기(Double Spending) 맹점 100% 소각]
 # - 기존 spent를 파일 I/O로 파싱하여 이중 차감하고 free_cash를 더하던 데드코드를 영구 적출.
@@ -40,12 +42,12 @@ def is_market_open():
         nyse = mcal.get_calendar('NYSE')
         schedule = nyse.schedule(start_date=today.date(), end_date=today.date())
         
-        # 🚨 MODIFIED: [달력 API 결측 연쇄 기절 방어] schedule.empty == True 여도 평일이면 무조건 Fail-Open(강제 개장) 반환 락온
+        # 🚨 MODIFIED: [V72.21 휴장일 맹독성 페일 오픈(Fail-Open) 팩트 교정]
         if not schedule.empty:
             return True
         else:
-            logging.warning("⚠️ [is_market_open] 달력 API가 빈 값을 반환했으나 평일(월~금)이므로 Fail-Open(강제 개장) 방어막을 가동합니다.")
-            return True
+            logging.info("💤 [is_market_open] 달력 API 빈 데이터 반환. 금일은 미국 증시 휴장일입니다.")
+            return False
     except Exception as e:
         logging.error(f"⚠️ 달력 라이브러리 에러 발생. 스케줄 증발 방어를 위해 평일 강제 개장(Fail-Open) 처리합니다: {e}")
         est = ZoneInfo('America/New_York')
@@ -238,7 +240,7 @@ async def scheduled_force_reset(context):
                     # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막]
                     try:
                         curr_p_val = await asyncio.wait_for(
-                            asyncio.to_thread(broker.get_current_price, t),
+                             asyncio.to_thread(broker.get_current_price, t),
                             timeout=10.0
                         )
                         curr_p = float(curr_p_val or 0.0)
@@ -270,8 +272,6 @@ async def scheduled_force_reset(context):
                             msg_addons += f"\n🌤️ <b>[{t}] 리버스 목표 달성({curr_ret:.2f}%)!</b> 격리 병동 졸업 및 Escrow 해제 완료!"
                         else:
                             await asyncio.to_thread(cfg.increment_reverse_day, t)
-                    else:
-                        await asyncio.to_thread(cfg.increment_reverse_day, t)
                 else:
                     await asyncio.to_thread(cfg.increment_reverse_day, t)
                     
