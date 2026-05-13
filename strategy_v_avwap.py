@@ -14,8 +14,10 @@
 # 🚨 MODIFIED: [V71.08 AVWAP 암살자 덤핑 타임라인 전진 배치 팩트 교정]
 # 🚨 NEW: [V72.09 3-Stage Apex Intercept (정점 요격) 전술 탑재]
 # 🚨 MODIFIED: [V72.10 3단계 격발 차원 붕괴(버그) 완벽 수술] 
-# - SOXL 현재가와 SOXX 시가를 비교하던 하극상 맹점 원천 차단. 
-# - SOXX의 현재가(base_curr_p)와 SOXX의 5분 시가를 비교하도록 팩트 교정 완료.
+# 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 탑재]
+# - get_decision 내부 3단계 정점요격 연산 블록 최상단에 바이패스 쉴드 이식 완료.
+# - 스위치 OFF 시 정점 갱신 및 투매 판별 연산을 전면 무시하고 상태를 초기화하여,
+#   장마감 직전 무지성 지터 덤핑 궤도로 완벽히 롤백하도록 아키텍처 팩트 교정.
 # ==========================================================
 import logging
 import datetime
@@ -75,7 +77,7 @@ class VAvwapHybridPlugin:
 
                     data['date'] = today_str
                     self.save_state(ticker, now_est, data)
-                    
+                     
                 data['APEX_STAGE_1'] = data.get('APEX_STAGE_1', False)
                 data['APEX_STAGE_2'] = data.get('APEX_STAGE_2', False)
                 data['APEX_PEAK_PRICE'] = data.get('APEX_PEAK_PRICE', 0.0)
@@ -123,7 +125,7 @@ class VAvwapHybridPlugin:
             if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 5):
                 today_est = (now_est - datetime.timedelta(days=1)).date()
             else:
-                today_est = now_est.date()
+                 today_est = now_est.date()
 
             if not df_1m.empty:
                 if df_1m.index.tz is None:
@@ -168,7 +170,7 @@ class VAvwapHybridPlugin:
                     avg_vol_20 = float(past_first_30m['Volume'].mean())
 
             if prev_vwap == 0.0:
-                prev_vwap = prev_close
+                 prev_vwap = prev_close
 
             return {
                 "prev_close": prev_close,
@@ -180,7 +182,7 @@ class VAvwapHybridPlugin:
             logging.error(f"🚨 [V_AVWAP] YF 기초자산 매크로 컨텍스트 추출 실패 ({base_ticker}): {e}")
             return None
 
-    def get_decision(self, base_ticker=None, exec_ticker=None, base_curr_p=0.0, exec_curr_p=0.0, base_day_open=0.0, avwap_avg_price=0.0, avwap_qty=0, avwap_alloc_cash=0.0, context_data=None, df_1min_base=None, now_est=None, avwap_state=None, **kwargs):
+    def get_decision(self, base_ticker=None, exec_ticker=None, base_curr_p=0.0, exec_curr_p=0.0, base_day_open=0.0, avwap_avg_price=0.0, avwap_qty=0, avwap_alloc_cash=0.0, context_data=None, df_1min_base=None, now_est=None, avwap_state=None, is_apex_on=True, **kwargs):
         df_1min_base = df_1min_base if df_1min_base is not None else kwargs.get('base_df')
         avwap_qty = avwap_qty if avwap_qty != 0 else kwargs.get('current_qty', 0)
 
@@ -230,7 +232,7 @@ class VAvwapHybridPlugin:
 
                 if 'time_est' in df.columns:
                     if is_regular_session:
-                        df = df[(df['time_est'] >= '093000') & (df['time_est'] <= '155900')]
+                         df = df[(df['time_est'] >= '093000') & (df['time_est'] <= '155900')]
                     else:
                         df = df[(df['time_est'] >= '040000') & (df['time_est'] <= '092959')]
 
@@ -267,8 +269,6 @@ class VAvwapHybridPlugin:
                                 is_pure_5m_2_bearish = bool(last_2_pure['is_pure_bearish'].all())
                             
                             current_5m_open = float(df_5m['open'].iloc[-1])
-                            # 🚨 MODIFIED: [V72.10 3단계 격발 차원 붕괴(버그) 수술] 
-                            # SOXL(exec_curr_p)이 아닌 기초지수 SOXX(base_curr_p)의 현재가와 시가를 비교하여 팩트 기반 음봉 판별 락온
                             current_5m_is_bearish = (base_curr_p < current_5m_open)
 
                             df_5m['HA_Close'] = (df_5m['open'].astype(float) + df_5m['high'].astype(float) + df_5m['low'].astype(float) + df_5m['close'].astype(float)) / 4.0
@@ -321,21 +321,29 @@ class VAvwapHybridPlugin:
         actual_gap_dollar_apex = day_high - day_low
         actual_gap_pct_apex = (actual_gap_dollar_apex / prev_c) * 100.0 if prev_c > 0 else 0.0
 
-        if day_high > apex_peak_price:
-            apex_peak_price = day_high
-            apex_changed = True
-            if apex_stage_1 and apex_stage_2:
-                apex_stage_2 = False
-                
-        if atr5 > 0 and actual_gap_pct_apex >= atr5:
-            if not apex_stage_1:
-                apex_stage_1 = True
+        if is_apex_on: # 🚨 NEW: 정점요격 스위치 바이패스 쉴드 이식
+            if day_high > apex_peak_price:
                 apex_peak_price = day_high
                 apex_changed = True
+                if apex_stage_1 and apex_stage_2:
+                    apex_stage_2 = False
+                    
+            if atr5 > 0 and actual_gap_pct_apex >= atr5:
+                if not apex_stage_1:
+                    apex_stage_1 = True
+                    apex_peak_price = day_high
+                    apex_changed = True
 
-        if apex_stage_1 and not apex_stage_2:
-            if is_pure_5m_2_bearish:
-                apex_stage_2 = True
+            if apex_stage_1 and not apex_stage_2:
+                if is_pure_5m_2_bearish:
+                    apex_stage_2 = True
+                    apex_changed = True
+        else:
+            # 스위치 OFF 시 상태 초기화 및 바이패스
+            if apex_stage_1 or apex_stage_2 or apex_peak_price > 0.0:
+                apex_stage_1 = False
+                apex_stage_2 = False
+                apex_peak_price = 0.0
                 apex_changed = True
 
         if apex_changed:
@@ -354,7 +362,7 @@ class VAvwapHybridPlugin:
                 return _build_res('SELL', 'CORRUPT_PRICE_EMERGENCY_DUMP', qty=safe_qty, target_price=exec_curr_p)
 
             # [3-Stage Apex Intercept (정점 요격) 3단계 격발]
-            if apex_stage_2 and current_5m_is_bearish:
+            if is_apex_on and apex_stage_2 and current_5m_is_bearish: # 🚨 NEW: 정점요격 스위치 결속 락온
                 persistent_state['shutdown'] = True
                 self.save_state(exec_ticker, now_est, persistent_state)
                 return _build_res('SELL', '🎯 정점 요격(Apex Intercept) 팩트 타격 완료', qty=safe_qty, target_price=exec_curr_p)
@@ -381,7 +389,7 @@ class VAvwapHybridPlugin:
             return _build_res('WAIT', '매크로_데이터_수집대기')
 
         if avwap_state.get('shutdown', False) or persistent_state.get('shutdown', False):
-            return _build_res('WAIT', '당일영구동결_상태(신규진입금지)')
+             return _build_res('WAIT', '당일영구동결_상태(신규진입금지)')
 
         if curr_time < time_0410:
             return _build_res('WAIT', '04:10_이전_오프닝_휩소_방어(10분_안전마진_대기)')
@@ -425,7 +433,7 @@ class VAvwapHybridPlugin:
 
         if ha_2_bullish_no_lower:
             if not ha_latched_bull:
-                ha_latched_bull = True
+                 ha_latched_bull = True
                 latch_changed = True
                 
         if trend_sequence == "BEAR" or rem_relative_pct < 30.0:
@@ -442,12 +450,12 @@ class VAvwapHybridPlugin:
 
         cond_seq = True
         if trend_sequence == "BEAR":
-            cond_seq = False
+             cond_seq = False
             mid_point = 0.0
             if day_high > 0 and day_low > 0:
                 mid_point = (day_high + day_low) / 2.0
             if atr5 > 0 and actual_gap_pct >= (atr5 * 0.5) and exec_curr_p >= mid_point:
-                cond_seq = True
+                 cond_seq = True
 
         if cond1_met and cond2_met and cond3_met and cond_seq:
             if avwap_alloc_cash > 0:

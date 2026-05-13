@@ -3,20 +3,23 @@
 # ==========================================================
 # MODIFIED: [V44.41 UI 팩트 교정] 지시서 렌더링 시 스냅샷 락온 상태 시각화
 # MODIFIED: [V54.05 SSOT 코어 통일 및 원자적 쓰기 락온]
-# 🚨 MODIFIED: [V56.00 AVWAP 실전 암살자 UI 복구] 락다운 해제 및 제어권 반환
+# MODIFIED: [V56.00 AVWAP 실전 암살자 UI 복구] 락다운 해제 및 제어권 반환
 # MODIFIED: [V59.02/05 잔재 데드코드 소각] 15:25 전량 덤핑 헌법 팩트 교정
 # MODIFIED: [V61.00 숏(SOXS) 전면 소각] 싱글 롱 모멘텀 아키텍처 확립
-# 🚨 MODIFIED: [V66.00 AVWAP 덤핑 지터 분산 락온] 동적 타임스탬프 팩트 교정
+# MODIFIED: [V66.00 AVWAP 덤핑 지터 분산 락온] 동적 타임스탬프 팩트 교정
 # NEW: [V66.02 원격 로그 핀셋 추출 엔진] 4096자 렌더링 쉴드 이식
-# 🚨 NEW: [V71.00 KIS 자체 VWAP 권한 위임 수술] 수동 설정 소각 및 17:05 자동 예약 렌더링
-# 🚨 MODIFIED: [V71.04 수동 주문 버튼 복원 및 스코프 전진 배치]
+# NEW: [V71.00 KIS 자체 VWAP 권한 위임 수술] 수동 설정 소각 및 17:05 자동 예약 렌더링
+# MODIFIED: [V71.04 수동 주문 버튼 복원 및 스코프 전진 배치]
 # - V-REV/V14 공용 수동 주문 격발 버튼 복원 (스냅샷 기반)
 # - 제16경고 준수: 변수 스코프 최상단 전진 배치로 런타임 붕괴 예방
-# 🚨 NEW: [V72.00 줍줍 텍스트 삭제 및 UI 렌더링 팩트 교정]
-# 🚨 MODIFIED: [V72.05 장마감 실시간 팩트 스캔 및 스냅샷 디커플링 해제]
-# 🚨 MODIFIED: [V72.07 통합 지시서 UI 여백 압축 렌더링 팩트 교정]
+# NEW: [V72.00 줍줍 텍스트 삭제 및 UI 렌더링 팩트 교정]
+# MODIFIED: [V72.05 장마감 실시간 팩트 스캔 및 스냅샷 디커플링 해제]
+# MODIFIED: [V72.07 통합 지시서 UI 여백 압축 렌더링 팩트 교정]
 # - 과거 스냅샷 경고 문구가 삭제된 자리에 불필요하게 남아있던 다중 개행(줄바꿈 \n) 찌꺼기 100% 소각.
 # - 뷰포트 조립 전 `strip()`을 강제하여 빈 공간을 진공 압축하고 팩트만 밀착 렌더링하도록 아키텍처 개조 완료.
+# NEW: [V72.16 AVWAP 정점요격 스위치 UI 렌더링 이식]
+# - settlement 메뉴의 V-REV 렌더링 블록 내부에 정점요격 가동 상태 표출 텍스트 인젝션.
+# - 제어를 위한 인라인 키보드 토글 버튼 동적 생성 로직 락온.
 # ==========================================================
 import os
 import math
@@ -468,7 +471,6 @@ class TelegramView:
 
         return final_msg, InlineKeyboardMarkup(keyboard) if keyboard else None
 
-    # (...중략: get_settlement_message ~ format_log_report 유지...)
     def get_settlement_message(self, active_tickers, config, atr_data, tracking_cache=None):
         msg = ""
         keyboard = []
@@ -505,10 +507,17 @@ class TelegramView:
             
             if ver == "V_REV":
                 msg += f"▫️ 1회 예산: 총 시드의 15% (고정 할당)\n▫️ 목표: [가상1층]+0.6% / [상위층]+0.5%\n▫️ 자동복리: {comp_rate}% | 수수료: <b>{fee_rate}%</b>\n▫️ 갭 스위칭: <b>🤖 자율주행 (상승장 자동 가동)</b>\n"
+                
                 if hasattr(config, 'get_avwap_hybrid_mode'):
                     is_avwap_on = config.get_avwap_hybrid_mode(t)
                     avwap_status_txt = "실전 가동 중 🔥" if is_avwap_on else "대기 중 ⚪"
                     msg += f"▫️ AVWAP 암살자: <b>{avwap_status_txt}</b>\n"
+                
+                # NEW: [V72.16 AVWAP 정점요격 스위치 상태 표출 인젝션]
+                is_apex_on = config.get_avwap_apex_mode(t) if hasattr(config, 'get_avwap_apex_mode') else True
+                apex_status_txt = "가동 중 🔥" if is_apex_on else "대기 중 ⚪"
+                msg += f"▫️ 정점요격(Apex Intercept): <b>{apex_status_txt}</b>\n"
+                
                 msg += "⚖️ <b>엔진 스탠바이:</b> 17:05 KST KIS VWAP 자동 예약 장전 및 관망 중\n\n"
             else:
                 msg += f"▫️ 분할: {split_cnt}회 | 목표: {target_profit}% | 복리: {comp_rate}%\n▫️ 수수료: <b>{fee_rate}%</b>\n"
@@ -523,6 +532,11 @@ class TelegramView:
             if ver == "V_REV":
                 is_avwap = config.get_avwap_hybrid_mode(t) if hasattr(config, 'get_avwap_hybrid_mode') else False
                 keyboard.append([InlineKeyboardButton(f"⚔️ 파격적 AVWAP 모멘텀 [ {'가동중' if is_avwap else 'OFF'} ]", callback_data=f"MODE:AVWAP_{'OFF' if is_avwap else 'WARN'}:{t}")])
+                
+                # NEW: [V72.16 정점요격 제어 토글 버튼 동적 생성]
+                is_apex_on = config.get_avwap_apex_mode(t) if hasattr(config, 'get_avwap_apex_mode') else True
+                keyboard.append([InlineKeyboardButton(f"🎯 3-Stage 정점요격 전술 [ {'ON' if is_apex_on else 'OFF'} ]", callback_data=f"MODE:APEX_{'OFF' if is_apex_on else 'ON'}:{t}")])
+                
                 if t == "SOXL": keyboard.append([InlineKeyboardButton(f"🔫 {t} 단일 롱 모멘텀 관제탑", callback_data=f"AVWAP:MENU:{t}")])
                 keyboard.append([InlineKeyboardButton(f"💸 {t} 복리", callback_data=f"INPUT:COMPOUND:{t}"), InlineKeyboardButton(f"💳 {t} 수수료", callback_data=f"INPUT:FEE:{t}")])
                 keyboard.append([InlineKeyboardButton(f"✂️ {t} 액면보정", callback_data=f"INPUT:STOCK_SPLIT:{t}")])

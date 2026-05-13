@@ -1,23 +1,28 @@
 # ==========================================================
+# FILE: strategy.py
+# ==========================================================
 # [strategy.py] - 🌟 V61.00 롱 단일 모멘텀 암살자 전용 라우터 🌟
 # ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
-# 🚨 MODIFIED: [V32.00 그랜드 수술] 불필요한 AVWAP 동적 파라미터 수신 배선 완전 소각
+# MODIFIED: [V32.00 그랜드 수술] 불필요한 AVWAP 동적 파라미터 수신 배선 완전 소각
 # NEW: [V40.XX 옴니 매트릭스 절대 헌법] TQQQ(V14) 런타임 강제 라우팅(Bypass) 쉴드 이식
-# 🚨 MODIFIED: [V40.XX 옴니 매트릭스 전면 수술] 후행성 60MA/120MA 엔진 전면 소각 및
+# MODIFIED: [V40.XX 옴니 매트릭스 전면 수술] 후행성 60MA/120MA 엔진 전면 소각 및
 # 전일 VWAP vs 당일 실시간 VWAP 동행 지표(Coincident Indicator) 듀얼 모멘텀 엔진 수신 및 라우팅 락온
-# 🚨 MODIFIED: [V54.06 SSOT 코어 통일 및 Split-Brain 영구 소각]
+# MODIFIED: [V54.06 SSOT 코어 통일 및 Split-Brain 영구 소각]
 # 1) V_REV 모드 판별 시 version="V_REV" 자체를 단일 진실 공급원(SSOT)으로 락온.
 # 2) get_plan 내부 V_REV 더미 반환 시 is_reverse=True 로 강제 결속하여 UI 렌더링 엇박자 해체.
-# 🚨 MODIFIED: [V60.00 옴니 매트릭스 락다운 엔진 전면 폐기]
+# MODIFIED: [V60.00 옴니 매트릭스 락다운 엔진 전면 폐기]
 # 기회비용을 훼손하던 apply_omni_matrix_filter 엔진 및 관련 매수 차단 로직 100% 영구 소각 완료.
-# 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각 작전 지시서 적용]
+# MODIFIED: [V61.00 숏(SOXS) 전면 소각 작전 지시서 적용]
 # [ V61 절대 헌법 ]: 숏(SOXS) 운용은 시스템 전역에서 100% 영구 소각되었습니다. 
 # get_plan 진입부의 SOXS 우회 방어막을 제거하고 롱 단일 모멘텀 아키텍처로 진공 압축 완료.
-# 🚨 MODIFIED: [V61.01 시각적 오염 마커 클리닝] 주석문에 유입된 외부 에디터 렌더링 마커 태그 찌꺼기 100% 도려내어 코드 결벽성 복구.
-# 🚨 MODIFIED: [V71.16 V-REV 런타임 붕괴 및 지시서 증발 맹점 완벽 수술]
+# MODIFIED: [V61.01 시각적 오염 마커 클리닝] 주석문에 유입된 외부 에디터 렌더링 마커 태그 찌꺼기 100% 도려내어 코드 결벽성 복구.
+# MODIFIED: [V71.16 V-REV 런타임 붕괴 및 지시서 증발 맹점 완벽 수술]
 # - V-REV 모드가 더미 깡통 데이터([])를 반환하여 17:05 스케줄러 및 수동 주문(EXEC) 시 
 #   주문이 100% 증발(Data Starvation)하던 치명적 라우팅 누수 원천 차단.
 # - QueueLedger를 동적 로드하고 get_dynamic_plan과 직결하여 팩트 기반 VWAP 예약 주문을 완벽히 반환하도록 역배선 개통 완료.
+# 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 탑재]
+# get_avwap_decision 호출 규격에 is_apex_on 파라미터를 추가하여,
+# 전투 사령부에서 추출한 스위치 상태를 암살자 코어(strategy_v_avwap)로 다이렉트 수혈 배선 개통 완료.
 # ==========================================================
 import logging
 import pandas as pd
@@ -34,8 +39,6 @@ class InfiniteStrategy:
         self.v14_plugin = V14Strategy(config)
         self.v_avwap_plugin = VAvwapHybridPlugin()
         # MODIFIED: [V42 U-Curve 락온 무결성 복구] ReversionStrategy 객체 생성 시 config 인자 주입 배선 100% 복구
-        # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막] V42 U-Curve 락온 무결성 
-        # 유지를 위해 config 주입을 훼손하지 말 것
         self.v_rev_plugin = ReversionStrategy(config)
         self.v14_vwap_plugin = V14VwapStrategy(config)
 
@@ -199,10 +202,11 @@ class InfiniteStrategy:
     def fetch_avwap_macro(self, base_ticker):
         return self.v_avwap_plugin.fetch_macro_context(base_ticker)
 
-    def get_avwap_decision(self, base_ticker, exec_ticker, base_curr_p, exec_curr_p, base_day_open, avg_price, qty, alloc_cash, context_data, df_1min_base, now_est, avwap_state=None, regime_data=None, **kwargs):
+    # 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 탑재] is_apex_on 파라미터 수혈
+    def get_avwap_decision(self, base_ticker, exec_ticker, base_curr_p, exec_curr_p, base_day_open, avg_price, qty, alloc_cash, context_data, df_1min_base, now_est, avwap_state=None, regime_data=None, is_apex_on=True, **kwargs):
         # MODIFIED: [V60.00] AVWAP 옴니 매트릭스 락다운 필터 100% 영구 소각 완료.
         return self.v_avwap_plugin.get_decision(
             base_ticker=base_ticker, exec_ticker=exec_ticker, base_curr_p=base_curr_p, exec_curr_p=exec_curr_p, 
             base_day_open=base_day_open, avwap_avg_price=avg_price, avwap_qty=qty, avwap_alloc_cash=alloc_cash,
-            context_data=context_data, df_1min_base=df_1min_base, now_est=now_est, avwap_state=avwap_state, **kwargs
+            context_data=context_data, df_1min_base=df_1min_base, now_est=now_est, avwap_state=avwap_state, is_apex_on=is_apex_on, **kwargs
         )

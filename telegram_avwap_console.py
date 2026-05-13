@@ -10,6 +10,10 @@
 # 🚨 MODIFIED: [V66.05 Split-Brain 시각적 디커플링 해결]
 # 🚨 NEW: [3-Stage Apex Intercept (정점 요격) 전술 상태 렌더링 이식]
 # - JSON에서 추출한 APEX 팩트 상태를 기반으로 1, 2, 3단계 직관적 텍스트를 오버라이드하여 시각적 디커플링 완벽 해체.
+# 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 UI 연동]
+# - 관제탑 뷰포트 스캔 시 config의 스위치 상태를 실시간 참조하도록 팩트 결속
+# - 스위치 OFF 시 정점요격 렌더링 텍스트를 비활성 (수동 OFF 및 지터 덤핑 전용) 상태로 강제 오버라이드하여 시각적 환각 원천 차단
+# - get_decision 섀도 연산부 is_apex_on 파라미터 수혈 락온
 # ==========================================================
 import logging
 import datetime
@@ -48,7 +52,7 @@ class AvwapConsolePlugin:
             
         if not avwap_tickers:
             return "⚠️ <b>[AVWAP 암살자 오프라인]</b>\n▫️ AVWAP 지원 종목이 없습니다.", None
-          
+           
         active_avwap = avwap_tickers
         tracking_cache = app_data.get('sniper_tracking', {})
         
@@ -89,7 +93,7 @@ class AvwapConsolePlugin:
              
             if df_1m is not None and not df_1m.empty:
                 df = df_1m.copy()
-                  
+                   
                 if 'time_est' in df.columns:
                     if is_regular_session:
                         df = df[(df['time_est'] >= '093000') & (df['time_est'] <= '155900')]
@@ -149,7 +153,7 @@ class AvwapConsolePlugin:
                                         ha_open.append((float(df_5m['open'].iloc[i]) + float(df_5m['close'].iloc[i])) / 2.0)
                                     else:
                                         ha_open.append((ha_open[i-1] + float(df_5m['HA_Close'].iloc[i-1])) / 2.0)
-                                
+                                     
                                 df_5m['HA_Open'] = pd.Series(ha_open, index=df_5m.index)
                                 df_5m['HA_High'] = df_5m[['high', 'HA_Open', 'HA_Close']].max(axis=1)
                                 df_5m['HA_Low'] = df_5m[['low', 'HA_Open', 'HA_Close']].min(axis=1)
@@ -227,6 +231,9 @@ class AvwapConsolePlugin:
 
             is_avwap_active = await asyncio.to_thread(getattr(self.cfg, 'get_avwap_hybrid_mode', lambda x: False), t)
             active_str = "🟢 가동 중" if is_avwap_active else "⚪ 대기 중 (OFF)"
+            
+            # 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 상태 스캔]
+            is_apex_on = await asyncio.to_thread(getattr(self.cfg, 'get_avwap_apex_mode', lambda x: True), t)
             
             curr_p, day_high, day_low = 0.0, 0.0, 0.0
             try:
@@ -328,7 +335,7 @@ class AvwapConsolePlugin:
                 else:
                     trend_str = "🔴 <b>조건 미달 (실시간 추세 돌파 감시)</b>"
             else:
-                trend_str = "⚠️ 데이터 수집 대기 중"
+                 trend_str = "⚠️ 데이터 수집 대기 중"
 
             msg += f"▫️ 판별 기준: <code>{criteria}</code>\n"
             msg += f"▫️ <b>[ 하이킨아시 듀얼 모멘텀 조건 ]</b>\n"
@@ -338,13 +345,17 @@ class AvwapConsolePlugin:
             msg += f"   {c3_str} 상대 잔여 체력 30% 이상 (현재: {rem_relative_pct:.1f}%)\n"
             msg += f"▫️ 타격 상태: {trend_str}\n"
 
-            # NEW: [3-Stage Apex Intercept 상태 렌더링 디커플링 해체]
-            apex_s1 = tracking_cache.get(f"APEX_STAGE_1_{t}", False)
-            apex_s2 = tracking_cache.get(f"APEX_STAGE_2_{t}", False)
-            
-            apex_status_txt = "⚪ 비활성 (조건 미달)"
-            if apex_s2: apex_status_txt = "🎯 [2단계] 투매 감지 (최종 격발 대기)"
-            elif apex_s1: apex_status_txt = "🎯 [1단계] 고점 돌파 (방아쇠 장전 중)"
+            # 🚨 MODIFIED: [V72.16 스위치 OFF 시 정점요격 렌더링 텍스트 강제 오버라이드]
+            if not is_apex_on:
+                apex_status_txt = "⚪ 비활성 (수동 OFF 및 지터 덤핑 전용)"
+            else:
+                apex_s1 = tracking_cache.get(f"APEX_STAGE_1_{t}", False)
+                apex_s2 = tracking_cache.get(f"APEX_STAGE_2_{t}", False)
+                
+                apex_status_txt = "⚪ 비활성 (조건 미달)"
+                if apex_s2: apex_status_txt = "🎯 [2단계] 투매 감지 (최종 격발 대기)"
+                elif apex_s1: apex_status_txt = "🎯 [1단계] 고점 돌파 (방아쇠 장전 중)"
+                
             msg += f"▫️ 정점 요격(Apex Intercept): <b>{apex_status_txt}</b>\n"
 
             dump_jitter_sec = tracking_cache.get(f"AVWAP_DUMP_JITTER_{t}", 0)
@@ -403,7 +414,7 @@ class AvwapConsolePlugin:
                 status_txt = "⚪ 모드 비활성 (레이더 관측 중)"
             elif is_shutdown: 
                 if avwap_qty > 0:
-                     status_txt = "🌙 미체결 잔량 오버나이트 롤오버"
+                    status_txt = "🌙 미체결 잔량 오버나이트 롤오버"
                 else:
                     status_txt = "🛑 당일 영구동결 (SHUTDOWN)"
             elif avwap_qty > 0: 
@@ -430,7 +441,8 @@ class AvwapConsolePlugin:
                         day_low=day_low,
                         atr5=atr5,
                         base_day_high=base_day_high,
-                        base_day_low=base_day_low
+                        base_day_low=base_day_low,
+                        is_apex_on=is_apex_on # 🚨 NEW: 섀도 연산부 is_apex_on 파라미터 수혈 락온
                     )
 
                     action = decision.get('action')
