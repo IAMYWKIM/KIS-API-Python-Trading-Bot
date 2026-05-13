@@ -14,10 +14,10 @@
 # 🚨 MODIFIED: [V71.08 AVWAP 암살자 덤핑 타임라인 전진 배치 팩트 교정]
 # 🚨 NEW: [V72.09 3-Stage Apex Intercept (정점 요격) 전술 탑재]
 # 🚨 MODIFIED: [V72.10 3단계 격발 차원 붕괴(버그) 완벽 수술] 
-# 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 탑재]
+# 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 탑재 및 IndentationError 팩트 수술]
 # - get_decision 내부 3단계 정점요격 연산 블록 최상단에 바이패스 쉴드 이식 완료.
-# - 스위치 OFF 시 정점 갱신 및 투매 판별 연산을 전면 무시하고 상태를 초기화하여,
-#   장마감 직전 무지성 지터 덤핑 궤도로 완벽히 롤백하도록 아키텍처 팩트 교정.
+# - 스위치 OFF 시 정점 갱신 및 투매 판별 연산을 전면 무시하고 상태를 초기화.
+# - 런타임 붕괴를 유발하던 들여쓰기(Indentation) 오차 3곳 100% 팩트 교정 완료.
 # ==========================================================
 import logging
 import datetime
@@ -125,7 +125,7 @@ class VAvwapHybridPlugin:
             if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 5):
                 today_est = (now_est - datetime.timedelta(days=1)).date()
             else:
-                 today_est = now_est.date()
+                today_est = now_est.date()
 
             if not df_1m.empty:
                 if df_1m.index.tz is None:
@@ -170,7 +170,7 @@ class VAvwapHybridPlugin:
                     avg_vol_20 = float(past_first_30m['Volume'].mean())
 
             if prev_vwap == 0.0:
-                 prev_vwap = prev_close
+                prev_vwap = prev_close
 
             return {
                 "prev_close": prev_close,
@@ -232,7 +232,7 @@ class VAvwapHybridPlugin:
 
                 if 'time_est' in df.columns:
                     if is_regular_session:
-                         df = df[(df['time_est'] >= '093000') & (df['time_est'] <= '155900')]
+                        df = df[(df['time_est'] >= '093000') & (df['time_est'] <= '155900')]
                     else:
                         df = df[(df['time_est'] >= '040000') & (df['time_est'] <= '092959')]
 
@@ -433,7 +433,7 @@ class VAvwapHybridPlugin:
 
         if ha_2_bullish_no_lower:
             if not ha_latched_bull:
-                 ha_latched_bull = True
+                ha_latched_bull = True
                 latch_changed = True
                 
         if trend_sequence == "BEAR" or rem_relative_pct < 30.0:
@@ -450,12 +450,12 @@ class VAvwapHybridPlugin:
 
         cond_seq = True
         if trend_sequence == "BEAR":
-             cond_seq = False
+            cond_seq = False
             mid_point = 0.0
             if day_high > 0 and day_low > 0:
                 mid_point = (day_high + day_low) / 2.0
             if atr5 > 0 and actual_gap_pct >= (atr5 * 0.5) and exec_curr_p >= mid_point:
-                 cond_seq = True
+                cond_seq = True
 
         if cond1_met and cond2_met and cond3_met and cond_seq:
             if avwap_alloc_cash > 0:
