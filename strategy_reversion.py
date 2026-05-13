@@ -31,6 +31,9 @@
 # - 기보유 상태(0주 초과) 진입 시, 낡은 단일 앵커(l1_price) 의존성을 전면 소각.
 # - min(prev_c, l1_price) 공식으로 앵커를 강제 락온하여 갭상승 시 고점 추격 매수를 원천 차단.
 # - Buy1, Buy2 타점이 절대적으로 팩트 최저가를 기준으로 산출되도록 아키텍처 대수술 완료.
+# 🚨 MODIFIED: [V72.19 V-REV 스냅샷 데이터 기아 방어 전진 배치 및 EST 절대 락온]
+# - get_dynamic_plan 최상단에 is_snapshot_mode False 시 cached_plan 즉시 반환 쉴드 장착
+# - start_t, end_t 산출 시 KST 역산 데드코드를 전면 소각하고 KIS 서버 요구 스펙인 152500/155500 EST 락온
 # ==========================================================
 import math
 import os
@@ -80,7 +83,7 @@ class ReversionStrategy:
                     return
             except Exception:
                 pass
-                
+                 
         self.executed["BUY_BUDGET"][ticker] = 0.0
         self.executed["SELL_QTY"][ticker] = 0
         self.state_loaded[ticker] = today_str
@@ -203,6 +206,13 @@ class ReversionStrategy:
     def get_dynamic_plan(self, ticker, curr_p, prev_c, current_weight, vwap_status, min_idx, alloc_cash, q_data, is_snapshot_mode=False, market_type="REG"):
         self._load_state_if_needed(ticker)
 
+        cached_plan = self.load_daily_snapshot(ticker)
+        
+        # 🚨 MODIFIED: [V72.19 V-REV 덫 복원 시 스냅샷 데이터 기아 방어 전진 배치]
+        # is_snapshot_mode가 False일 때 캐싱된 스냅샷이 존재하면 즉시 반환하여 예산 부족($0.0)으로 코어가 연산되어 매수 덫이 증발하는 현상을 원천 차단
+        if not is_snapshot_mode and cached_plan:
+            return cached_plan
+
         # 🚨 [제20경고 팩트 검증] 큐(Queue) 장부의 순수 평단가 역산. KIS 평단가(actual_avg) 절대 참조 금지.
         valid_q_data = [item for item in q_data if float(item.get('price', 0.0)) > 0]
         total_q = sum(int(item.get("qty", 0)) for item in valid_q_data)
@@ -224,8 +234,6 @@ class ReversionStrategy:
         trigger_l1 = round(l1_price * 1.006, 2)
         trigger_upper = round(avg_price * 1.010, 2) if upper_qty > 0 else 0.0
 
-        cached_plan = self.load_daily_snapshot(ticker)
-        
         if is_snapshot_mode:
             is_zero_start_session = (total_q == 0)
         else:
@@ -265,10 +273,11 @@ class ReversionStrategy:
             q1 = math.floor(b1_budget / p1_trigger) if p1_trigger > 0 else 0
             q2 = math.floor(b2_budget / p2_trigger) if p2_trigger > 0 else 0
             
-            est_tz_check = ZoneInfo('America/New_York')
-            is_dst_active = bool(datetime.now(est_tz_check).dst())
-            start_t = "042500" if is_dst_active else "052500"
-            end_t = "045500" if is_dst_active else "055500"
+            # 🚨 MODIFIED: [V72.19 VWAP 알고리즘 타임라인 EST 절대 락온]
+            # KST 역산에 의한 042500/052500 KIS 서버 리젝(Reject) 맹독성 데드코드를 영구 소각하고, 
+            # KIS 명세에 맞는 EST 152500 / 155500 절대 락온
+            start_t = "152500"
+            end_t = "155500"
             
             if q1 > 0:
                 ord_type = "VWAP" if q1 >= 10 else "LOC"
@@ -282,10 +291,9 @@ class ReversionStrategy:
         rem_qty_total = max(0, int(total_q) - int(self.executed["SELL_QTY"].get(ticker, 0)))
         
         if rem_qty_total > 0:
-            est_tz_check = ZoneInfo('America/New_York')
-            is_dst_active = bool(datetime.now(est_tz_check).dst())
-            start_t = "042500" if is_dst_active else "052500"
-            end_t = "045500" if is_dst_active else "055500"
+            # 🚨 MODIFIED: [V72.19 VWAP 알고리즘 타임라인 EST 절대 락온]
+            start_t = "152500"
+            end_t = "155500"
             
             available_l1 = min(l1_qty, rem_qty_total)
             available_upper = min(upper_qty, rem_qty_total - available_l1)
@@ -295,7 +303,7 @@ class ReversionStrategy:
                 sell_dict[trigger_l1] = sell_dict.get(trigger_l1, 0) + available_l1
             if available_upper > 0 and trigger_upper > 0:
                 sell_dict[trigger_upper] = sell_dict.get(trigger_upper, 0) + available_upper
-                
+                 
             for price in sorted(sell_dict.keys()):
                 s_qty = sell_dict[price]
                 ord_type = "VWAP" if s_qty >= 10 else "LOC"

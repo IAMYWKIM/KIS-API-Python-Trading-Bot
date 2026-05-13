@@ -1,11 +1,13 @@
 # ==========================================================
 # FILE: strategy_v14_vwap.py
 # ==========================================================
-# (상단 주석 생략...)
 # 🚨 MODIFIED: [V72.04 후반전 별값 매수 예산 통합 락온]
 # - 후반전(T >= 분할/2) 진입 시 동일한 가격(별값)임에도 50:50으로 예산을 쪼개어
 #   VWAP 최소 수량(10주) 요건을 스스로 박탈하던 기계적 분할 맹점 원천 차단.
 # - 단일 가격 타격 시에는 예산을 100% 단일 버킷으로 통합하여 VWAP 격발 확률을 극대화함.
+# 🚨 MODIFIED: [V72.19 VWAP 알고리즘 타임라인 EST 절대 락온]
+# - get_plan 내부의 start_t, end_t 산출 시 서머타임 분기 연산(KST 역산)을 전면 적출하고
+#   KIS 서버 요구 스펙에 맞춰 152500과 155500으로 EST 절대 락온
 # ==========================================================
 import math
 import logging
@@ -22,7 +24,6 @@ class V14VwapStrategy:
         self.executed = {"BUY_BUDGET": {}, "SELL_QTY": {}}
         self.state_loaded = {}
 
-    # (...중략: _get_logical_date_str ~ record_execution 유지...)
     def _get_logical_date_str(self):
         now_est = datetime.now(ZoneInfo('America/New_York'))
         if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 4):
@@ -202,10 +203,9 @@ class V14VwapStrategy:
         process_status = "예방적방어선"
         is_zero_start_fact = False
         
-        est_tz_check = ZoneInfo('America/New_York')
-        is_dst_active = bool(datetime.now(est_tz_check).dst())
-        start_t = "042500" if is_dst_active else "052500"
-        end_t = "045500" if is_dst_active else "055500"
+        # 🚨 MODIFIED: [V72.19 VWAP 알고리즘 타임라인 EST 절대 락온]
+        start_t = "152500"
+        end_t = "155500"
 
         if qty == 0:
             is_zero_start_fact = True
@@ -259,7 +259,7 @@ class V14VwapStrategy:
                 core_orders.append({"side": "SELL", "price": target_price, "qty": qty - q_sell, "type": "LIMIT", "desc": "🎯목표매도(V)"})
 
         if is_zero_start_fact and market_type != "AFTER":
-             core_orders = [o for o in core_orders if o.get("side") != "SELL"]
+            core_orders = [o for o in core_orders if o.get("side") != "SELL"]
 
         plan_result = {
             'core_orders': core_orders, 'bonus_orders': [], 'orders': core_orders,
