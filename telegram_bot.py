@@ -7,11 +7,10 @@
 # 🚨 MODIFIED: [V72.13 V-REV 1층 독립 및 상위층 총평단가 연동 엑시트 전술 이식]
 # 🚨 MODIFIED: [V72.17 제20경고 준수: V-REV 매수 데드존 구축 및 앵커 최저가 락온]
 # 🚨 MODIFIED: [V72.18 수동 VWAP 경고문 영구 소각 및 UI 팩트 교정]
-# - KIS 자체 VWAP 알고리즘 자동화에 따라 의미가 상실된 수동 VWAP 설정 경고 문구
-#   (V앱 30분 전 세팅 경고)를 텔레그램 지시서 렌더링 로직에서 100% 영구 적출 완료.
 # 🚨 MODIFIED: [V72.25 관제탑 새로고침 덮어쓰기(Edit) 단일 뷰포트 락온]
-# - cmd_avwap 호출 시 버튼 클릭 이벤트인 경우 새 메시지(reply_text)를 발송하지 않고
-#   기존 메시지를 덮어쓰기(edit_text)하여 UI 환각 및 트래픽 병목을 원천 차단함.
+# 🚨 MODIFIED: [V72.27 0주 새출발 줍줍 생략 레거시 UI 영구 소각]
+# - 0주 새출발 시 1층 확보에 예산을 100% 집중한다는 거짓 텍스트를 영구 소각.
+# - VWAP 50:50 분할 장전 팩트와 UI가 완벽히 일치하도록 시각적 디커플링 해체 완료.
 # ==========================================================
 import logging
 import datetime
@@ -528,7 +527,7 @@ class TelegramController:
                     for o in snap_sells_for_ui:
                          desc_label = o.get('desc', '매도').split('(')[0]
                          v_rev_guidance += f" 🔵 {desc_label} ${o['price']:.2f} <b>{o['qty']}주</b> ({tag})\n"
-                         
+                        
                 elif q_list and logic_qty > 0:
                     trigger_l1 = round(l1_price * 1.006, 2)
                     
@@ -579,8 +578,8 @@ class TelegramController:
                     if b2_qty > 0:
                         v_rev_guidance += f" 🔴 매수2(Buy2) ${b2_price:.2f} <b>{b2_qty}주</b> ({tag})\n"
                  
-                    if is_zero_start_fact:
-                        v_rev_guidance += " 🚫 <code>[0주 새출발] 기준 평단가 부재로 줍줍 생략 (1층 확보에 예산 100% 집중)</code>\n"
+                    # 🚨 MODIFIED: [V72.27 0주 새출발 줍줍 생략 레거시 UI 영구 소각]
+                    # 시각적 환각(디커플링)을 유발하던 하드코딩 텍스트 100% 적출 완료.
                 else:
                     v_rev_guidance += " 🔴 매수 대기: 타점 연산 대기 중\n"
 
@@ -631,7 +630,7 @@ class TelegramController:
                                  now_est=now_est, avwap_state=avwap_state_dict,
                                  context_data=avwap_ctx
                              )
-                             
+                              
                              avwap_base_price = decision.get('base_curr_p', base_curr_p)
                              avwap_base_vwap = decision.get('vwap', 0.0)
                              avwap_prev_vwap = decision.get('prev_vwap', 0.0)
