@@ -57,7 +57,7 @@
 # - 제자리 메뉴 새로고침(cmd_settlement) 배선 개통으로 시각적 디커플링 원천 차단.
 # 🚨 NEW: [V73.00 UI 렌더링 디커플링 해체]
 # - 텔레그램 시작 화면 및 통합 지시서에 잔존하는 17:05 KST 예약 장전 레거시 텍스트를 15:26 EST 지연 장전으로 팩트 교정하여 시각적 환각을 100퍼센트 해체합니다. (telegram_view 연동)
-# - 수동 주문(EXEC) 시 생성되는 스냅샷 기반 덫 장전 프로세스 무결점 유지.
+# - 수동 주문(EXEC) 시 생성되는 스냅샷 기반 덫 장전 프로세 무결점 유지.
 # 🚨 NEW: [통합 지시서 수동 매매 취소 버튼 탑재 및 KIS 다이렉트 팩트 취소 라우팅 개통]
 # - CANCEL_EXEC 콜백 라우터를 신설하여 수동 매매 취소 기능을 개통. 
 # - KIS 예약 원장과 일반 미체결 원장을 비동기로 이중 스캔하고 팩트로 파기하여 제1헌법, 제19경고를 100% 완벽하게 준수.
@@ -66,6 +66,13 @@
 #   cfg.reset_lock_for_ticker를 비동기로 호출하는 무결성 락온 파이프라인 개통 완료.
 # 🚨 NEW: [V75.02 원격 로그 추출 엔진 팩트 교정 및 데이터 증발 수술]
 # - cmd_log 내 Traceback 데이터 증발 방어를 위한 꼬리 캡처(_grep_tail_logs) 무결성 락온
+# 🚨 MODIFIED: [V75.03 관찰자 효과 및 시각적 환각 원천 수술]
+# - get_decision 비동기 래핑 및 is_simulation=True 강제 주입 (제1헌법 준수 및 런타임 오염 차단)
+# - 낡은 10시/15시 텍스트 소각 및 09:30~09:34 캔들 대기 / 지터 덤핑 타임라인 팩트 교정
+# 🚨 MODIFIED: [V75.06 런타임 즉사 방어] 들여쓰기(IndentationError) 팩트 완벽 교정
+# - cmd_sync 내 AVWAP 레이더 스캔 블록의 찌그러진 들여쓰기를 전면 교정하여 런타임 크래시 영구 소각
+# 🚨 MODIFIED: [V75.07 관제탑 새로고침 로딩 렌더링 원상 복구]
+# - 사용자의 지시에 따라 시각적 피드백(로딩 텍스트)이 있던 이전 버전의 UI 렌더링 방식으로 100% 롤백 완료
 # ==========================================================
 import logging
 import datetime
@@ -238,6 +245,8 @@ class TelegramController:
             
         await self.states_handler.handle_message(update, context, self)
 
+    # MODIFIED: [V75.07 관제탑 새로고침 로딩 렌더링 원상 복구]
+    # 사용자의 지시에 따라 시각적 피드백(로딩 텍스트)이 있던 이전 버전의 UI 렌더링 방식으로 100% 롤백 완료
     async def cmd_avwap(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update): return
         
