@@ -8,11 +8,13 @@
 # 🚨 NEW: [V66.00 AVWAP 암살자 덤핑 지터(Jitter) 분산 락온]
 # 🚨 NEW: [V72.09 3-Stage Apex Intercept (정점 요격) 전술 탑재]
 # 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 탑재 및 IndentationError 팩트 수술]
-# 🚨 MODIFIED: [V75.00 찐바닥 요격 전면 소각 및 체력 30% 절대 락온 원상 복구]
-# - 5년 장기 백테스트 결과(승률 및 MDD 악화)에 따라 V74.00~V74.04에 탑재되었던
-#   'HA V-Turn 정밀 요격' 및 '심해 고도 필터' 로직을 시스템 전역에서 100% 영구 소각함.
-# - 잔여 체력이 30% 미만으로 고갈되었을 때는 반등 캔들에 속지 않고 무조건 
-#   당일 영구 동결(SHUTDOWN)을 격발하도록 V65.00의 절대 헌법을 최전선에 원상 복구 완료.
+# 🚨 NEW: [V74.00 Operation HA V-Turn Intercept (정밀 요격) 전술 탑재]
+# 🚨 MODIFIED: [V74.02 HA V-Turn 정밀 꼬리(Wick) 파서 및 1양봉 격발 엔진 이식]
+# 🚨 NEW: [V74.04 심해 고도 필터(Deep-Sea Altitude Filter) 락온 및 스코프 전진 배치]
+# 🚨 MODIFIED: [V74.05 찐바닥 체력 30% 락다운 바이패스 소각 및 절대 락온 원상 복구]
+# - V-Turn 시그널이 포착되더라도 잔여 체력이 30% 미만으로 고갈되었을 때는 반등 캔들에 
+#   속지 않고 무조건 당일 영구 동결(SHUTDOWN)을 격발하도록 팩트 교정 완료.
+# - V-Turn 시그널은 체력이 30% 이상일 때만 시계열 하락세(BEAR)를 바이패스하여 타격함.
 # ==========================================================
 import logging
 import datetime
@@ -214,12 +216,16 @@ class VAvwapHybridPlugin:
         base_vwap = base_curr_p
         vwap_success = False 
 
-        # 🚨 [V75.00 변수 스코프 전진 배치]
+        # 🚨 [V74.04 제16경고 스코프 전진 배치 및 심해 필터 변수 락온]
         ha_2_bullish_no_lower = False
+        ha_v_turn_detected = False
         trend_sequence = "PENDING"
         
         is_pure_5m_2_bearish = False
         current_5m_is_bearish = False
+        
+        day_amplitude = 0.0
+        deep_sea_threshold = 0.0
 
         if df_1min_base is not None and not df_1min_base.empty:
             try:
@@ -250,6 +256,7 @@ class VAvwapHybridPlugin:
 
                     if is_regular_session and curr_time < datetime.time(9, 35):
                         ha_2_bullish_no_lower = False
+                        ha_v_turn_detected = False
                     else:
                         df['datetime'] = pd.to_datetime(df.index)
                         df.set_index('datetime', inplace=True)
@@ -279,12 +286,35 @@ class VAvwapHybridPlugin:
                             df_5m['HA_Low'] = df_5m[['low', 'HA_Open', 'HA_Close']].min(axis=1)
 
                             df_5m['No_Lower_Wick'] = (df_5m[['HA_Open', 'HA_Close']].min(axis=1) - df_5m['HA_Low']) <= 0.01
-                            
+                            df_5m['No_Upper_Wick'] = (df_5m['HA_High'] - df_5m[['HA_Open', 'HA_Close']].max(axis=1)) <= 0.01
+                            df_5m['Has_Lower_Wick'] = (df_5m[['HA_Open', 'HA_Close']].min(axis=1) - df_5m['HA_Low']) > 0.01
+                            df_5m['Has_Upper_Wick'] = (df_5m['HA_High'] - df_5m[['HA_Open', 'HA_Close']].max(axis=1)) > 0.01
+
                             df_5m['Is_Bullish'] = df_5m['HA_Close'] >= df_5m['HA_Open']
+                            df_5m['Is_Bearish'] = df_5m['HA_Close'] < df_5m['HA_Open']
 
                             if len(df_5m) >= 2:
                                 last_2 = df_5m.tail(2)
                                 ha_2_bullish_no_lower = last_2['Is_Bullish'].all() and last_2['No_Lower_Wick'].all()
+
+                            if len(df_5m) >= 3:
+                                last_idx = len(df_5m) - 1
+                                bull_cond = df_5m['Is_Bullish'].iloc[last_idx] and df_5m['No_Lower_Wick'].iloc[last_idx] and df_5m['Has_Upper_Wick'].iloc[last_idx]
+                                if bull_cond:
+                                    bear_count = 0
+                                    for i in range(last_idx - 1, -1, -1):
+                                        if df_5m['Is_Bearish'].iloc[i] and df_5m['No_Upper_Wick'].iloc[i] and df_5m['Has_Lower_Wick'].iloc[i]:
+                                            bear_count += 1
+                                        else:
+                                            break
+                                    if bear_count >= 2:
+                                        day_amplitude = day_high - day_low
+                                        if day_amplitude > 0:
+                                            deep_sea_threshold = day_low + (day_amplitude * 0.3)
+                                            if exec_curr_p <= deep_sea_threshold:
+                                                ha_v_turn_detected = True
+                                            else:
+                                                logging.debug(f"🚨 [V_AVWAP] HA V-Turn 포착되었으나, 현재가({exec_curr_p})가 심해 임계선({deep_sea_threshold}) 초과로 기각(Bypass).")
 
             except Exception as e:
                 logging.error(f"🚨 [V_AVWAP] 기초자산 HA 및 5분봉 연산 실패: {e}")
@@ -405,7 +435,8 @@ class VAvwapHybridPlugin:
         
         rem_relative_pct = ((atr5 - actual_gap_pct) / atr5 * 100.0) if atr5 > 0 else 0.0
 
-        # 🚨 MODIFIED: [V75.00 체력 30% 락다운 절대 방어막 원상 복구]
+        # 🚨 MODIFIED: [V74.05 찐바닥 체력 30% 락다운 절대 방어막 원상 복구]
+        # 어떠한 시그널이 나오더라도 체력이 30% 미만이면 무조건 당일 영구 동결
         if rem_relative_pct < 30.0:
             persistent_state["shutdown"] = True
             self.save_state(exec_ticker, now_est, persistent_state)
@@ -423,13 +454,13 @@ class VAvwapHybridPlugin:
         ha_latched_bull = persistent_state.get('HA_LATCHED_BULL', False)
         latch_changed = False
 
-        if ha_2_bullish_no_lower:
+        if ha_2_bullish_no_lower or ha_v_turn_detected:
             if not ha_latched_bull:
                 ha_latched_bull = True
                 latch_changed = True
                 
-        # 🚨 MODIFIED: [V75.00 찐바닥 쉴드 소각 및 시계열/체력 하락 시 엄격한 래치 해제 롤백]
-        if (trend_sequence == "BEAR") or (rem_relative_pct < 30.0):
+        # 🚨 MODIFIED: [V74.05 시계열 하락 시 래치 해제 방어 (V-Turn은 바이패스)]
+        if (trend_sequence == "BEAR" and not ha_v_turn_detected):
             if ha_latched_bull:
                 ha_latched_bull = False
                 latch_changed = True
@@ -438,22 +469,25 @@ class VAvwapHybridPlugin:
             persistent_state['HA_LATCHED_BULL'] = ha_latched_bull
             self.save_state(exec_ticker, now_est, persistent_state)
 
-        # 🚨 MODIFIED: [V75.00 찐바닥 바이패스 소각 및 오리지널 HA 모멘텀 락온]
-        cond2_met = ((base_curr_p > base_vwap) and ha_latched_bull)
+        # 🚨 V-Turn 타점 정밀 교정 시 VWAP 락다운 해방 바이패스 락온 유지 (체력 30% 이상일 때만 도달 가능)
+        cond2_met = ((base_curr_p > base_vwap) and ha_latched_bull) or ha_v_turn_detected
         
-        # 🚨 MODIFIED: [V75.00 체력 30% 조건 원상 복구]
+        # 🚨 MODIFIED: [V74.05 체력 30% 조건 원상 복구 (바이패스 불가)]
         cond3_met = (rem_relative_pct >= 30.0)
 
         cond_seq = True
         if trend_sequence == "BEAR":
             cond_seq = False
+            # 🚨 시계열 하락장은 V-Turn 포착 시 바이패스 허용
+            if ha_v_turn_detected:
+                cond_seq = True
 
         if cond1_met and cond2_met and cond3_met and cond_seq:
             if avwap_alloc_cash > 0:
                 safe_budget = avwap_alloc_cash * 0.95
                 buy_qty = int(math.floor(safe_budget / exec_curr_p))
                 if buy_qty > 0:
-                    return _build_res('BUY', '하이킨아시_배타적갭필터_통과_타격개시', qty=buy_qty, target_price=exec_curr_p)
+                    return _build_res('BUY', 'V자 반등(HA 찐바닥 포착)' if ha_v_turn_detected else '하이킨아시_배타적갭필터_통과_타격개시', qty=buy_qty, target_price=exec_curr_p)
             return _build_res('WAIT', '가용예산부족_대기')
         else:
             fail_reasons = []

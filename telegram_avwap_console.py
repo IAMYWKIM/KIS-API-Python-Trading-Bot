@@ -10,11 +10,14 @@
 # 🚨 MODIFIED: [V66.05 Split-Brain 시각적 디커플링 해결]
 # 🚨 NEW: [3-Stage Apex Intercept (정점 요격) 전술 상태 렌더링 이식]
 # 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 UI 연동]
-# 🚨 MODIFIED: [V75.00 찐바닥 요격 렌더링 전면 소각 및 체력 30% 절대 락온 UI 원상 복구]
-# - 5년 장기 백테스트 결과(승률 및 MDD 악화)에 따라 V74.00~V74.04에 탑재되었던
-#   'HA V-Turn 정밀 요격' 및 '심해 고도 필터' 렌더링을 시스템 전역에서 100% 영구 소각함.
-# - 찐바닥 쉴드, 바이패스 등의 텍스트를 전면 적출하고, 잔여 체력 30% 미만 시 
+# 🚨 NEW: [V74.00 Operation HA V-Turn Intercept UI 디커플링 해체]
+# 🚨 MODIFIED: [V74.02 HA V-Turn 1양봉 격발 및 꼬리 스캔 팩트 동기화]
+# 🚨 NEW: [V74.04 심해 고도 필터(Deep-Sea Altitude Filter) UI 락온 및 스코프 전진 배치]
+# 🚨 MODIFIED: [V74.05 찐바닥 체력 30% 락다운 바이패스 소각 및 UI 원상 복구]
+# - 5년 장기 백테스트 결과에 따라 체력 30% 미만 시 셧다운을 절대 준수하도록 교정됨.
+# - 관제탑 UI 렌더링에서도 체력 30% 미만 시 V-Turn 포착 여부와 무관하게 
 #   무조건 🔴(미달)로 표출되도록 V65.00의 절대 헌법 UI로 100% 원상 복구 완료.
+# - V-Turn 시그널은 시계열 하락세 및 HA 모멘텀 부재만 바이패스(Bypass)합니다.
 # ==========================================================
 import logging
 import datetime
@@ -64,8 +67,10 @@ class AvwapConsolePlugin:
         base_reg_high, base_reg_low = 0.0, 0.0
         base_curr_p = 0.0
         
+        # 🚨 NEW: [V74.04 변수 스코프 전진 배치 및 락온]
         ha_status_text = "데이터 부족"
         ha_2_bullish_no_lower = False
+        ha_v_turn_candidate = False
         trend_sequence = "PENDING"
         
         df_1m = None
@@ -138,6 +143,7 @@ class AvwapConsolePlugin:
                         if is_regular_session and curr_time < datetime.time(9, 35):
                             ha_status_text = "⏳ 캔들 형성 대기 중"
                             ha_2_bullish_no_lower = False
+                            ha_v_turn_candidate = False
                         else:
                             df_ha = df.copy()
                             df_ha['datetime'] = pd.to_datetime(df_ha.index)
@@ -161,6 +167,8 @@ class AvwapConsolePlugin:
 
                                 df_5m['No_Lower_Wick'] = (df_5m[['HA_Open', 'HA_Close']].min(axis=1) - df_5m['HA_Low']) <= 0.01
                                 df_5m['No_Upper_Wick'] = (df_5m['HA_High'] - df_5m[['HA_Open', 'HA_Close']].max(axis=1)) <= 0.01
+                                df_5m['Has_Lower_Wick'] = (df_5m[['HA_Open', 'HA_Close']].min(axis=1) - df_5m['HA_Low']) > 0.01
+                                df_5m['Has_Upper_Wick'] = (df_5m['HA_High'] - df_5m[['HA_Open', 'HA_Close']].max(axis=1)) > 0.01
 
                                 df_5m['Is_Bullish'] = df_5m['HA_Close'] >= df_5m['HA_Open']
                                 df_5m['Is_Bearish'] = df_5m['HA_Close'] < df_5m['HA_Open']
@@ -168,6 +176,19 @@ class AvwapConsolePlugin:
                                 if len(df_5m) >= 2:
                                     last_2 = df_5m.tail(2)
                                     ha_2_bullish_no_lower = last_2['Is_Bullish'].all() and last_2['No_Lower_Wick'].all()
+
+                                if len(df_5m) >= 3:
+                                    last_idx = len(df_5m) - 1
+                                    bull_cond = df_5m['Is_Bullish'].iloc[last_idx] and df_5m['No_Lower_Wick'].iloc[last_idx] and df_5m['Has_Upper_Wick'].iloc[last_idx]
+                                    if bull_cond:
+                                        bear_count = 0
+                                        for i in range(last_idx - 1, -1, -1):
+                                            if df_5m['Is_Bearish'].iloc[i] and df_5m['No_Upper_Wick'].iloc[i] and df_5m['Has_Lower_Wick'].iloc[i]:
+                                                bear_count += 1
+                                            else:
+                                                break
+                                        if bear_count >= 2:
+                                            ha_v_turn_candidate = True
 
                                 last_ha = df_5m.iloc[-1]
                                 if last_ha['Is_Bullish']:
@@ -267,6 +288,21 @@ class AvwapConsolePlugin:
             day_high = float(day_high) if day_high else curr_p
             day_low = float(day_low) if day_low else curr_p
             
+            day_amplitude = 0.0
+            deep_sea_threshold = 0.0
+            is_deep_sea = False
+            ha_v_turn_detected = False
+
+            if day_high > 0 and day_low > 0:
+                day_amplitude = day_high - day_low
+                if day_amplitude > 0:
+                    deep_sea_threshold = day_low + (day_amplitude * 0.3)
+                    if curr_p <= deep_sea_threshold:
+                        is_deep_sea = True
+
+            if ha_v_turn_candidate and is_deep_sea:
+                ha_v_turn_detected = True
+            
             avwap_qty = tracking_cache.get(f"AVWAP_QTY_{t}", 0)
             avwap_avg = tracking_cache.get(f"AVWAP_AVG_{t}", 0.0)
             strikes = tracking_cache.get(f"AVWAP_STRIKES_{t}", 0)
@@ -307,16 +343,20 @@ class AvwapConsolePlugin:
                 ha_latched_bull = tracking_cache.get(f"HA_LATCHED_BULL_{t}", False)
 
             if base_curr_p > 0 and base_curr_vwap > 0:
-                cond2_met = (base_curr_p > base_curr_vwap) and ha_latched_bull
-                if cond2_met and not ha_2_bullish_no_lower:
+                cond2_met = ((base_curr_p > base_curr_vwap) and ha_latched_bull) or ha_v_turn_detected
+                if cond2_met and not (ha_2_bullish_no_lower or ha_v_turn_detected):
                      ha_status_text = f"{ha_status_text}이지만 시계열 락온 유지"
 
             seq_text = "상승/대기"
             if trend_sequence == "BEAR":
                 cond_seq = False
-                seq_text = "하락세(Time_High&lt;Time_Low)"
+                if ha_v_turn_detected:
+                    cond_seq = True
+                    seq_text = "V자 반등(HA 찐바닥 포착)"
+                else:
+                    seq_text = "하락세(Time_High&lt;Time_Low)"
              
-            # 🚨 MODIFIED: [V75.00 UI 팩트 교정] V-Turn 바이패스를 소각하고 체력 30% 이상 조건만 엄격 표출
+            # 🚨 MODIFIED: [V74.05 찐바닥 체력 30% 락다운 바이패스 소각] 
             c1_str = "🟢" if cond1_met else "🔴"
             c2_str = "🟢" if cond2_met else "🔴"
             c3_str = "🟢" if rem_relative_pct >= 30.0 else "🔴"
@@ -333,6 +373,7 @@ class AvwapConsolePlugin:
             else:
                  trend_str = "⚠️ 데이터 수집 대기 중"
 
+            # 🚨 MODIFIED: [V74.05 체력 30% 바이패스 소각 원상 복구]
             c3_text = f"상대 잔여 체력 30% 이상 (현재: {rem_relative_pct:.1f}%)"
 
             msg += f"▫️ 판별 기준: <code>{criteria}</code>\n"
@@ -401,7 +442,15 @@ class AvwapConsolePlugin:
                 msg += f"🔋 <b>단기 체력 (ATR5 예상진폭: {atr5:.2f}%)</b>\n"
                 msg += f"▫️ 잔여 체력: <b>{rem_relative_str}</b>\n"
                 msg += f"   [0%] {make_bar(exh_5)} [100%]\n"
-                msg += f"               <b>({exh_5:.0f}% 소진 / 고가 기준)</b>\n"
+                msg += f"               <b>({exh_5:.0f}% 소진 / 고가 기준)</b>\n\n"
+                
+                # 🚨 NEW: [V74.04 심해 고도 필터 렌더링 이식]
+                msg += f"🌊 <b>심해 고도 (Bottom 30% 찐바닥 락온)</b>\n"
+                msg += f"▫️ 심해 임계선: <b>${deep_sea_threshold:.2f}</b> (당일 진폭 ${day_amplitude:.2f})\n"
+                if is_deep_sea:
+                    msg += f"▫️ 현재가 위치: <b>🟢 심해 통과 (조건 충족)</b>\n"
+                else:
+                    msg += f"▫️ 현재가 위치: <b>🔴 고도 초과 (노이즈 바이패스)</b>\n"
 
             curr_time = now_est.time()
             time_dynamic_dump = dynamic_dump_dt.time()
@@ -467,4 +516,3 @@ class AvwapConsolePlugin:
         msg += f"\n\n⏱️ <i>마지막 스캔: {now_est.strftime('%Y-%m-%d %H:%M:%S')} (EST)</i>\n"
 
         return msg, InlineKeyboardMarkup(keyboard)
-
