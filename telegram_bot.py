@@ -11,6 +11,9 @@
 # 🚨 MODIFIED: [V72.27 0주 새출발 줍줍 생략 레거시 UI 영구 소각]
 # - 0주 새출발 시 1층 확보에 예산을 100% 집중한다는 거짓 텍스트를 영구 소각.
 # - VWAP 50:50 분할 장전 팩트와 UI가 완벽히 일치하도록 시각적 디커플링 해체 완료.
+# 🚨 MODIFIED: [V75.03 관찰자 효과 및 시각적 환각 원천 수술]
+# - get_decision 비동기 래핑 및 is_simulation=True 강제 주입 (제1헌법 준수 및 런타임 오염 차단)
+# - 낡은 10시/15시 텍스트 소각 및 09:30~09:34 캔들 대기 / 지터 덤핑 타임라인 팩트 교정
 # ==========================================================
 import logging
 import datetime
@@ -146,7 +149,7 @@ class TelegramController:
         
         application.add_handler(CommandHandler("reset", self.cmd_reset))
         application.add_handler(CommandHandler("update", self.cmd_update))
-        
+    
         application.add_handler(CommandHandler("avwap", self.cmd_avwap))
         application.add_handler(CommandHandler("log", self.cmd_log))
         application.add_handler(CommandHandler("error", self.cmd_log))
@@ -185,7 +188,6 @@ class TelegramController:
             
         await self.states_handler.handle_message(update, context, self)
 
-    # MODIFIED: [V72.25 관제탑 새로고침 덮어쓰기(Edit) 단일 뷰포트 락온]
     async def cmd_avwap(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update): return
         
@@ -524,7 +526,7 @@ class TelegramController:
                  
                 snap_sells_for_ui = [o for o in cached_snap.get("orders", []) if o.get('side') == 'SELL'] if cached_snap else []
                 if cached_snap and snap_sells_for_ui and logic_qty > 0:
-                    for o in snap_sells_for_ui:
+                     for o in snap_sells_for_ui:
                          desc_label = o.get('desc', '매도').split('(')[0]
                          v_rev_guidance += f" 🔵 {desc_label} ${o['price']:.2f} <b>{o['qty']}주</b> ({tag})\n"
                         
@@ -547,7 +549,7 @@ class TelegramController:
                     if available_l1 > 0 and trigger_l1 > 0:
                         sell_dict[trigger_l1] = sell_dict.get(trigger_l1, 0) + available_l1
                     if available_upper > 0 and trigger_upper > 0:
-                        sell_dict[trigger_upper] = sell_dict.get(trigger_upper, 0) + available_upper
+                         sell_dict[trigger_upper] = sell_dict.get(trigger_upper, 0) + available_upper
                     
                     for price in sorted(sell_dict.keys()):
                         s_qty = sell_dict[price]
@@ -622,13 +624,20 @@ class TelegramController:
                          if hasattr(self.strategy, 'v_avwap_plugin'):
                              avwap_state_dict = {"strikes": tracking_cache.get(f"AVWAP_STRIKES_{t}", 0), "cooldown_active": tracking_cache.get(f"AVWAP_COOLDOWN_{t}", False)}
                              
-                             decision = await asyncio.to_thread(
-                                 self.strategy.v_avwap_plugin.get_decision,
-                                 base_ticker=avwap_base_ticker, exec_ticker=t,
-                                 base_curr_p=base_curr_p, exec_curr_p=curr,
-                                 df_1min_base=df_1min_base, avwap_qty=avwap_qty,
-                                 now_est=now_est, avwap_state=avwap_state_dict,
-                                 context_data=avwap_ctx
+                             # 🚨 MODIFIED: [V75.03 관찰자 효과 및 시각적 환각 원천 수술] 비동기 래핑 및 is_simulation=True 주입
+                             is_apex_on = await asyncio.to_thread(getattr(self.cfg, 'get_avwap_apex_mode', lambda x: True), t)
+                             decision = await asyncio.wait_for(
+                                 asyncio.to_thread(
+                                     self.strategy.v_avwap_plugin.get_decision,
+                                     base_ticker=avwap_base_ticker, exec_ticker=t,
+                                     base_curr_p=base_curr_p, exec_curr_p=curr,
+                                     df_1min_base=df_1min_base, avwap_qty=avwap_qty,
+                                     now_est=now_est, avwap_state=avwap_state_dict,
+                                     context_data=avwap_ctx,
+                                     is_apex_on=is_apex_on,
+                                     is_simulation=True
+                                 ),
+                                 timeout=10.0
                              )
                               
                              avwap_base_price = decision.get('base_curr_p', base_curr_p)
@@ -645,12 +654,19 @@ class TelegramController:
 
                 if not tracking_cache.get(f"AVWAP_BOUGHT_{t}") and not tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"):
                     curr_time = now_est.time()
-                    time_1000 = datetime.time(10, 0)
-                    time_1500 = datetime.time(15, 0)
+                    time_0930 = datetime.time(9, 30)
+                    time_0934 = datetime.time(9, 34, 59)
+                    
+                    dump_jitter_sec = tracking_cache.get(f"AVWAP_DUMP_JITTER_{t}", 0)
+                    base_dump_dt = datetime.datetime.combine(now_est.date(), datetime.time(15, 20)).replace(tzinfo=ZoneInfo('America/New_York'))
+                    dynamic_dump_dt = base_dump_dt - datetime.timedelta(seconds=dump_jitter_sec)
+                    time_dynamic_dump = dynamic_dump_dt.time()
          
-                    if curr_time < time_1000:
-                        avwap_status_txt = "⏳ 10시 장초반 노이즈 대기"
-                    elif curr_time >= time_1500:
+                    if curr_time < time_0930:
+                        avwap_status_txt = "⏳ 프리장 관측 중 (정규장 대기)"
+                    elif time_0930 <= curr_time <= time_0934:
+                        avwap_status_txt = "⏳ 캔들 형성 대기 중"
+                    elif curr_time >= time_dynamic_dump:
                         avwap_status_txt = "⛔ 금일 감시 종료"
 
             upward_sniper_mode_on = await asyncio.to_thread(self.cfg.get_upward_sniper_mode, t)
@@ -849,3 +865,4 @@ class TelegramController:
         history_data = await asyncio.to_thread(self.cfg.get_full_version_history)
         msg, markup = self.view.get_version_message(history_data, page_index=None)
         await update.message.reply_text(msg, parse_mode='HTML', reply_markup=markup)
+

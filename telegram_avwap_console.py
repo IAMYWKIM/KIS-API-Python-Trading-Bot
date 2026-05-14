@@ -18,6 +18,9 @@
 # - 관제탑 UI 렌더링에서도 체력 30% 미만 시 V-Turn 포착 여부와 무관하게 
 #   무조건 🔴(미달)로 표출되도록 V65.00의 절대 헌법 UI로 100% 원상 복구 완료.
 # - V-Turn 시그널은 시계열 하락세 및 HA 모멘텀 부재만 바이패스(Bypass)합니다.
+# 🚨 MODIFIED: [V75.02 관제탑 런타임 붕괴 및 시각적 환각 완벽 수술]
+# - get_decision 비동기 래핑 및 is_simulation=True 주입 (제1헌법 및 관찰자 효과 차단)
+# - 낡은 10시/15시 텍스트 소각 및 09:30~09:34 캔들 대기 / 지터 덤핑 타임라인 팩트 교정
 # ==========================================================
 import logging
 import datetime
@@ -111,11 +114,11 @@ class AvwapConsolePlugin:
                     base_day_low = float(df['low'].astype(float).min())
                     base_reg_high = base_day_high
                     base_reg_low = base_day_low
-               
+                
                     df['tp'] = (df['high'].astype(float) + df['low'].astype(float) + df['close'].astype(float)) / 3.0
                     df['vol'] = df['volume'].astype(float)
                     df['vol_tp'] = df['tp'] * df['vol']
-                     
+             
                     cum_vol = df['vol'].sum()
                     if cum_vol > 0:
                         base_curr_vwap = df['vol_tp'].sum() / cum_vol
@@ -124,7 +127,7 @@ class AvwapConsolePlugin:
           
                     if base_curr_p == 0.0:
                         base_curr_p = float(df['close'].iloc[-1])
-                     
+        
                     recent_5 = df.tail(5)
                     sum_vol_5 = recent_5['vol'].sum()
                     if sum_vol_5 > 0:
@@ -160,7 +163,7 @@ class AvwapConsolePlugin:
                                         ha_open.append((float(df_5m['open'].iloc[i]) + float(df_5m['close'].iloc[i])) / 2.0)
                                     else:
                                         ha_open.append((ha_open[i-1] + float(df_5m['HA_Close'].iloc[i-1])) / 2.0)
-                                     
+            
                                 df_5m['HA_Open'] = pd.Series(ha_open, index=df_5m.index)
                                 df_5m['HA_High'] = df_5m[['high', 'HA_Open', 'HA_Close']].max(axis=1)
                                 df_5m['HA_Low'] = df_5m[['low', 'HA_Open', 'HA_Close']].min(axis=1)
@@ -250,7 +253,7 @@ class AvwapConsolePlugin:
                         tracking_cache[f"APEX_STAGE_1_{t}"] = saved_state.get('APEX_STAGE_1', False)
                         tracking_cache[f"APEX_STAGE_2_{t}"] = saved_state.get('APEX_STAGE_2', False)
                         tracking_cache[f"APEX_PEAK_PRICE_{t}"] = saved_state.get('APEX_PEAK_PRICE', 0.0)
-                        
+                    
                         tracking_cache[f"AVWAP_INIT_{t}"] = True
                 except Exception as e:
                     logging.error(f"🚨 AVWAP 관제탑 상태 자가 복구 실패 ({t}): {e}")
@@ -355,7 +358,7 @@ class AvwapConsolePlugin:
                     seq_text = "V자 반등(HA 찐바닥 포착)"
                 else:
                     seq_text = "하락세(Time_High&lt;Time_Low)"
-             
+        
             # 🚨 MODIFIED: [V74.05 찐바닥 체력 30% 락다운 바이패스 소각] 
             c1_str = "🟢" if cond1_met else "🔴"
             c2_str = "🟢" if cond2_met else "🔴"
@@ -371,7 +374,7 @@ class AvwapConsolePlugin:
                 else:
                     trend_str = "🔴 <b>조건 미달 (실시간 추세 돌파 감시)</b>"
             else:
-                 trend_str = "⚠️ 데이터 수집 대기 중"
+                trend_str = "⚠️ 데이터 수집 대기 중"
 
             # 🚨 MODIFIED: [V74.05 체력 30% 바이패스 소각 원상 복구]
             c3_text = f"상대 잔여 체력 30% 이상 (현재: {rem_relative_pct:.1f}%)"
@@ -452,9 +455,20 @@ class AvwapConsolePlugin:
                 else:
                     msg += f"▫️ 현재가 위치: <b>🔴 고도 초과 (노이즈 바이패스)</b>\n"
 
-            curr_time = now_est.time()
-            time_dynamic_dump = dynamic_dump_dt.time()
-            
+            # MODIFIED: [V75.02 낡은 10:00 / 15:00 하드코딩 텍스트 영구 소각 및 팩트 교정]
+            if not tracking_cache.get(f"AVWAP_BOUGHT_{t}") and not tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"):
+                curr_time = now_est.time()
+                time_0930 = datetime.time(9, 30)
+                time_0934 = datetime.time(9, 34, 59)
+                time_dynamic_dump = dynamic_dump_dt.time()
+                
+                if curr_time < time_0930:
+                    avwap_status_txt = "⏳ 프리장 관측 중 (정규장 대기)"
+                elif time_0930 <= curr_time <= time_0934:
+                    avwap_status_txt = "⏳ 캔들 형성 대기 중"
+                elif curr_time >= time_dynamic_dump:
+                    avwap_status_txt = "⛔ 금일 감시 종료"
+
             status_txt = "👀 타점 스캔중"
             if not is_avwap_active:
                 status_txt = "⚪ 모드 비활성 (레이더 관측 중)"
@@ -468,32 +482,38 @@ class AvwapConsolePlugin:
             else:
                 try:
                     avwap_state_dict = {"strikes": strikes}
-                    decision = self.strategy.v_avwap_plugin.get_decision(
-                        base_ticker=base_tkr,
-                        exec_ticker=t,
-                        base_curr_p=base_curr_p,
-                        exec_curr_p=curr_p,
-                        base_day_open=0.0,
-                        avwap_avg_price=avwap_avg,
-                        avwap_qty=avwap_qty,
-                        avwap_alloc_cash=999999.0,
-                        context_data=avwap_ctx,
-                        df_1min_base=df_1m,
-                        now_est=now_est,
-                        avwap_state=avwap_state_dict,
-                        regime_data=None,
-                        prev_close=prev_c,
-                        day_high=day_high,
-                        day_low=day_low,
-                        atr5=atr5,
-                        base_day_high=base_day_high,
-                        base_day_low=base_day_low,
-                        is_apex_on=is_apex_on 
+                    # MODIFIED: [V75.02 제1헌법 준수 및 관찰자 효과 차단] 비동기 래핑 및 is_simulation=True 강제 주입
+                    decision = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.strategy.v_avwap_plugin.get_decision,
+                            base_ticker=base_tkr,
+                            exec_ticker=t,
+                            base_curr_p=base_curr_p,
+                            exec_curr_p=curr_p,
+                            base_day_open=0.0,
+                            avwap_avg_price=avwap_avg,
+                            avwap_qty=avwap_qty,
+                            avwap_alloc_cash=999999.0,
+                            context_data=avwap_ctx,
+                            df_1min_base=df_1m,
+                            now_est=now_est,
+                            avwap_state=avwap_state_dict,
+                            regime_data=None,
+                            prev_close=prev_c,
+                            day_high=day_high,
+                            day_low=day_low,
+                            atr5=atr5,
+                            base_day_high=base_day_high,
+                            base_day_low=base_day_low,
+                            is_apex_on=is_apex_on,
+                            is_simulation=True
+                        ),
+                        timeout=10.0
                     )
 
                     action = decision.get('action')
                     reason = decision.get('reason', '')
-                    
+               
                     if action in ['BUY', 'SELL']:
                         status_txt = f"🔥 타격 조건 100% 충족 ({reason})"
                     elif action == 'SHUTDOWN':

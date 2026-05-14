@@ -15,6 +15,10 @@
 # - V-Turn 시그널이 포착되더라도 잔여 체력이 30% 미만으로 고갈되었을 때는 반등 캔들에 
 #   속지 않고 무조건 당일 영구 동결(SHUTDOWN)을 격발하도록 팩트 교정 완료.
 # - V-Turn 시그널은 체력이 30% 이상일 때만 시계열 하락세(BEAR)를 바이패스하여 타격함.
+# 🚨 MODIFIED: [V75.01 관찰자 효과 원천 차단 및 상태 오염 방어막 이식]
+# - UI 렌더링을 위한 섀도우 연산 시 실제 파일 상태가 덮어씌워지는 맹점 수술.
+# 🚨 MODIFIED: [V75.04 상태 캐시 기억상실(Amnesia) 완벽 수술]
+# - save_state 시 기존 JSON 상태를 읽어와 병합(Merge)함으로써 상태 증발 맹점 원천 차단.
 # ==========================================================
 import logging
 import datetime
@@ -90,9 +94,25 @@ class VAvwapHybridPlugin:
             "APEX_STAGE_1": False, "APEX_STAGE_2": False, "APEX_PEAK_PRICE": 0.0
         }
 
+    # 🚨 MODIFIED: [V75.04 상태 캐시 기억상실(Amnesia) 완벽 수술] 
+    # 기존 파일 데이터를 로드하여 병합(Merge)함으로써 상태 증발 맹점 원천 차단
     def save_state(self, ticker, now_est, state_data):
         file_path = self._get_state_file(ticker, now_est)
-        state_data['date'] = self._get_logical_date_str(now_est)
+        today_str = self._get_logical_date_str(now_est)
+
+        merged_data = {}
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    merged_data = json.load(f)
+            except Exception:
+                pass
+
+        if merged_data.get('date') != today_str:
+            merged_data = {}
+
+        merged_data.update(state_data)
+        merged_data['date'] = today_str
 
         try:
             dir_name = os.path.dirname(file_path)
@@ -101,7 +121,7 @@ class VAvwapHybridPlugin:
 
             fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                json.dump(state_data, f, ensure_ascii=False, indent=4)
+                json.dump(merged_data, f, ensure_ascii=False, indent=4)
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(temp_path, file_path)
@@ -179,7 +199,7 @@ class VAvwapHybridPlugin:
             logging.error(f"🚨 [V_AVWAP] YF 기초자산 매크로 컨텍스트 추출 실패 ({base_ticker}): {e}")
             return None
 
-    def get_decision(self, base_ticker=None, exec_ticker=None, base_curr_p=0.0, exec_curr_p=0.0, base_day_open=0.0, avwap_avg_price=0.0, avwap_qty=0, avwap_alloc_cash=0.0, context_data=None, df_1min_base=None, now_est=None, avwap_state=None, is_apex_on=True, **kwargs):
+    def get_decision(self, base_ticker=None, exec_ticker=None, base_curr_p=0.0, exec_curr_p=0.0, base_day_open=0.0, avwap_avg_price=0.0, avwap_qty=0, avwap_alloc_cash=0.0, context_data=None, df_1min_base=None, now_est=None, avwap_state=None, is_apex_on=True, is_simulation=False, **kwargs):
         df_1min_base = df_1min_base if df_1min_base is not None else kwargs.get('base_df')
         avwap_qty = avwap_qty if avwap_qty != 0 else kwargs.get('current_qty', 0)
 
@@ -375,7 +395,8 @@ class VAvwapHybridPlugin:
             persistent_state['APEX_STAGE_1'] = apex_stage_1
             persistent_state['APEX_STAGE_2'] = apex_stage_2
             persistent_state['APEX_PEAK_PRICE'] = apex_peak_price
-            self.save_state(exec_ticker, now_est, persistent_state)
+            if not is_simulation:
+                self.save_state(exec_ticker, now_est, persistent_state)
 
         # ---------------------------------------------------------
         # 1. 매도 (보유 중일 때) 로직 - 동적 지터(15:17~15:20) 무조건 덤핑 락온
@@ -388,12 +409,14 @@ class VAvwapHybridPlugin:
 
             if is_apex_on and apex_stage_2 and current_5m_is_bearish: 
                 persistent_state['shutdown'] = True
-                self.save_state(exec_ticker, now_est, persistent_state)
+                if not is_simulation:
+                    self.save_state(exec_ticker, now_est, persistent_state)
                 return _build_res('SELL', '🎯 정점 요격(Apex Intercept) 팩트 타격 완료', qty=safe_qty, target_price=exec_curr_p)
 
             if curr_time >= time_dynamic_dump:
                 persistent_state["shutdown"] = True
-                self.save_state(exec_ticker, now_est, persistent_state)
+                if not is_simulation:
+                    self.save_state(exec_ticker, now_est, persistent_state)
                 reason_str = f'{time_dynamic_dump.strftime("%H:%M:%S")}_도달_당일교전종료_무조건덤핑'
                 return _build_res('SELL', reason_str, qty=safe_qty, target_price=exec_curr_p)
 
@@ -401,7 +424,8 @@ class VAvwapHybridPlugin:
                 loss_pct = ((safe_avg - exec_curr_p) / safe_avg) * 100.0
                 if loss_pct >= atr5:
                     persistent_state["shutdown"] = True
-                    self.save_state(exec_ticker, now_est, persistent_state)
+                    if not is_simulation:
+                        self.save_state(exec_ticker, now_est, persistent_state)
                     return _build_res('SELL', f'ATR5_동적_하드스탑_피격(-{loss_pct:.2f}%)_당일영구동결', qty=safe_qty, target_price=exec_curr_p)
 
             return _build_res('HOLD', '보유중_관망(동적_지터_덤핑_대기)')
@@ -420,7 +444,8 @@ class VAvwapHybridPlugin:
 
         if curr_time >= time_dynamic_dump:
             persistent_state["shutdown"] = True
-            self.save_state(exec_ticker, now_est, persistent_state)
+            if not is_simulation:
+                self.save_state(exec_ticker, now_est, persistent_state)
             reason_str = f'{time_dynamic_dump.strftime("%H:%M:%S")}_도달_신규진입_영구동결'
             return _build_res('SHUTDOWN', reason_str)
 
@@ -439,7 +464,8 @@ class VAvwapHybridPlugin:
         # 어떠한 시그널이 나오더라도 체력이 30% 미만이면 무조건 당일 영구 동결
         if rem_relative_pct < 30.0:
             persistent_state["shutdown"] = True
-            self.save_state(exec_ticker, now_est, persistent_state)
+            if not is_simulation:
+                self.save_state(exec_ticker, now_est, persistent_state)
             return _build_res('SHUTDOWN', 'ATR5_상대체력_30%미만_고갈_당일신규진입_영구동결')
 
         base_day_high = float(kwargs.get('base_day_high', 0.0))
@@ -467,7 +493,8 @@ class VAvwapHybridPlugin:
 
         if latch_changed:
             persistent_state['HA_LATCHED_BULL'] = ha_latched_bull
-            self.save_state(exec_ticker, now_est, persistent_state)
+            if not is_simulation:
+                self.save_state(exec_ticker, now_est, persistent_state)
 
         # 🚨 V-Turn 타점 정밀 교정 시 VWAP 락다운 해방 바이패스 락온 유지 (체력 30% 이상일 때만 도달 가능)
         cond2_met = ((base_curr_p > base_vwap) and ha_latched_bull) or ha_v_turn_detected
@@ -496,4 +523,3 @@ class VAvwapHybridPlugin:
             if not cond3_met: fail_reasons.append("체력미달")
             if not cond_seq: fail_reasons.append("시계열체력하락세")
             return _build_res('WAIT', f'진입조건대기({",".join(fail_reasons)})')
-
