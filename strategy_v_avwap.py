@@ -15,11 +15,11 @@
 # 🚨 NEW: [V72.09 3-Stage Apex Intercept (정점 요격) 전술 탑재]
 # 🚨 MODIFIED: [V72.10 3단계 격발 차원 붕괴(버그) 완벽 수술] 
 # 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 탑재 및 IndentationError 팩트 수술]
-# - get_decision 내부 3단계 정점요격 연산 블록 최상단에 바이패스 쉴드 이식 완료.
-# - 스위치 OFF 시 정점 갱신 및 투매 판별 연산을 전면 무시하고 상태를 초기화.
-# - 런타임 붕괴를 유발하던 들여쓰기(Indentation) 오차 3곳 100% 팩트 교정 완료.
 # 🚨 MODIFIED: [V72.20 프리마켓 오프닝 휩소 방어 데드코드 영구 소각]
-# - time_0410 변수 선언과 curr_time 이 time_0410 보다 작을 때 대기하는 낡은 락다운 블록 전면 적출.
+# 🚨 NEW: [V74.00 Operation HA V-Turn Intercept (정밀 요격) 전술 탑재]
+# - 기존 후행성 V자 반등(Mid-point) 로직을 전면 소각하고, HA 캔들의 극단적 수급 반전
+#   (윗꼬리 없는 2연속 음봉 ➔ 아랫꼬리 없는 2연속 양봉) 패턴을 교차 검증하여
+#   최심해 찐바닥에서 락다운을 강제 해방(Bypass)하는 정밀 요격(Intercept) 전술 이식 완료.
 # ==========================================================
 import logging
 import datetime
@@ -209,7 +209,6 @@ class VAvwapHybridPlugin:
         avwap_state = avwap_state or {}
         curr_time = now_est.time()
 
-        # MODIFIED: [V72.20 프리마켓 오프닝 휩소 방어 데드코드 영구 소각]
         time_0930 = datetime.time(9, 30)
         
         dump_jitter_sec = avwap_state.get('dump_jitter_sec', 0)
@@ -222,7 +221,9 @@ class VAvwapHybridPlugin:
         base_vwap = base_curr_p
         vwap_success = False 
 
+        # 🚨 [제16경고 스코프 전진 배치] HA 및 변곡점 플래그 100% 사전 할당
         ha_2_bullish_no_lower = False
+        ha_v_turn_detected = False
         trend_sequence = "PENDING"
         
         is_pure_5m_2_bearish = False
@@ -285,12 +286,24 @@ class VAvwapHybridPlugin:
                             df_5m['HA_High'] = df_5m[['high', 'HA_Open', 'HA_Close']].max(axis=1)
                             df_5m['HA_Low'] = df_5m[['low', 'HA_Open', 'HA_Close']].min(axis=1)
 
+                            # 🚨 NEW: [V74.00 HA 파서 고도화] 윗꼬리 없음 및 음봉 판별 추가
                             df_5m['No_Lower_Wick'] = (df_5m['HA_Open'] - df_5m['HA_Low']) <= 0.01
+                            df_5m['No_Upper_Wick'] = (df_5m['HA_High'] - df_5m[['HA_Open', 'HA_Close']].max(axis=1)) <= 0.01
                             df_5m['Is_Bullish'] = df_5m['HA_Close'] >= df_5m['HA_Open']
+                            df_5m['Is_Bearish'] = df_5m['HA_Close'] < df_5m['HA_Open']
 
                             if len(df_5m) >= 2:
                                 last_2 = df_5m.tail(2)
                                 ha_2_bullish_no_lower = last_2['Is_Bullish'].all() and last_2['No_Lower_Wick'].all()
+
+                            # 🚨 NEW: [V74.00 시계열 패턴 스캔 엔진 이식 (HA V-Turn Intercept)]
+                            if len(df_5m) >= 4:
+                                last_4 = df_5m.tail(4)
+                                bear_part = last_4.iloc[0:2]
+                                bull_part = last_4.iloc[2:4]
+                                if (bear_part['Is_Bearish'].all() and bear_part['No_Upper_Wick'].all() and
+                                    bull_part['Is_Bullish'].all() and bull_part['No_Lower_Wick'].all()):
+                                    ha_v_turn_detected = True
 
             except Exception as e:
                 logging.error(f"🚨 [V_AVWAP] 기초자산 HA 및 5분봉 연산 실패: {e}")
@@ -323,7 +336,7 @@ class VAvwapHybridPlugin:
         actual_gap_dollar_apex = day_high - day_low
         actual_gap_pct_apex = (actual_gap_dollar_apex / prev_c) * 100.0 if prev_c > 0 else 0.0
 
-        if is_apex_on: # 🚨 NEW: 정점요격 스위치 바이패스 쉴드 이식
+        if is_apex_on: 
             if day_high > apex_peak_price:
                 apex_peak_price = day_high
                 apex_changed = True
@@ -341,7 +354,6 @@ class VAvwapHybridPlugin:
                     apex_stage_2 = True
                     apex_changed = True
         else:
-            # 스위치 OFF 시 상태 초기화 및 바이패스
             if apex_stage_1 or apex_stage_2 or apex_peak_price > 0.0:
                 apex_stage_1 = False
                 apex_stage_2 = False
@@ -364,7 +376,7 @@ class VAvwapHybridPlugin:
                 return _build_res('SELL', 'CORRUPT_PRICE_EMERGENCY_DUMP', qty=safe_qty, target_price=exec_curr_p)
 
             # [3-Stage Apex Intercept (정점 요격) 3단계 격발]
-            if is_apex_on and apex_stage_2 and current_5m_is_bearish: # 🚨 NEW: 정점요격 스위치 결속 락온
+            if is_apex_on and apex_stage_2 and current_5m_is_bearish: 
                 persistent_state['shutdown'] = True
                 self.save_state(exec_ticker, now_est, persistent_state)
                 return _build_res('SELL', '🎯 정점 요격(Apex Intercept) 팩트 타격 완료', qty=safe_qty, target_price=exec_curr_p)
@@ -392,8 +404,6 @@ class VAvwapHybridPlugin:
 
         if avwap_state.get('shutdown', False) or persistent_state.get('shutdown', False):
              return _build_res('WAIT', '당일영구동결_상태(신규진입금지)')
-
-        # MODIFIED: [V72.20 프리마켓 오프닝 휩소 방어 데드코드 영구 소각]
 
         if not is_regular_session:
             return _build_res('WAIT', '프리마켓_노이즈_원천차단_정규장_개장_대기')
@@ -449,13 +459,11 @@ class VAvwapHybridPlugin:
         cond2_met = (base_curr_p > base_vwap) and ha_latched_bull
         cond3_met = True
 
+        # 🚨 MODIFIED: [V74.00 V자 반등 조건 바이패스 통합] 후행성 Mid-point 전면 소각 및 HA 변곡점 바이패스 락온
         cond_seq = True
         if trend_sequence == "BEAR":
             cond_seq = False
-            mid_point = 0.0
-            if day_high > 0 and day_low > 0:
-                mid_point = (day_high + day_low) / 2.0
-            if atr5 > 0 and actual_gap_pct >= (atr5 * 0.5) and exec_curr_p >= mid_point:
+            if ha_v_turn_detected:
                 cond_seq = True
 
         if cond1_met and cond2_met and cond3_met and cond_seq:
@@ -463,7 +471,7 @@ class VAvwapHybridPlugin:
                 safe_budget = avwap_alloc_cash * 0.95
                 buy_qty = int(math.floor(safe_budget / exec_curr_p))
                 if buy_qty > 0:
-                    return _build_res('BUY', 'V47_하이킨아시_배타적갭필터_통과_타격개시', qty=buy_qty, target_price=exec_curr_p)
+                    return _build_res('BUY', 'V74_하이킨아시_배타적갭필터_통과_타격개시', qty=buy_qty, target_price=exec_curr_p)
             return _build_res('WAIT', '가용예산부족_대기')
         else:
             fail_reasons = []

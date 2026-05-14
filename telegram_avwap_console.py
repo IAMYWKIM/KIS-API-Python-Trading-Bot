@@ -9,11 +9,10 @@
 # 🚨 NEW: [V66.00 AVWAP 암살자 덤핑 지터(Jitter) 분산 락온]
 # 🚨 MODIFIED: [V66.05 Split-Brain 시각적 디커플링 해결]
 # 🚨 NEW: [3-Stage Apex Intercept (정점 요격) 전술 상태 렌더링 이식]
-# - JSON에서 추출한 APEX 팩트 상태를 기반으로 1, 2, 3단계 직관적 텍스트를 오버라이드하여 시각적 디커플링 완벽 해체.
 # 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 UI 연동]
-# - 관제탑 뷰포트 스캔 시 config의 스위치 상태를 실시간 참조하도록 팩트 결속
-# - 스위치 OFF 시 정점요격 렌더링 텍스트를 비활성 (수동 OFF 및 지터 덤핑 전용) 상태로 강제 오버라이드하여 시각적 환각 원천 차단
-# - get_decision 섀도 연산부 is_apex_on 파라미터 수혈 락온
+# 🚨 NEW: [V74.00 Operation HA V-Turn Intercept UI 디커플링 해체]
+# - 코어 엔진에 탑재된 HA 반전 패턴(음봉2 ➔ 양봉2) 팩트를 실시간 동기화하여, 
+#   V자 반등 판별 시 낡은 후행성 텍스트 대신 'V자 반등(HA 찐바닥 포착)'으로 직관적 오버라이드 렌더링.
 # ==========================================================
 import logging
 import datetime
@@ -63,8 +62,10 @@ class AvwapConsolePlugin:
         base_reg_high, base_reg_low = 0.0, 0.0
         base_curr_p = 0.0
         
+        # 🚨 NEW: [V74.00 변수 스코프 전진 배치 락온]
         ha_status_text = "데이터 부족"
         ha_2_bullish_no_lower = False
+        ha_v_turn_detected = False
         trend_sequence = "PENDING"
         
         df_1m = None
@@ -137,6 +138,7 @@ class AvwapConsolePlugin:
                         if is_regular_session and curr_time < datetime.time(9, 35):
                             ha_status_text = "⏳ 캔들 형성 대기 중"
                             ha_2_bullish_no_lower = False
+                            ha_v_turn_detected = False
                         else:
                             df_ha = df.copy()
                             df_ha['datetime'] = pd.to_datetime(df_ha.index)
@@ -157,19 +159,33 @@ class AvwapConsolePlugin:
                                 df_5m['HA_Open'] = pd.Series(ha_open, index=df_5m.index)
                                 df_5m['HA_High'] = df_5m[['high', 'HA_Open', 'HA_Close']].max(axis=1)
                                 df_5m['HA_Low'] = df_5m[['low', 'HA_Open', 'HA_Close']].min(axis=1)
+
+                                # 🚨 NEW: [V74.00 HA 파서 고도화]
                                 df_5m['No_Lower_Wick'] = (df_5m['HA_Open'] - df_5m['HA_Low']) <= 0.01
+                                df_5m['No_Upper_Wick'] = (df_5m['HA_High'] - df_5m[['HA_Open', 'HA_Close']].max(axis=1)) <= 0.01
                                 df_5m['Is_Bullish'] = df_5m['HA_Close'] >= df_5m['HA_Open']
+                                df_5m['Is_Bearish'] = df_5m['HA_Close'] < df_5m['HA_Open']
 
                                 if len(df_5m) >= 2:
                                     last_2 = df_5m.tail(2)
                                     ha_2_bullish_no_lower = last_2['Is_Bullish'].all() and last_2['No_Lower_Wick'].all()
+
+                                # 🚨 NEW: [V74.00 시계열 패턴 스캔 엔진 이식 (HA V-Turn Intercept)]
+                                if len(df_5m) >= 4:
+                                    last_4 = df_5m.tail(4)
+                                    bear_part = last_4.iloc[0:2]
+                                    bull_part = last_4.iloc[2:4]
+                                    if (bear_part['Is_Bearish'].all() and bear_part['No_Upper_Wick'].all() and
+                                        bull_part['Is_Bullish'].all() and bull_part['No_Lower_Wick'].all()):
+                                        ha_v_turn_detected = True
 
                                 last_ha = df_5m.iloc[-1]
                                 if last_ha['Is_Bullish']:
                                     ha_wick = "아래 꼬리 없음" if last_ha['No_Lower_Wick'] else "아래 꼬리 존재"
                                     ha_status_text = f"양봉 ({ha_wick})"
                                 else:
-                                    ha_status_text = "음봉"
+                                    ha_wick = "윗 꼬리 없음" if last_ha['No_Upper_Wick'] else "윗 꼬리 존재"
+                                    ha_status_text = f"음봉 ({ha_wick})"
                     except Exception as e:
                         logging.error(f"관제탑 HA 연산 실패: {e}")
 
@@ -220,7 +236,6 @@ class AvwapConsolePlugin:
                         tracking_cache[f"HA_LATCHED_BULL_{t}"] = saved_state.get('HA_LATCHED_BULL', False)
                         tracking_cache[f"AVWAP_DUMP_JITTER_{t}"] = saved_state.get('dump_jitter_sec', 0)
                         
-                        # NEW: [3-Stage Apex Intercept 상태 팩트 캐싱]
                         tracking_cache[f"APEX_STAGE_1_{t}"] = saved_state.get('APEX_STAGE_1', False)
                         tracking_cache[f"APEX_STAGE_2_{t}"] = saved_state.get('APEX_STAGE_2', False)
                         tracking_cache[f"APEX_PEAK_PRICE_{t}"] = saved_state.get('APEX_PEAK_PRICE', 0.0)
@@ -232,7 +247,6 @@ class AvwapConsolePlugin:
             is_avwap_active = await asyncio.to_thread(getattr(self.cfg, 'get_avwap_hybrid_mode', lambda x: False), t)
             active_str = "🟢 가동 중" if is_avwap_active else "⚪ 대기 중 (OFF)"
             
-            # 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 상태 스캔]
             is_apex_on = await asyncio.to_thread(getattr(self.cfg, 'get_avwap_apex_mode', lambda x: True), t)
             
             curr_p, day_high, day_low = 0.0, 0.0, 0.0
@@ -296,7 +310,6 @@ class AvwapConsolePlugin:
                 ha_latched_bull = _saved_state.get('HA_LATCHED_BULL', False)
                 tracking_cache[f"HA_LATCHED_BULL_{t}"] = ha_latched_bull
                 
-                # NEW: [3-Stage Apex Intercept 상태 팩트 캐싱]
                 tracking_cache[f"APEX_STAGE_1_{t}"] = _saved_state.get('APEX_STAGE_1', False)
                 tracking_cache[f"APEX_STAGE_2_{t}"] = _saved_state.get('APEX_STAGE_2', False)
                 tracking_cache[f"APEX_PEAK_PRICE_{t}"] = _saved_state.get('APEX_PEAK_PRICE', 0.0)
@@ -309,15 +322,13 @@ class AvwapConsolePlugin:
                 if cond2_met and not ha_2_bullish_no_lower:
                      ha_status_text = f"{ha_status_text}이지만 시계열 락온 유지"
 
+            # 🚨 MODIFIED: [V74.00 UI 디커플링 해체] Mid-point 회복 소각 및 HA 변곡점 오버라이드 렌더링
             seq_text = "상승/대기"
             if trend_sequence == "BEAR":
                 cond_seq = False
-                mid_point = 0.0
-                if day_high > 0 and day_low > 0:
-                    mid_point = (day_high + day_low) / 2.0
-                if atr5 > 0 and actual_gap_pct >= (atr5 * 0.5) and curr_p >= mid_point:
+                if ha_v_turn_detected:
                     cond_seq = True
-                    seq_text = "V자 반등(찐바닥 포착)"
+                    seq_text = "V자 반등(HA 찐바닥 포착)"
                 else:
                     seq_text = "하락세(Time_High&lt;Time_Low)"
              
@@ -345,7 +356,6 @@ class AvwapConsolePlugin:
             msg += f"   {c3_str} 상대 잔여 체력 30% 이상 (현재: {rem_relative_pct:.1f}%)\n"
             msg += f"▫️ 타격 상태: {trend_str}\n"
 
-            # 🚨 MODIFIED: [V72.16 스위치 OFF 시 정점요격 렌더링 텍스트 강제 오버라이드]
             if not is_apex_on:
                 apex_status_txt = "⚪ 비활성 (수동 OFF 및 지터 덤핑 전용)"
             else:
@@ -442,7 +452,7 @@ class AvwapConsolePlugin:
                         atr5=atr5,
                         base_day_high=base_day_high,
                         base_day_low=base_day_low,
-                        is_apex_on=is_apex_on # 🚨 NEW: 섀도 연산부 is_apex_on 파라미터 수혈 락온
+                        is_apex_on=is_apex_on
                     )
 
                     action = decision.get('action')
