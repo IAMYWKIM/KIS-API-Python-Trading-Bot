@@ -14,6 +14,8 @@
 # 🚨 MODIFIED: [V75.03 관찰자 효과 및 시각적 환각 원천 수술]
 # - get_decision 비동기 래핑 및 is_simulation=True 강제 주입 (제1헌법 준수 및 런타임 오염 차단)
 # - 낡은 10시/15시 텍스트 소각 및 09:30~09:34 캔들 대기 / 지터 덤핑 타임라인 팩트 교정
+# 🚨 MODIFIED: [관제탑 새로고침 시각적 깜빡임 현상 원천 수술]
+# - cmd_avwap 내부 로딩 텍스트 렌더링 1단계 생략 및 제자리 1회 덮어쓰기 락온
 # ==========================================================
 import logging
 import datetime
@@ -188,17 +190,16 @@ class TelegramController:
             
         await self.states_handler.handle_message(update, context, self)
 
+    # MODIFIED: [관제탑 새로고침 시각적 깜빡임 현상 원천 수술]
+    # 로딩 텍스트로 중간 렌더링하는 과정을 생략하고 제자리 1회 덮어쓰기(Edit) 락온
     async def cmd_avwap(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update): return
         
         loading_text = "⏳ <b>[AVWAP 듀얼 모멘텀 관제탑]</b>\n레이더망을 가동하여 시장 데이터를 스캔 중..."
         
+        status_msg = None
         if update.callback_query:
             status_msg = update.callback_query.message
-            try:
-                await status_msg.edit_text(loading_text, parse_mode='HTML')
-            except Exception:
-                pass
         else:
             status_msg = await update.message.reply_text(loading_text, parse_mode='HTML')
             
@@ -211,9 +212,16 @@ class TelegramController:
                     jobs = context.job_queue.jobs() if context.job_queue else []
                     if jobs and len(jobs) > 0 and jobs[0].data is not None: app_data = jobs[0].data
                 except Exception: app_data = {}
- 
+
             msg, markup = await asyncio.wait_for(plugin.get_console_message(app_data), timeout=10.0)
-            await status_msg.edit_text(msg, reply_markup=markup, parse_mode='HTML')
+            
+            try:
+                await status_msg.edit_text(msg, reply_markup=markup, parse_mode='HTML')
+            except Exception as edit_e:
+                # 데이터가 동일하여 변경 사항이 없을 때 발생하는 텔레그램 API 에러 무시
+                if "Message is not modified" not in str(edit_e):
+                    raise edit_e
+                    
         except asyncio.TimeoutError:
             logging.error("🚨 AVWAP 관제탑 호출 타임아웃 (네트워크 지연)")
             await status_msg.edit_text("❌ <b>[네트워크 지연 발생]</b>\n야후 파이낸스 또는 증권사 서버 응답이 지연되어 스캔을 강제 종료했습니다. 잠시 후 다시 시도해 주세요.", parse_mode='HTML')
@@ -529,7 +537,6 @@ class TelegramController:
                      for o in snap_sells_for_ui:
                          desc_label = o.get('desc', '매도').split('(')[0]
                          v_rev_guidance += f" 🔵 {desc_label} ${o['price']:.2f} <b>{o['qty']}주</b> ({tag})\n"
-                        
                 elif q_list and logic_qty > 0:
                     trigger_l1 = round(l1_price * 1.006, 2)
                     
@@ -559,7 +566,7 @@ class TelegramController:
                         elif price == trigger_l1:
                             desc_str = "1층탈출"
                         elif price == trigger_upper:
-                            desc_str = "총평단탈출"
+                             desc_str = "총평단탈출"
                         else:
                             desc_str = "잔여탈출"
                         v_rev_guidance += f" 🔵 {desc_str} ${price:.2f} <b>{s_qty}주</b> ({tag})\n"
@@ -574,11 +581,11 @@ class TelegramController:
                     
                     b1_qty = math.floor(half_portion_cash / b1_price) if b1_price > 0 else 0
                     b2_qty = math.floor(half_portion_cash / b2_price) if b2_price > 0 else 0
-                    
+                   
                     if b1_qty > 0:
                          v_rev_guidance += f" 🔴 매수1(Buy1) ${b1_price:.2f} <b>{b1_qty}주</b> ({tag})\n"
                     if b2_qty > 0:
-                        v_rev_guidance += f" 🔴 매수2(Buy2) ${b2_price:.2f} <b>{b2_qty}주</b> ({tag})\n"
+                         v_rev_guidance += f" 🔴 매수2(Buy2) ${b2_price:.2f} <b>{b2_qty}주</b> ({tag})\n"
                  
                     # 🚨 MODIFIED: [V72.27 0주 새출발 줍줍 생략 레거시 UI 영구 소각]
                     # 시각적 환각(디커플링)을 유발하던 하드코딩 텍스트 100% 적출 완료.
@@ -621,7 +628,7 @@ class TelegramController:
                          df_1min_base = await asyncio.wait_for(asyncio.to_thread(self.broker.get_1min_candles_df, avwap_base_ticker), timeout=3.0)
                          base_curr_p = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, avwap_base_ticker), timeout=3.0) or 0.0)
               
-                         if hasattr(self.strategy, 'v_avwap_plugin'):
+                             if hasattr(self.strategy, 'v_avwap_plugin'):
                              avwap_state_dict = {"strikes": tracking_cache.get(f"AVWAP_STRIKES_{t}", 0), "cooldown_active": tracking_cache.get(f"AVWAP_COOLDOWN_{t}", False)}
                              
                              # 🚨 MODIFIED: [V75.03 관찰자 효과 및 시각적 환각 원천 수술] 비동기 래핑 및 is_simulation=True 주입
@@ -865,4 +872,3 @@ class TelegramController:
         history_data = await asyncio.to_thread(self.cfg.get_full_version_history)
         msg, markup = self.view.get_version_message(history_data, page_index=None)
         await update.message.reply_text(msg, parse_mode='HTML', reply_markup=markup)
-
