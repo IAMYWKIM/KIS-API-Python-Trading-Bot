@@ -14,6 +14,10 @@
 # 🚨 MODIFIED: [V71.00 옴니 매트릭스 퀀트 엔진 락온]
 # - 17:05 KST 예방 덫 스케줄을 EST로 동적 래핑하여 서머타임 패러독스 원천 차단.
 # - vwap_init_and_cancel 기상 시각을 15:25 EST로 전진 배치하여 아키텍처 무결성 확보.
+# 🚨 NEW: [V73.00 본진 통합 지시서 덫 장전 디커플링 및 자전거래 원천 차단]
+# - 17:05 KST 스케줄을 스냅샷 박제 전용 코루틴(scheduled_snapshot_only)으로 역할 축소.
+# - 암살자 전량 덤핑(15:17~15:20) 이후인 15:26 EST에 실제 덫을 투하하는 코루틴(scheduled_regular_trade_delayed) 신설 락온.
+# - vwap_init_and_cancel 기상 시각을 15:26 EST로 동기화하여 섀도우 관측 궤도 교정 완료.
 # ==========================================================
 import os
 import logging
@@ -42,7 +46,8 @@ from scheduler_core import (
 )
 from scheduler_sniper import scheduled_sniper_monitor
 from scheduler_vwap import scheduled_vwap_trade, scheduled_vwap_init_and_cancel
-from scheduler_regular import scheduled_regular_trade
+# NEW: [V73.00 덫 장전 디커플링] 분할된 정규장 코루틴 임포트 락온
+from scheduler_regular import scheduled_snapshot_only, scheduled_regular_trade_delayed
 
 TICKER_BASE_MAP = {
     "SOXL": "SOXX",
@@ -196,8 +201,8 @@ def main():
     latest_version = cfg.get_latest_version() 
     
     print("=" * 60)
-    # MODIFIED: [V44.68 콜드 스타트 방어막 전진 배치 및 팩트 교정]
-    print(f"🚀 옴니 매트릭스 퀀트 엔진 {latest_version} (V71.00 락온)")
+    # MODIFIED: [V73.00 콜드 스타트 방어막 전진 배치 및 팩트 교정]
+    print(f"🚀 옴니 매트릭스 퀀트 엔진 {latest_version} (V73.00 락온)")
     print(f"⏰ 자동 동기화: 21:00 EST 확정 정산 엔진 락온 가동")
     # MODIFIED: [V44.56 타임라인 롤백] 10:20 EST 레거시 소각 및 10:00 EST 옴니 매트릭스 팩트 교정 완료
     print("🛡️ 1-Tier 자율주행 지표 스캔 대기 중... (매일 10:00 EST 격발)")
@@ -287,23 +292,27 @@ def main():
     jq.run_daily(scheduled_volatility_scan, time=datetime.time(10, 0, tzinfo=est_zone), days=tuple(range(7)), chat_id=ADMIN_CHAT_ID, data=app_data)
     
     # 🚨 [제3헌법] 17:05 KST를 EST로 동적 변환하여 서머타임 타임 패러독스 영구 소각
-    # 🚨 [AI 에이전트 절대 주의] 17:05 KST 예방적 주문 스케줄은 내부적으로 EST로 동적 래핑하여 주입할 것 (18계명 1조 준수)
+    # 🚨 [AI 에이전트 절대 주의] 17:05 KST 스냅샷 스케줄은 내부적으로 EST로 동적 래핑하여 주입할 것 (18계명 1조 준수)
     dt_now_kst = datetime.datetime.now(kst_zone)
     target_kst_dt = datetime.datetime.combine(dt_now_kst.date(), datetime.time(17, 5), tzinfo=kst_zone)
     target_est_dt = target_kst_dt.astimezone(est_zone)
     # Naive Time 환각 소각 및 EST 100% 락온 시간 생성
-    regular_trade_time = datetime.time(hour=target_est_dt.hour, minute=target_est_dt.minute, tzinfo=est_zone)
+    regular_snapshot_time = datetime.time(hour=target_est_dt.hour, minute=target_est_dt.minute, tzinfo=est_zone)
 
-    # 🚨 [EST 100% 락온] 정규장 통합 주문 (17:05 KST 동적 래핑 결과물)
+    # 🚨 [V73.00 디커플링 락온] 정규장 스냅샷 박제 전용 코루틴 (17:05 KST 동적 래핑 결과물)
     # MODIFIED: [PTB 요일 패러독스 영구 소각] KST-EST 시차로 인한 스케줄 증발 차단을 위해 365일 전면 개방(Fail-Open) 락온
-    jq.run_daily(scheduled_regular_trade, time=regular_trade_time, days=tuple(range(7)), chat_id=ADMIN_CHAT_ID, data=app_data)
+    jq.run_daily(scheduled_snapshot_only, time=regular_snapshot_time, days=tuple(range(7)), chat_id=ADMIN_CHAT_ID, data=app_data)
     
-    # 🚨 MODIFIED: [V44.65 엣지 타임라인 동기화 및 오프닝 휩소 원천 락다운]
+    # 🚨 [V73.00 제13경고 준수] 15:26 EST 본진 덫 지연 장전 락온 (자전거래 원천 차단)
+    delayed_trade_time = datetime.time(15, 26, tzinfo=est_zone)
+    jq.run_daily(scheduled_regular_trade_delayed, time=delayed_trade_time, days=tuple(range(7)), chat_id=ADMIN_CHAT_ID, data=app_data)
+
+    # 🚨 MODIFIED: [V73.00 엣지 타임라인 동기화 및 섀도우 궤도 락다운]
     # 🚨 [AI 에이전트 절대 주의 - 환각(Hallucination) 방어막]
-    # 🚨 [EST 100% 락온] VWAP 1분 타격 개시 전 Fail-Safe: 15:25 EST (V71.00 정밀 시프트)
+    # 🚨 [EST 100% 락온] VWAP 1분 타격 개시 전 Fail-Safe: 15:26 EST (V73.00 정밀 시프트)
     # 🚨 NEW: [타임 패러독스 완벽 수술] PTB 버그 회피 명목의 Naive Time 주입 환각 소각 및 EST 절대 락온 복구
     # MODIFIED: [PTB 요일 패러독스 영구 소각] KST-EST 시차로 인한 스케줄 증발 차단을 위해 365일 전면 개방(Fail-Open) 락온
-    jq.run_daily(scheduled_vwap_init_and_cancel, time=datetime.time(15, 25, tzinfo=est_zone), days=tuple(range(7)), chat_id=ADMIN_CHAT_ID, data=app_data)
+    jq.run_daily(scheduled_vwap_init_and_cancel, time=datetime.time(15, 26, tzinfo=est_zone), days=tuple(range(7)), chat_id=ADMIN_CHAT_ID, data=app_data)
 
     # 매 1분 스나이퍼 및 VWAP 타격
     jq.run_repeating(scheduled_sniper_monitor, interval=60, first=30, chat_id=ADMIN_CHAT_ID, data=app_data)

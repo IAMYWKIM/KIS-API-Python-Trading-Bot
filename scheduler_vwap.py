@@ -37,9 +37,9 @@
 # 🚨 NEW: [V72.18 갭 하이재킹 예약 원장 맵핑 누수 및 일반 미체결 이중 방화벽 락온]
 # 🚨 MODIFIED: [V72.21 휴장일 맹독성 페일 오픈(Fail-Open) 팩트 교정]
 # - 달력 API 정상 빈 데이터 반환 시 휴장일로 명확히 간주하고 안전 종료(Return)하도록 수술.
-# 🚨 MODIFIED: [V72.23 섀도우 오버라이드망 기상 시간 디커플링 수술]
-# - 15:25 EST 정각 진입 시 vwap_start_time 미달로 오판되어 100% 스킵되는 버그를 막기 위해
-#   유효 스캔 윈도우를 장 마감 36분 전으로 넓혀 15:25 진입을 넉넉히 수용하도록 팩트 락온.
+# 🚨 NEW: [V73.00 섀도우 오버라이드망 타임 윈도우 시프트 및 디커플링 락온]
+# - 본진 덫 장전 시각(15:26 EST)에 맞춰 갭 하이재킹 모니터링 타임 윈도우를 장 마감 36분 전에서 34분 전으로 정밀 동기화.
+# - 렌더링 텍스트를 '장 마감 34분 전'으로 팩트 교정하여 시각적 디커플링 해체 완료.
 # ==========================================================
 import logging
 import datetime
@@ -98,9 +98,9 @@ async def scheduled_vwap_init_and_cancel(context):
         else:
             return
         
-    # 🚨 MODIFIED: [V72.23 섀도우 오버라이드망 기상 시간 디커플링 수술]
-    # 메인 코어의 15:25 EST 격발을 온전히 수용하기 위해 타임 윈도우를 장 마감 36분 전으로 확장
-    vwap_start_time = market_close - datetime.timedelta(minutes=36, seconds=0)
+    # 🚨 MODIFIED: [V73.00 섀도우 오버라이드망 기상 시간 디커플링 수술]
+    # 본진 덫 장전(15:26 EST)에 맞춰 타임 윈도우를 장 마감 34분 전으로 정밀 동기화
+    vwap_start_time = market_close - datetime.timedelta(minutes=34, seconds=0)
     vwap_end_time = market_close 
     
     if not (vwap_start_time <= now_est <= vwap_end_time):
@@ -128,7 +128,7 @@ async def scheduled_vwap_init_and_cancel(context):
                     if not vwap_cache.get(f"REV_{t}_nuked"):
                         try:
                             msg = f"🌅 <b>[{t}] KIS VWAP/LOC 예약 덫 관측 및 섀도우 오버라이드망 기상</b>\n"
-                            msg += f"▫️ 장 마감 33분 전 진입을 확인하여 KIS 서버의 예약 덫 체결을 관망합니다.\n"
+                            msg += f"▫️ 장 마감 34분 전 진입을 확인하여 KIS 서버의 예약 덫 체결을 관망합니다.\n"
                             msg += f"▫️ 기초자산 갭 이탈 감지 시 즉각 개입(Gap Hijack)하는 섀도우 모드로 전환합니다. ⚔️"
             
                             vwap_cache[f"REV_{t}_nuked"] = True
@@ -186,10 +186,10 @@ async def scheduled_vwap_trade(context):
             market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
         else:
             return
-        
-    # 🚨 MODIFIED: [V72.23 섀도우 오버라이드망 기상 시간 디커플링 수술]
-    # 메인 코어의 15:25 EST 격발을 온전히 수용하기 위해 타임 윈도우를 장 마감 36분 전으로 확장
-    vwap_start_time = market_close - datetime.timedelta(minutes=36, seconds=0)
+         
+    # 🚨 MODIFIED: [V73.00 섀도우 오버라이드망 기상 시간 디커플링 수술]
+    # 본진 덫 장전(15:26 EST)에 맞춰 타임 윈도우를 장 마감 34분 전으로 정밀 동기화
+    vwap_start_time = market_close - datetime.timedelta(minutes=34, seconds=0)
     vwap_end_time = market_close 
     
     if not (vwap_start_time <= now_est <= vwap_end_time):
@@ -232,6 +232,7 @@ async def scheduled_vwap_trade(context):
                             continue
                           
                         base_tkr = base_map.get(t, 'SOXX')
+                    
                         try:
                             base_curr_p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_current_price, base_tkr), timeout=10.0)
                             base_curr_p = float(base_curr_p_val or 0.0)
@@ -244,15 +245,15 @@ async def scheduled_vwap_trade(context):
                                 df_b = df_1min_base.copy()
                                 if 'time_est' in df_b.columns:
                                     df_b = df_b[(df_b['time_est'] >= '093000') & (df_b['time_est'] <= '155900')]
-                                
+                                 
                                 if not df_b.empty:
                                     df_b['tp'] = (df_b['high'].astype(float) + df_b['low'].astype(float) + df_b['close'].astype(float)) / 3.0
                                     df_b['vol'] = df_b['volume'].astype(float)
                                     df_b['vol_tp'] = df_b['tp'] * df_b['vol']
-                                    
+                                   
                                     c_vol = df_b['vol'].sum()
                                     base_vwap = df_b['vol_tp'].sum() / c_vol if c_vol > 0 else base_curr_p
-                                    
+            
                                     gap_pct = ((base_curr_p - base_vwap) / base_vwap * 100.0) if base_vwap > 0 else 0.0
                                     gap_thresh = await asyncio.to_thread(getattr(cfg, 'get_vrev_gap_threshold', lambda x: -0.67), t)
                                      
@@ -274,7 +275,7 @@ async def scheduled_vwap_trade(context):
                                                         nuked_count += 1
                                                     except Exception as e:
                                                         logging.error(f"🚨 [{t}] 예약 덫 취소 실패: {e}")
-                                            
+                                             
                                             unfilled = await asyncio.to_thread(broker.get_unfilled_orders_detail, t)
                                             if isinstance(unfilled, list):
                                                 for uo in unfilled:
@@ -303,9 +304,9 @@ async def scheduled_vwap_trade(context):
                                         total_spent = 0.0
                                         if hasattr(strategy, 'v_rev_plugin'):
                                             total_spent = float(strategy.v_rev_plugin.executed.get("BUY_BUDGET", {}).get(t, 0.0))
-                                             
+                                      
                                         rem_budget = max(0.0, safe_alloc_cash - total_spent)
-                                        
+                                         
                                         try:
                                             ask_price_val = await asyncio.wait_for(asyncio.to_thread(broker.get_ask_price, t), timeout=10.0)
                                             ask_price = float(ask_price_val or 0.0)

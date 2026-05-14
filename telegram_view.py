@@ -20,6 +20,9 @@
 # NEW: [V72.16 AVWAP 정점요격 스위치 UI 렌더링 이식]
 # - settlement 메뉴의 V-REV 렌더링 블록 내부에 정점요격 가동 상태 표출 텍스트 인젝션.
 # - 제어를 위한 인라인 키보드 토글 버튼 동적 생성 로직 락온.
+# 🚨 NEW: [V73.00 UI 렌더링 디커플링 해체] 
+# - 텔레그램 시작 화면 및 통합 지시서에 잔존하는 17:05 KST 예약 장전 레거시 텍스트를 전면 소각.
+# - 15:26 EST 지연 장전 팩트 교정으로 시각적 환각(UI 디커플링) 100% 해체 완료.
 # ==========================================================
 import os
 import math
@@ -88,7 +91,9 @@ class TelegramView:
         msg += "🔹 6시간 간격 : 🔑 API 토큰 자동 갱신\n"
         msg += "🔹 10:00 : 📝 확정 정산 스캔 & 졸업 발급\n"
         msg += f"🔹 {fact_hour}:00 : 🔐 매매 초기화 및 변동성 락온\n"
-        msg += f"🔹 {fact_hour}:05 : 🌃 통합 주문 자동 실행\n"
+        # 🚨 MODIFIED: [V73.00 덫 장전 디커플링 및 팩트 렌더링 교정]
+        msg += f"🔹 {fact_hour}:05 : 📸 당일 스냅샷 박제 및 모의 장전\n"
+        msg += f"🔹 15:26 (EST) : 🌃 본진 덫 KIS 실전 투하 (자전거래 차단)\n"
         msg += f"🔹 {matrix_time} : 🏛️ 옴니 매트릭스 시장 국면 판별\n\n"
         
         msg += "🛠 [ 주요 명령어 ]\n"
@@ -254,7 +259,8 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V72.00 줍줍 영구 소각 에디션</code>\n\n"
+        # 🚨 MODIFIED: [V73.00 에디션 명칭 교정]
+        msg += "▫️ 현재 시스템: <code>V73.00 무결점 디커플링 에디션</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -429,7 +435,8 @@ class TelegramView:
                         if sn_target > 0: body_msg += f"🎯 상방 스나이퍼: ${sn_target:.2f} 이상 대기\n"
             else:
                 body_msg += "⚖️ <b>역추세 LIFO 큐(Queue) 엔진 스탠바이</b>\n"
-                body_msg += "⏱️ <b>스케줄:</b> 17:05 KST KIS VWAP 예약 덫 장전 ➔ 갭 하이재킹 관망\n"
+                # 🚨 MODIFIED: [V73.00 덫 장전 디커플링 및 팩트 교정]
+                body_msg += "⏱️ <b>스케줄:</b> 15:26 EST KIS VWAP 실전 덫 장전 ➔ 갭 하이재킹 관망\n"
             
             if v_mode == "V_REV":
                 body_msg += "📋 <b>[주문 가이던스 - ⚖️다중 LIFO 제어]</b>\n"
@@ -440,7 +447,8 @@ class TelegramView:
                 body_msg += raw_guidance.replace(" (LOC)", "").replace(" (VWAP)", "").replace("[가상격리] ", "").replace("[가상 ", "[").replace("가상 ", "") + "\n"
             else:
                 if is_manual_vwap and not is_rev_logic:
-                    body_msg += "⏱️ <b>스케줄:</b> 17:05 KST KIS VWAP 예약 덫 장전 ➔ 알고리즘 위임\n"
+                    # 🚨 MODIFIED: [V73.00 덫 장전 디커플링 및 팩트 교정]
+                    body_msg += "⏱️ <b>스케줄:</b> 15:26 EST KIS VWAP 실전 덫 장전 ➔ 알고리즘 위임\n"
                 body_msg += f"📋 <b>[주문 계획 - {proc_status}]</b>\n"
                 plan_orders = t_info.get('plan', {}).get('orders', [])
                 if plan_orders:
@@ -459,8 +467,6 @@ class TelegramView:
                 else:
                     keyboard.append([InlineKeyboardButton(f"🚀 {t} 수동 주문 실행", callback_data=f"EXEC:{t}")])
             
-        # 🚨 MODIFIED: [V72.07 통합 지시서 UI 여백 압축 렌더링 팩트 교정]
-        # 불필요한 \n\n 들을 모두 제거하고 strip()으로 공백을 100% 진공 압축 후 밀착 조립.
         final_msg = header_msg + body_msg.strip()
         
         if not is_trade_active:
@@ -518,7 +524,8 @@ class TelegramView:
                 apex_status_txt = "가동 중 🔥" if is_apex_on else "대기 중 ⚪"
                 msg += f"▫️ 정점요격(Apex Intercept): <b>{apex_status_txt}</b>\n"
                 
-                msg += "⚖️ <b>엔진 스탠바이:</b> 17:05 KST KIS VWAP 자동 예약 장전 및 관망 중\n\n"
+                # 🚨 MODIFIED: [V73.00 덫 장전 디커플링 및 팩트 교정]
+                msg += "⚖️ <b>엔진 스탠바이:</b> 15:26 EST KIS VWAP 실전 덫 장전 및 관망 중\n\n"
             else:
                 msg += f"▫️ 분할: {split_cnt}회 | 목표: {target_profit}% | 복리: {comp_rate}%\n▫️ 수수료: <b>{fee_rate}%</b>\n"
                 v14_mode_txt = "🕒 KIS VWAP 알고리즘 자동예약" if is_manual_vwap else "📉 LOC 단일 타격 (초안정성)"
@@ -550,7 +557,8 @@ class TelegramView:
         msg = f"⚠️ <b>[{ticker} V-REV 역추세 모드 전환]</b>\n\n"
         msg += "V-REV 전략은 장 마감 전 KIS 자체 VWAP 알고리즘 예약 주문을 통해 1일치 예산을 집행합니다.\n\n"
         msg += "<b>🤖 KIS VWAP 자동 예약 덫 장전 (자율주행)</b>\n"
-        msg += "▫️ 17:05 KST 정규장 스케줄러가 KIS 서버로 VWAP 예약 주문을 다이렉트 자동 전송합니다.\n"
+        # 🚨 MODIFIED: [V73.00 덫 장전 디커플링 및 팩트 교정]
+        msg += "▫️ 15:26 EST 정규장 스케줄러가 KIS 서버로 VWAP 실전 덫을 다이렉트 전송합니다.\n"
         msg += "▫️ 봇은 15:27~16:00 EST 구간에서 기초자산의 갭(Gap) 이탈을 감시하며, 위급 시 예약 덫을 즉각 철거하고 섀도우 스윕(Sweep) 타격으로 롤을 오버라이드합니다.\n\n"
         msg += "V-REV 모드 전환을 승인하시겠습니까?"
         
@@ -563,8 +571,9 @@ class TelegramView:
     def get_v14_mode_selection_menu(self, ticker):
         msg = f"💎 <b>[{ticker} 오리지널 집행 방식 선택]</b>\n\n"
         msg += "오리지널 무한매수법(V14)의 당일 예산 집행 방식을 선택해 주십시오.\n\n"
-        msg += "<b>1. 📉 LOC 방식 (기본)</b>\n▫️ 17:05 KST 전량 장마감시지정가(LOC) 일괄 전송\n\n"
-        msg += "<b>2. 🕒 VWAP 방식 (KIS 알고리즘 위임)</b>\n▫️ 17:05 KST KIS VWAP 예약 주문 자동 장전\n\n"
+        # 🚨 MODIFIED: [V73.00 덫 장전 디커플링 및 팩트 교정]
+        msg += "<b>1. 📉 LOC 방식 (기본)</b>\n▫️ 15:26 EST 전량 장마감시지정가(LOC) 실전 덫 전송\n\n"
+        msg += "<b>2. 🕒 VWAP 방식 (KIS 알고리즘 위임)</b>\n▫️ 15:26 EST KIS VWAP 실전 덫 장전\n\n"
         msg += "원하시는 집행 방식을 선택해 주십시오."
         
         keyboard = [

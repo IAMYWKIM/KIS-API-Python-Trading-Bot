@@ -10,6 +10,9 @@
 #   KIS 서버 요구 스펙에 맞춰 152500과 155500으로 EST 절대 락온
 # 🚨 MODIFIED: [V72.25 KST 타임라인 동적 래핑 수술]
 # - KIS 서버 리젝 방어를 위해 EST 기반 팩트 타겟을 런타임에 KST로 동적 변환하여 주입하도록 아키텍처 수술 완료.
+# 🚨 NEW: [V73.00 KIS VWAP 덫 장전 타임라인 동적 래핑 수술 (15:26/15:56 락온)]
+# - KIS 서버로 전송되는 VWAP 시간 파라미터의 타겟 시각을 15:26:00 및 15:56:00 EST로 팩트 교정 완료.
+# - 암살자 전량 덤핑이 완료된 이후에 덫을 투하하여 자전거래를 수학적으로 영구 차단하는 디커플링 락온.
 # ==========================================================
 import math
 import logging
@@ -205,14 +208,14 @@ class V14VwapStrategy:
         process_status = "예방적방어선"
         is_zero_start_fact = False
         
-        # 🚨 MODIFIED: [V72.25 KST 타임라인 동적 래핑 수술]
+        # 🚨 MODIFIED: [V73.00 KIS VWAP 덫 장전 타임라인 동적 래핑 수술 (15:26/15:56 락온)]
         # - KIS 서버 리젝 방어를 위해 EST 기반 팩트 타겟을 런타임에 KST로 동적 변환하여 주입하도록 아키텍처 수술 완료.
         est_zone = ZoneInfo('America/New_York')
         kst_zone = ZoneInfo('Asia/Seoul')
         now_est = datetime.now(est_zone)
         
-        start_dt_kst = now_est.replace(hour=15, minute=25, second=0).astimezone(kst_zone)
-        end_dt_kst = now_est.replace(hour=15, minute=55, second=0).astimezone(kst_zone)
+        start_dt_kst = now_est.replace(hour=15, minute=26, second=0).astimezone(kst_zone)
+        end_dt_kst = now_est.replace(hour=15, minute=56, second=0).astimezone(kst_zone)
         
         start_t = start_dt_kst.strftime("%H%M%S")
         end_t = end_dt_kst.strftime("%H%M%S")
@@ -243,7 +246,7 @@ class V14VwapStrategy:
                 b2_budget = dynamic_budget * 0.5
                 q_avg = math.floor(b1_budget / p_avg) if p_avg > 0 else 0
                 q_star = math.floor(b2_budget / buy_star_price) if buy_star_price > 0 else 0
-                
+                 
                 if q_avg > 0: 
                     o_type = "VWAP" if q_avg >= 10 else "LOC"
                     desc = f"⚓평단매수({o_type})"
