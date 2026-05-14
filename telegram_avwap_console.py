@@ -21,6 +21,8 @@
 # 🚨 MODIFIED: [V75.02 관제탑 런타임 붕괴 및 시각적 환각 완벽 수술]
 # - get_decision 비동기 래핑 및 is_simulation=True 주입 (제1헌법 및 관찰자 효과 차단)
 # - 낡은 10시/15시 텍스트 소각 및 09:30~09:34 캔들 대기 / 지터 덤핑 타임라인 팩트 교정
+# 🚨 MODIFIED: [V75.05 텍스트 다이어트 팩트 교정] 프리장/정규장 텍스트 전면 소각
+# - 모바일 가독성 최적화를 위해 고가, 저가, 당일 VWAP 앞의 '프리장', '정규장' 꼬리표를 영구 소각하여 1줄 렌더링 락온.
 # ==========================================================
 import logging
 import datetime
@@ -47,12 +49,11 @@ class AvwapConsolePlugin:
         time_0930 = datetime.time(9, 30)
         is_regular_session = curr_time >= time_0930
         
+        # MODIFIED: [V75.05 텍스트 다이어트 팩트 교정] 프리장/정규장 꼬리표 (hl_label) 변수 소각
         if not is_regular_session:
             header_status = "🌅 <b>[ 프리마켓 관측 모드 (정규장 대기 중) ]</b>"
-            hl_label = "프리장"
         else:
             header_status = "🔥 <b>[ 정규장 관측 모드 (프리장 노이즈 소각 완료) ]</b>"
-            hl_label = "정규장"
         
         active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
         avwap_tickers = [t for t in active_tickers if t == "SOXL"]
@@ -69,8 +70,7 @@ class AvwapConsolePlugin:
         base_day_high, base_day_low, base_prev_c = 0.0, 0.0, 0.0
         base_reg_high, base_reg_low = 0.0, 0.0
         base_curr_p = 0.0
-        
-        # 🚨 NEW: [V74.04 변수 스코프 전진 배치 및 락온]
+      
         ha_status_text = "데이터 부족"
         ha_2_bullish_no_lower = False
         ha_v_turn_candidate = False
@@ -102,7 +102,7 @@ class AvwapConsolePlugin:
              
             if df_1m is not None and not df_1m.empty:
                 df = df_1m.copy()
-                   
+                 
                 if 'time_est' in df.columns:
                     if is_regular_session:
                         df = df[(df['time_est'] >= '093000') & (df['time_est'] <= '155900')]
@@ -219,19 +219,22 @@ class AvwapConsolePlugin:
         if base_prev_c > 0 and base_day_high > 0 and base_day_low > 0:
             b_high_pct = ((base_day_high - base_prev_c) / base_prev_c) * 100
             b_low_pct = ((base_day_low - base_prev_c) / base_prev_c) * 100
-            msg += f"▫️ {hl_label} 고가: <b>${base_day_high:.2f}</b> ({b_high_pct:+.2f}%)\n"
-            msg += f"▫️ {hl_label} 저가: <b>${base_day_low:.2f}</b> ({b_low_pct:+.2f}%)\n"
+            # MODIFIED: [V75.05 텍스트 다이어트 팩트 교정] 프리장/정규장 텍스트 소각
+            msg += f"▫️ 고가: <b>${base_day_high:.2f}</b> ({b_high_pct:+.2f}%)\n"
+            msg += f"▫️ 저가: <b>${base_day_low:.2f}</b> ({b_low_pct:+.2f}%)\n"
             msg += f"▫️ 현재가(1T 종가): <b>${base_curr_p:.2f}</b>\n"
             
         if base_prev_vwap > 0:
             msg += f"▫️ 전일 VWAP: <b>${base_prev_vwap:,.2f}</b>\n"
             rt_gap = ((base_curr_vwap - base_prev_vwap) / base_prev_vwap) * 100
-            msg += f"▫️ 당일 {hl_label} VWAP: <b>${base_curr_vwap:,.2f}</b> ({rt_gap:+.2f}%)\n"
+            # MODIFIED: [V75.05 텍스트 다이어트 팩트 교정] 프리장/정규장 텍스트 소각
+            msg += f"▫️ 당일 VWAP: <b>${base_curr_vwap:,.2f}</b> ({rt_gap:+.2f}%)\n"
             if avg_vwap_5m > 0 and base_curr_vwap > 0:
                 avg_5m_gap = ((avg_vwap_5m - base_curr_vwap) / base_curr_vwap) * 100
                 msg += f"▫️ 5분 평균 VWAP: <b>${avg_vwap_5m:,.2f}</b> ({avg_5m_gap:+.2f}%)\n"
         else:
-            msg += f"▫️ 당일 {hl_label} VWAP: <b>${base_curr_vwap:,.2f}</b>\n"
+            # MODIFIED: [V75.05 텍스트 다이어트 팩트 교정] 프리장/정규장 텍스트 소각
+            msg += f"▫️ 당일 VWAP: <b>${base_curr_vwap:,.2f}</b>\n"
             if avg_vwap_5m > 0:
                 msg += f"▫️ 5분 평균 VWAP: <b>${avg_vwap_5m:,.2f}</b>\n"
 
@@ -421,7 +424,7 @@ class AvwapConsolePlugin:
                 high_rebound_pct = (high_rebound_gap / prev_c) * 100 if prev_c > 0 else 0.0
             
                 exh_5 = (high_rebound_pct / atr5 * 100) if atr5 > 0 else 0
-                 
+                
                 rem_relative_battery = 100.0 - exh_5
                 rem_relative_str = f"상대 체력 {rem_relative_battery:.1f}% 잔여" if rem_relative_battery >= 0 else "체력 완전 고갈 (오버슈팅)"
 
@@ -429,10 +432,11 @@ class AvwapConsolePlugin:
                     pos = min(5, max(0, math.ceil(exh / 20.0)))
                     return "━" * pos + "🎯" + "━" * (5 - pos)
 
+                # MODIFIED: [V75.05 텍스트 다이어트 팩트 교정] 프리장/정규장 텍스트 소각
                 msg += f"\n📊 <b>[ {t} 당일 체력 정밀 분석 ]</b>\n"
                 msg += f"▫️ 전일 종가: <b>${prev_c:.2f}</b> (베이스라인)\n"
-                msg += f"▫️ {hl_label} 고가: <b>${day_high:.2f}</b> ({high_pct:+.2f}%/<b>+{high_rebound_pct:.2f}%</b>)\n"
-                msg += f"▫️ {hl_label} 저가: <b>${day_low:.2f}</b> ({low_pct:+.2f}%/<b>베이스</b>)\n"
+                msg += f"▫️ 고가: <b>${day_high:.2f}</b> ({high_pct:+.2f}%/<b>+{high_rebound_pct:.2f}%</b>)\n"
+                msg += f"▫️ 저가: <b>${day_low:.2f}</b> ({low_pct:+.2f}%/<b>베이스</b>)\n"
                 msg += f"▫️ 현재가: <b>${curr_p:.2f}</b> ({curr_pct:+.2f}%/<b>+{curr_rebound_pct:.2f}%</b>)\n"
                 
                 if avwap_qty > 0 and avwap_avg > 0:
