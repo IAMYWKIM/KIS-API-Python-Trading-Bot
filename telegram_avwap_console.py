@@ -11,8 +11,11 @@
 # 🚨 NEW: [3-Stage Apex Intercept (정점 요격) 전술 상태 렌더링 이식]
 # 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 UI 연동]
 # 🚨 NEW: [V74.00 Operation HA V-Turn Intercept UI 디커플링 해체]
-# - 코어 엔진에 탑재된 HA 반전 패턴(음봉2 ➔ 양봉2) 팩트를 실시간 동기화하여, 
-#   V자 반등 판별 시 낡은 후행성 텍스트 대신 'V자 반등(HA 찐바닥 포착)'으로 직관적 오버라이드 렌더링.
+# 🚨 MODIFIED: [V74.02 HA V-Turn 1양봉 격발 및 꼬리 스캔 팩트 동기화]
+# - 코어 엔진에 탑재된 HA 반전 패턴 팩트(꼬리 min/max 정밀 연산 및 "음봉2+양봉1" 절대 룰)를 
+#   실시간 렌더링에도 동일하게 스캔.
+# - V자 반등 판별 및 cond2_met 바이패스 조건을 코어 엔진과 100% 동일하게 오버라이드하여
+#   시각적 디커플링(환각)을 영구 차단.
 # ==========================================================
 import logging
 import datetime
@@ -62,7 +65,6 @@ class AvwapConsolePlugin:
         base_reg_high, base_reg_low = 0.0, 0.0
         base_curr_p = 0.0
         
-        # 🚨 NEW: [V74.00 변수 스코프 전진 배치 락온]
         ha_status_text = "데이터 부족"
         ha_2_bullish_no_lower = False
         ha_v_turn_detected = False
@@ -160,9 +162,12 @@ class AvwapConsolePlugin:
                                 df_5m['HA_High'] = df_5m[['high', 'HA_Open', 'HA_Close']].max(axis=1)
                                 df_5m['HA_Low'] = df_5m[['low', 'HA_Open', 'HA_Close']].min(axis=1)
 
-                                # 🚨 NEW: [V74.00 HA 파서 고도화]
-                                df_5m['No_Lower_Wick'] = (df_5m['HA_Open'] - df_5m['HA_Low']) <= 0.01
+                                # 🚨 MODIFIED: [V74.02 HA 꼬리 연산 팩트 교정]
+                                df_5m['No_Lower_Wick'] = (df_5m[['HA_Open', 'HA_Close']].min(axis=1) - df_5m['HA_Low']) <= 0.01
                                 df_5m['No_Upper_Wick'] = (df_5m['HA_High'] - df_5m[['HA_Open', 'HA_Close']].max(axis=1)) <= 0.01
+                                df_5m['Has_Lower_Wick'] = (df_5m[['HA_Open', 'HA_Close']].min(axis=1) - df_5m['HA_Low']) > 0.01
+                                df_5m['Has_Upper_Wick'] = (df_5m['HA_High'] - df_5m[['HA_Open', 'HA_Close']].max(axis=1)) > 0.01
+
                                 df_5m['Is_Bullish'] = df_5m['HA_Close'] >= df_5m['HA_Open']
                                 df_5m['Is_Bearish'] = df_5m['HA_Close'] < df_5m['HA_Open']
 
@@ -170,14 +175,19 @@ class AvwapConsolePlugin:
                                     last_2 = df_5m.tail(2)
                                     ha_2_bullish_no_lower = last_2['Is_Bullish'].all() and last_2['No_Lower_Wick'].all()
 
-                                # 🚨 NEW: [V74.00 시계열 패턴 스캔 엔진 이식 (HA V-Turn Intercept)]
-                                if len(df_5m) >= 4:
-                                    last_4 = df_5m.tail(4)
-                                    bear_part = last_4.iloc[0:2]
-                                    bull_part = last_4.iloc[2:4]
-                                    if (bear_part['Is_Bearish'].all() and bear_part['No_Upper_Wick'].all() and
-                                        bull_part['Is_Bullish'].all() and bull_part['No_Lower_Wick'].all()):
-                                        ha_v_turn_detected = True
+                                # 🚨 MODIFIED: [V74.02 시계열 패턴 스캔 엔진 (HA V-Turn 1양봉 격발)]
+                                if len(df_5m) >= 3:
+                                    last_idx = len(df_5m) - 1
+                                    bull_cond = df_5m['Is_Bullish'].iloc[last_idx] and df_5m['No_Lower_Wick'].iloc[last_idx] and df_5m['Has_Upper_Wick'].iloc[last_idx]
+                                    if bull_cond:
+                                        bear_count = 0
+                                        for i in range(last_idx - 1, -1, -1):
+                                            if df_5m['Is_Bearish'].iloc[i] and df_5m['No_Upper_Wick'].iloc[i] and df_5m['Has_Lower_Wick'].iloc[i]:
+                                                bear_count += 1
+                                            else:
+                                                break
+                                        if bear_count >= 2:
+                                            ha_v_turn_detected = True
 
                                 last_ha = df_5m.iloc[-1]
                                 if last_ha['Is_Bullish']:
@@ -318,11 +328,11 @@ class AvwapConsolePlugin:
                 ha_latched_bull = tracking_cache.get(f"HA_LATCHED_BULL_{t}", False)
 
             if base_curr_p > 0 and base_curr_vwap > 0:
-                cond2_met = (base_curr_p > base_curr_vwap) and ha_latched_bull
-                if cond2_met and not ha_2_bullish_no_lower:
+                # 🚨 MODIFIED: [V74.01 UI 디커플링 해체] V-Turn 포착 시 VWAP 허들 바이패스
+                cond2_met = ((base_curr_p > base_curr_vwap) and ha_latched_bull) or ha_v_turn_detected
+                if cond2_met and not (ha_2_bullish_no_lower or ha_v_turn_detected):
                      ha_status_text = f"{ha_status_text}이지만 시계열 락온 유지"
 
-            # 🚨 MODIFIED: [V74.00 UI 디커플링 해체] Mid-point 회복 소각 및 HA 변곡점 오버라이드 렌더링
             seq_text = "상승/대기"
             if trend_sequence == "BEAR":
                 cond_seq = False
@@ -452,7 +462,7 @@ class AvwapConsolePlugin:
                         atr5=atr5,
                         base_day_high=base_day_high,
                         base_day_low=base_day_low,
-                        is_apex_on=is_apex_on
+                        is_apex_on=is_apex_on 
                     )
 
                     action = decision.get('action')

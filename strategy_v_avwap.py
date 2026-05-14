@@ -2,24 +2,18 @@
 # FILE: strategy_v_avwap.py
 # ==========================================================
 # 🚨 MODIFIED: [V59.00 AVWAP 암살자 예산 100% 수혈 및 15:25 전량 덤핑 팩트 교정]
-# 🚨 MODIFIED: [V59.02 잔재 데드코드 영구 소각]
-# 🚨 MODIFIED: [V59.04 프리마켓 락다운 쉴드 이식]
 # 🚨 MODIFIED: [V60.00 옴니 매트릭스 진입 차단망 전면 폐기 및 데드코드 소각]
 # 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각 작전 지시서 적용]
-# 🚨 NEW: [상대적 체력 연산 30.0% 셧다운 락온]
 # 🚨 NEW: [V65.00 AVWAP 동적 하드스탑 락온]
 # 🚨 NEW: [V66.00 AVWAP 암살자 덤핑 지터(Jitter) 분산 락온]
-# 🚨 MODIFIED: [V66.05 Split-Brain 시각적 디커플링 해결]
-# 🚨 NEW: [V71.01 시계열 체력 예외 허용 엔진(V-Turn Intercept) 이식]
-# 🚨 MODIFIED: [V71.08 AVWAP 암살자 덤핑 타임라인 전진 배치 팩트 교정]
 # 🚨 NEW: [V72.09 3-Stage Apex Intercept (정점 요격) 전술 탑재]
-# 🚨 MODIFIED: [V72.10 3단계 격발 차원 붕괴(버그) 완벽 수술] 
 # 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 탑재 및 IndentationError 팩트 수술]
-# 🚨 MODIFIED: [V72.20 프리마켓 오프닝 휩소 방어 데드코드 영구 소각]
 # 🚨 NEW: [V74.00 Operation HA V-Turn Intercept (정밀 요격) 전술 탑재]
-# - 기존 후행성 V자 반등(Mid-point) 로직을 전면 소각하고, HA 캔들의 극단적 수급 반전
-#   (윗꼬리 없는 2연속 음봉 ➔ 아랫꼬리 없는 2연속 양봉) 패턴을 교차 검증하여
-#   최심해 찐바닥에서 락다운을 강제 해방(Bypass)하는 정밀 요격(Intercept) 전술 이식 완료.
+# 🚨 MODIFIED: [V74.02 HA V-Turn 정밀 조건 팩트 교정 및 VWAP 강제 락다운 바이패스]
+# - 꼬리(Wick) 계산 시 min/max를 명확히 하여 무결성 확보.
+# - "윗꼬리 없고 아래꼬리 있는 음봉 2연속 이상" + "아래꼬리 없고 윗꼬리 있는 양봉 1개"
+#   사용자의 절대 룰을 100% 팩트로 교차 검증하도록 하드코딩 이식 완료.
+# - V-Turn 감지 찰나에 주가가 당일 VWAP 아래에 있어도 즉시 딥매수 타격하도록 cond2_met 바이패스.
 # ==========================================================
 import logging
 import datetime
@@ -221,7 +215,6 @@ class VAvwapHybridPlugin:
         base_vwap = base_curr_p
         vwap_success = False 
 
-        # 🚨 [제16경고 스코프 전진 배치] HA 및 변곡점 플래그 100% 사전 할당
         ha_2_bullish_no_lower = False
         ha_v_turn_detected = False
         trend_sequence = "PENDING"
@@ -258,6 +251,7 @@ class VAvwapHybridPlugin:
 
                     if is_regular_session and curr_time < datetime.time(9, 35):
                         ha_2_bullish_no_lower = False
+                        ha_v_turn_detected = False
                     else:
                         df['datetime'] = pd.to_datetime(df.index)
                         df.set_index('datetime', inplace=True)
@@ -286,9 +280,12 @@ class VAvwapHybridPlugin:
                             df_5m['HA_High'] = df_5m[['high', 'HA_Open', 'HA_Close']].max(axis=1)
                             df_5m['HA_Low'] = df_5m[['low', 'HA_Open', 'HA_Close']].min(axis=1)
 
-                            # 🚨 NEW: [V74.00 HA 파서 고도화] 윗꼬리 없음 및 음봉 판별 추가
-                            df_5m['No_Lower_Wick'] = (df_5m['HA_Open'] - df_5m['HA_Low']) <= 0.01
+                            # 🚨 MODIFIED: [V74.02 HA V-Turn 정밀 꼬리 연산 팩트 교정]
+                            df_5m['No_Lower_Wick'] = (df_5m[['HA_Open', 'HA_Close']].min(axis=1) - df_5m['HA_Low']) <= 0.01
                             df_5m['No_Upper_Wick'] = (df_5m['HA_High'] - df_5m[['HA_Open', 'HA_Close']].max(axis=1)) <= 0.01
+                            df_5m['Has_Lower_Wick'] = (df_5m[['HA_Open', 'HA_Close']].min(axis=1) - df_5m['HA_Low']) > 0.01
+                            df_5m['Has_Upper_Wick'] = (df_5m['HA_High'] - df_5m[['HA_Open', 'HA_Close']].max(axis=1)) > 0.01
+
                             df_5m['Is_Bullish'] = df_5m['HA_Close'] >= df_5m['HA_Open']
                             df_5m['Is_Bearish'] = df_5m['HA_Close'] < df_5m['HA_Open']
 
@@ -296,14 +293,19 @@ class VAvwapHybridPlugin:
                                 last_2 = df_5m.tail(2)
                                 ha_2_bullish_no_lower = last_2['Is_Bullish'].all() and last_2['No_Lower_Wick'].all()
 
-                            # 🚨 NEW: [V74.00 시계열 패턴 스캔 엔진 이식 (HA V-Turn Intercept)]
-                            if len(df_5m) >= 4:
-                                last_4 = df_5m.tail(4)
-                                bear_part = last_4.iloc[0:2]
-                                bull_part = last_4.iloc[2:4]
-                                if (bear_part['Is_Bearish'].all() and bear_part['No_Upper_Wick'].all() and
-                                    bull_part['Is_Bullish'].all() and bull_part['No_Lower_Wick'].all()):
-                                    ha_v_turn_detected = True
+                            # 🚨 MODIFIED: [V74.02 HA V-Turn 1양봉 격발 조건 팩트 교정]
+                            if len(df_5m) >= 3:
+                                last_idx = len(df_5m) - 1
+                                bull_cond = df_5m['Is_Bullish'].iloc[last_idx] and df_5m['No_Lower_Wick'].iloc[last_idx] and df_5m['Has_Upper_Wick'].iloc[last_idx]
+                                if bull_cond:
+                                    bear_count = 0
+                                    for i in range(last_idx - 1, -1, -1):
+                                        if df_5m['Is_Bearish'].iloc[i] and df_5m['No_Upper_Wick'].iloc[i] and df_5m['Has_Lower_Wick'].iloc[i]:
+                                            bear_count += 1
+                                        else:
+                                            break
+                                    if bear_count >= 2:
+                                        ha_v_turn_detected = True
 
             except Exception as e:
                 logging.error(f"🚨 [V_AVWAP] 기초자산 HA 및 5분봉 연산 실패: {e}")
@@ -375,7 +377,6 @@ class VAvwapHybridPlugin:
             if safe_avg <= 0:
                 return _build_res('SELL', 'CORRUPT_PRICE_EMERGENCY_DUMP', qty=safe_qty, target_price=exec_curr_p)
 
-            # [3-Stage Apex Intercept (정점 요격) 3단계 격발]
             if is_apex_on and apex_stage_2 and current_5m_is_bearish: 
                 persistent_state['shutdown'] = True
                 self.save_state(exec_ticker, now_est, persistent_state)
@@ -442,12 +443,12 @@ class VAvwapHybridPlugin:
         ha_latched_bull = persistent_state.get('HA_LATCHED_BULL', False)
         latch_changed = False
 
-        if ha_2_bullish_no_lower:
+        if ha_2_bullish_no_lower or ha_v_turn_detected:
             if not ha_latched_bull:
                 ha_latched_bull = True
                 latch_changed = True
                 
-        if trend_sequence == "BEAR" or rem_relative_pct < 30.0:
+        if (trend_sequence == "BEAR" and not ha_v_turn_detected) or rem_relative_pct < 30.0:
             if ha_latched_bull:
                 ha_latched_bull = False
                 latch_changed = True
@@ -456,10 +457,10 @@ class VAvwapHybridPlugin:
             persistent_state['HA_LATCHED_BULL'] = ha_latched_bull
             self.save_state(exec_ticker, now_est, persistent_state)
 
-        cond2_met = (base_curr_p > base_vwap) and ha_latched_bull
+        # 🚨 MODIFIED: [V74.02] HA V-Turn 타점 정밀 교정 시 VWAP 락다운 해방 바이패스 락온
+        cond2_met = ((base_curr_p > base_vwap) and ha_latched_bull) or ha_v_turn_detected
         cond3_met = True
 
-        # 🚨 MODIFIED: [V74.00 V자 반등 조건 바이패스 통합] 후행성 Mid-point 전면 소각 및 HA 변곡점 바이패스 락온
         cond_seq = True
         if trend_sequence == "BEAR":
             cond_seq = False
@@ -471,7 +472,7 @@ class VAvwapHybridPlugin:
                 safe_budget = avwap_alloc_cash * 0.95
                 buy_qty = int(math.floor(safe_budget / exec_curr_p))
                 if buy_qty > 0:
-                    return _build_res('BUY', 'V74_하이킨아시_배타적갭필터_통과_타격개시', qty=buy_qty, target_price=exec_curr_p)
+                    return _build_res('BUY', 'V자 반등(HA 찐바닥 포착)' if ha_v_turn_detected else 'V74_하이킨아시_배타적갭필터_통과_타격개시', qty=buy_qty, target_price=exec_curr_p)
             return _build_res('WAIT', '가용예산부족_대기')
         else:
             fail_reasons = []
