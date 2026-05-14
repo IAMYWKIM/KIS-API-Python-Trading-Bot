@@ -23,6 +23,7 @@
 # - 정규장 마감 직후인 16:05 EST에 확정 정산 및 졸업 판별을 즉각 격발하도록 스케줄 및 콜드스타트 타임 윈도우 동기화 락온.
 # 🚨 NEW: [V75.02 글로벌 에러 핸들러 누락 팩트 교정]
 # - 글로벌 에러 핸들러 배선 결속을 통해 PTB 내부 네트워크 타임아웃 및 스케줄러 붕괴 팩트 로깅 완비
+# 🚨 MODIFIED: [V75.03 핫픽스] ContextTypes 임포트 누락으로 인한 런타임 즉사 맹점 100% 수술 완료
 # ==========================================================
 import os
 import logging
@@ -30,7 +31,8 @@ import datetime
 import asyncio
 import math 
 from zoneinfo import ZoneInfo
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, Defaults
+# MODIFIED: [V75.03] ContextTypes 누락 팩트 수혈
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, Defaults, ContextTypes
 from dotenv import load_dotenv
 
 from config import ConfigManager
