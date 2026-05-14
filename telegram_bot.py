@@ -14,8 +14,8 @@
 # 🚨 MODIFIED: [V75.03 관찰자 효과 및 시각적 환각 원천 수술]
 # - get_decision 비동기 래핑 및 is_simulation=True 강제 주입 (제1헌법 준수 및 런타임 오염 차단)
 # - 낡은 10시/15시 텍스트 소각 및 09:30~09:34 캔들 대기 / 지터 덤핑 타임라인 팩트 교정
-# 🚨 MODIFIED: [관제탑 새로고침 시각적 깜빡임 현상 원천 수술]
-# - cmd_avwap 내부 로딩 텍스트 렌더링 1단계 생략 및 제자리 1회 덮어쓰기 락온
+# 🚨 MODIFIED: [V75.06 런타임 즉사 방어] 들여쓰기(IndentationError) 팩트 완벽 교정
+# - cmd_sync 내 AVWAP 레이더 스캔 블록의 찌그러진 들여쓰기를 전면 교정하여 런타임 크래시 영구 소각
 # ==========================================================
 import logging
 import datetime
@@ -625,39 +625,39 @@ class TelegramController:
 
                 if status_code in ["PRE", "REG"] and not tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"):
                     try:
-                         df_1min_base = await asyncio.wait_for(asyncio.to_thread(self.broker.get_1min_candles_df, avwap_base_ticker), timeout=3.0)
-                         base_curr_p = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, avwap_base_ticker), timeout=3.0) or 0.0)
-              
-                             if hasattr(self.strategy, 'v_avwap_plugin'):
-                             avwap_state_dict = {"strikes": tracking_cache.get(f"AVWAP_STRIKES_{t}", 0), "cooldown_active": tracking_cache.get(f"AVWAP_COOLDOWN_{t}", False)}
+                        df_1min_base = await asyncio.wait_for(asyncio.to_thread(self.broker.get_1min_candles_df, avwap_base_ticker), timeout=3.0)
+                        base_curr_p = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, avwap_base_ticker), timeout=3.0) or 0.0)
+                        
+                        if hasattr(self.strategy, 'v_avwap_plugin'):
+                            avwap_state_dict = {"strikes": tracking_cache.get(f"AVWAP_STRIKES_{t}", 0), "cooldown_active": tracking_cache.get(f"AVWAP_COOLDOWN_{t}", False)}
+                            
+                            # 🚨 MODIFIED: [V75.03 관찰자 효과 및 시각적 환각 원천 수술] 비동기 래핑 및 is_simulation=True 주입
+                            is_apex_on = await asyncio.to_thread(getattr(self.cfg, 'get_avwap_apex_mode', lambda x: True), t)
+                            decision = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    self.strategy.v_avwap_plugin.get_decision,
+                                    base_ticker=avwap_base_ticker, exec_ticker=t,
+                                    base_curr_p=base_curr_p, exec_curr_p=curr,
+                                    df_1min_base=df_1min_base, avwap_qty=avwap_qty,
+                                    now_est=now_est, avwap_state=avwap_state_dict,
+                                    context_data=avwap_ctx,
+                                    is_apex_on=is_apex_on,
+                                    is_simulation=True
+                                ),
+                                timeout=10.0
+                            )
                              
-                             # 🚨 MODIFIED: [V75.03 관찰자 효과 및 시각적 환각 원천 수술] 비동기 래핑 및 is_simulation=True 주입
-                             is_apex_on = await asyncio.to_thread(getattr(self.cfg, 'get_avwap_apex_mode', lambda x: True), t)
-                             decision = await asyncio.wait_for(
-                                 asyncio.to_thread(
-                                     self.strategy.v_avwap_plugin.get_decision,
-                                     base_ticker=avwap_base_ticker, exec_ticker=t,
-                                     base_curr_p=base_curr_p, exec_curr_p=curr,
-                                     df_1min_base=df_1min_base, avwap_qty=avwap_qty,
-                                     now_est=now_est, avwap_state=avwap_state_dict,
-                                     context_data=avwap_ctx,
-                                     is_apex_on=is_apex_on,
-                                     is_simulation=True
-                                 ),
-                                 timeout=10.0
-                             )
-                              
-                             avwap_base_price = decision.get('base_curr_p', base_curr_p)
-                             avwap_base_vwap = decision.get('vwap', 0.0)
-                             avwap_prev_vwap = decision.get('prev_vwap', 0.0)
-                             avwap_rolling_tp = decision.get('rolling_tp', 0.0)
-                             avwap_gap_pct = decision.get('gap_pct', 0.0)
-                             
-                             if "대기" in avwap_status_txt:
-                                 reason = decision.get('reason', '타점 계산중')
-                                 avwap_status_txt = f"⏳ 대기 ({reason})"
+                            avwap_base_price = decision.get('base_curr_p', base_curr_p)
+                            avwap_base_vwap = decision.get('vwap', 0.0)
+                            avwap_prev_vwap = decision.get('prev_vwap', 0.0)
+                            avwap_rolling_tp = decision.get('rolling_tp', 0.0)
+                            avwap_gap_pct = decision.get('gap_pct', 0.0)
+                            
+                            if "대기" in avwap_status_txt:
+                                reason = decision.get('reason', '타점 계산중')
+                                avwap_status_txt = f"⏳ 대기 ({reason})"
                     except Exception as e:
-                         logging.error(f"🚨 [{t}] AVWAP 실시간 레이더 스캔 타임아웃/에러: {e}")
+                        logging.error(f"🚨 [{t}] AVWAP 실시간 레이더 스캔 타임아웃/에러: {e}")
 
                 if not tracking_cache.get(f"AVWAP_BOUGHT_{t}") and not tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"):
                     curr_time = now_est.time()
