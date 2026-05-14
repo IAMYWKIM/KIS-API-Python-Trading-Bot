@@ -14,6 +14,8 @@
 # 🚨 MODIFIED: [V73.11 시작 화면 텍스트 다이어트 및 가독성 최적화]
 # - 'KST 기준', '익일', '모멘텀' 등 불필요한 텍스트를 소각하여 모바일 1줄 렌더링 락온.
 # - 자전거래 차단 문구를 하단으로 줄바꿈하여 시각적 직관성 극대화 완료.
+# 🚨 MODIFIED: [V73.12 시작 화면 텍스트 다이어트 2차 팩트 교정]
+# - '당일 스냅샷 박제'에서 '당일' 텍스트를 전면 소각하여 가독성을 한층 더 진공 압축 완료.
 # ==========================================================
 import os
 import math
@@ -82,9 +84,10 @@ class TelegramView:
         msg += "💠 무결성 싱글 롱 모멘텀 (SOXL 전용) & V-REV 갭 스위칭\n\n"
         
         # 🚨 MODIFIED: [V73.11 텍스트 다이어트 팩트 교정]
+        # 🚨 MODIFIED: [V73.12 시작 화면 텍스트 다이어트 2차 팩트 교정] '당일' 텍스트 소각
         msg += f"🕒 [ 운영 스케줄 ({dst_state}) ]\n"
         msg += f"🔹 {fact_hour}:00 : 🔐 매매 초기화 및 변동성 락온\n"
-        msg += f"🔹 {fact_hour}:05 : 📸 당일 스냅샷 박제 및 모의 장전\n"
+        msg += f"🔹 {fact_hour}:05 : 📸 스냅샷 박제 및 모의 장전\n"
         msg += f"🔹 {matrix_time} : 🏛️ 옴니 매트릭스 시장 국면 판별\n"
         msg += f"🔹 {trap_time} : 🌃 본진 덫 KIS 실전 투하\n"
         msg += "   (자전거래 차단)\n"
@@ -465,7 +468,7 @@ class TelegramView:
             final_msg += "\n\n⛔ 장마감/애프터마켓: 주문 불가"
             
         if any(t_info.get('version') == 'V_REV' for t_info in ticker_data):
-            final_msg += "\n\n▶️ /avwap : 🔫 실시간 모멘텀 레이더 관제탑"
+            final_msg += "\n\n▶️ /avwap : 🔫 실시간 레이더 관제탑"
 
         return final_msg, InlineKeyboardMarkup(keyboard) if keyboard else None
 
