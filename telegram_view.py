@@ -16,6 +16,8 @@
 # - 자전거래 차단 문구를 하단으로 줄바꿈하여 시각적 직관성 극대화 완료.
 # 🚨 MODIFIED: [V73.12 시작 화면 텍스트 다이어트 2차 팩트 교정]
 # - '당일 스냅샷 박제'에서 '당일' 텍스트를 전면 소각하여 가독성을 한층 더 진공 압축 완료.
+# 🚨 MODIFIED: [통합 지시서 수동 덫 파기 버튼 병렬 렌더링 이식]
+# - 수동 주문 실행 버튼 옆에 수동 주문 취소(CANCEL_EXEC) 버튼을 나란히 병렬 렌더링하여 UI 디커플링 원천 차단 완료.
 # ==========================================================
 import os
 import math
@@ -105,7 +107,7 @@ class TelegramView:
         msg += "▶️ /version : 🛠️ 버전 및 업데이트 내역\n"
         msg += "▶️ /avwap : 🔫 실시간 레이더 관제탑\n"
         msg += "▶️ /log : 🔍 실시간 에러 원격 추출 진단망\n\n"
-        
+
         msg += "⚠️ /reset : 🔓 비상 해제 메뉴 (락/리버스)\n"
         msg += "┗ 🚨 수동 닻 올리기: 예산 부족으로 리버스 진입 후 예수금을 추가 입금하셨다면, 이 메뉴에서 반드시 '리버스 강제 해제' 버튼을 눌러주세요!\n\n"
         
@@ -460,7 +462,11 @@ class TelegramView:
                 if t_info.get('is_locked', False):
                     body_msg += " (✅ 금일 주문 완료/잠금)\n"
                 else:
-                    keyboard.append([InlineKeyboardButton(f"🚀 {t} 수동 주문 실행", callback_data=f"EXEC:{t}")])
+                    # MODIFIED: [통합 지시서 수동 덫 파기 버튼 병렬 렌더링 이식]
+                    keyboard.append([
+                        InlineKeyboardButton(f"🚀 {t} 수동 주문 실행", callback_data=f"EXEC:{t}"),
+                        InlineKeyboardButton(f"🛑 {t} 수동 주문 취소", callback_data=f"CANCEL_EXEC:{t}")
+                    ])
             
         final_msg = header_msg + body_msg.strip()
         
