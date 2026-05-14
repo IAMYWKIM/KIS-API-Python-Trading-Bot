@@ -12,10 +12,10 @@
 # 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 UI 연동]
 # 🚨 NEW: [V74.00 Operation HA V-Turn Intercept UI 디커플링 해체]
 # 🚨 MODIFIED: [V74.02 HA V-Turn 1양봉 격발 및 꼬리 스캔 팩트 동기화]
-# - 코어 엔진에 탑재된 HA 반전 패턴 팩트(꼬리 min/max 정밀 연산 및 "음봉2+양봉1" 절대 룰)를 
-#   실시간 렌더링에도 동일하게 스캔.
-# - V자 반등 판별 및 cond2_met 바이패스 조건을 코어 엔진과 100% 동일하게 오버라이드하여
-#   시각적 디커플링(환각)을 영구 차단.
+# 🚨 MODIFIED: [V74.03 잔여 체력 고갈 셧다운 모순 팩트 렌더링 교정]
+# - 코어 엔진에서 체력이 30% 이하이더라도 V-Turn 찰나에는 타격이 허가되도록 수정됨에 따라,
+#   관제탑 UI 렌더링 시에도 `cond3_met` 조건에 `ha_v_turn_detected` 바이패스(OR)를 주입하여
+#   시각적으로 "체력미달" 거짓 경고를 뿜어내지 않고 🟢(통과)로 표출되도록 완벽 교정.
 # ==========================================================
 import logging
 import datetime
@@ -65,6 +65,7 @@ class AvwapConsolePlugin:
         base_reg_high, base_reg_low = 0.0, 0.0
         base_curr_p = 0.0
         
+        # 🚨 NEW: [V74.00 변수 스코프 전진 배치 락온]
         ha_status_text = "데이터 부족"
         ha_2_bullish_no_lower = False
         ha_v_turn_detected = False
@@ -162,7 +163,7 @@ class AvwapConsolePlugin:
                                 df_5m['HA_High'] = df_5m[['high', 'HA_Open', 'HA_Close']].max(axis=1)
                                 df_5m['HA_Low'] = df_5m[['low', 'HA_Open', 'HA_Close']].min(axis=1)
 
-                                # 🚨 MODIFIED: [V74.02 HA 꼬리 연산 팩트 교정]
+                                # 🚨 MODIFIED: [V74.02 HA 파서 고도화 및 꼬리 정밀 스캔]
                                 df_5m['No_Lower_Wick'] = (df_5m[['HA_Open', 'HA_Close']].min(axis=1) - df_5m['HA_Low']) <= 0.01
                                 df_5m['No_Upper_Wick'] = (df_5m['HA_High'] - df_5m[['HA_Open', 'HA_Close']].max(axis=1)) <= 0.01
                                 df_5m['Has_Lower_Wick'] = (df_5m[['HA_Open', 'HA_Close']].min(axis=1) - df_5m['HA_Low']) > 0.01
@@ -175,7 +176,8 @@ class AvwapConsolePlugin:
                                     last_2 = df_5m.tail(2)
                                     ha_2_bullish_no_lower = last_2['Is_Bullish'].all() and last_2['No_Lower_Wick'].all()
 
-                                # 🚨 MODIFIED: [V74.02 시계열 패턴 스캔 엔진 (HA V-Turn 1양봉 격발)]
+                                # 🚨 MODIFIED: [V74.02 시계열 패턴 스캔 역탐색 이식 (1양봉 찐바닥 격발)]
+                                # 윗꼬리없는 아래꼬리 있는 음봉 연속 2개 이상인 이후에 아래꼬리 없는 윗꼬리 있는 양봉 1개가 나오면 격발.
                                 if len(df_5m) >= 3:
                                     last_idx = len(df_5m) - 1
                                     bull_cond = df_5m['Is_Bullish'].iloc[last_idx] and df_5m['No_Lower_Wick'].iloc[last_idx] and df_5m['Has_Upper_Wick'].iloc[last_idx]
@@ -313,7 +315,6 @@ class AvwapConsolePlugin:
                 actual_gap_pct = (actual_gap_dollar / prev_c) * 100.0
                 if atr5 > 0:
                     rem_relative_pct = ((atr5 - actual_gap_pct) / atr5 * 100.0) if atr5 > 0 else 0.0
-                    cond3_met = (rem_relative_pct >= 30.0)
                     
             try:
                 _saved_state = await asyncio.to_thread(self.strategy.v_avwap_plugin.load_state, t, now_est)
@@ -328,7 +329,6 @@ class AvwapConsolePlugin:
                 ha_latched_bull = tracking_cache.get(f"HA_LATCHED_BULL_{t}", False)
 
             if base_curr_p > 0 and base_curr_vwap > 0:
-                # 🚨 MODIFIED: [V74.01 UI 디커플링 해체] V-Turn 포착 시 VWAP 허들 바이패스
                 cond2_met = ((base_curr_p > base_curr_vwap) and ha_latched_bull) or ha_v_turn_detected
                 if cond2_met and not (ha_2_bullish_no_lower or ha_v_turn_detected):
                      ha_status_text = f"{ha_status_text}이지만 시계열 락온 유지"
@@ -342,15 +342,16 @@ class AvwapConsolePlugin:
                 else:
                     seq_text = "하락세(Time_High&lt;Time_Low)"
              
+            # 🚨 MODIFIED: [V74.03 UI 팩트 교정] 체력 30% 고갈 상태에서도 V-Turn 포착 시 초록불(🟢) 강제 렌더링 바이패스
             c1_str = "🟢" if cond1_met else "🔴"
             c2_str = "🟢" if cond2_met else "🔴"
-            c3_str = "🟢" if cond3_met else "🔴"
+            c3_str = "🟢" if (rem_relative_pct >= 30.0 or ha_v_turn_detected) else "🔴"
             c_seq_str = "🟢" if cond_seq else "🔴"
 
             criteria = "H/L방향(+) &amp; 시계열상승 &amp; HA모멘텀(현재가&gt;VWAP) &amp; 상대체력(&gt;=30%)"
 
             if base_curr_p > 0 and base_curr_vwap > 0 and prev_c > 0 and atr5 > 0:
-                if cond1_met and cond2_met and cond3_met and cond_seq:
+                if cond1_met and cond2_met and (rem_relative_pct >= 30.0 or ha_v_turn_detected) and cond_seq:
                     momentum_met = True
                     trend_str = "🟢 <b>조건 충족 (타격 개시 대기)</b>"
                 else:
@@ -358,12 +359,18 @@ class AvwapConsolePlugin:
             else:
                  trend_str = "⚠️ 데이터 수집 대기 중"
 
+            # 🚨 MODIFIED: [V74.03 체력 30% 미만 시 바이패스 렌더링 락온]
+            if rem_relative_pct < 30.0 and ha_v_turn_detected:
+                c3_text = f"상대 체력 고갈 락다운 바이패스 (V-Turn 찐바닥 쉴드 가동)"
+            else:
+                c3_text = f"상대 잔여 체력 30% 이상 (현재: {rem_relative_pct:.1f}%)"
+
             msg += f"▫️ 판별 기준: <code>{criteria}</code>\n"
             msg += f"▫️ <b>[ 하이킨아시 듀얼 모멘텀 조건 ]</b>\n"
             msg += f"   {c1_str} 고저가 방향 원웨이 일치\n"
             msg += f"   {c_seq_str} 시계열 체력 통과 ({seq_text})\n"
             msg += f"   {c2_str} HA 모멘텀 일치 (현재 5T: {ha_status_text})\n"
-            msg += f"   {c3_str} 상대 잔여 체력 30% 이상 (현재: {rem_relative_pct:.1f}%)\n"
+            msg += f"   {c3_str} {c3_text}\n"
             msg += f"▫️ 타격 상태: {trend_str}\n"
 
             if not is_apex_on:

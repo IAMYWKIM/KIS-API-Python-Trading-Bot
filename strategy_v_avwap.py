@@ -9,11 +9,17 @@
 # 🚨 NEW: [V72.09 3-Stage Apex Intercept (정점 요격) 전술 탑재]
 # 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 탑재 및 IndentationError 팩트 수술]
 # 🚨 NEW: [V74.00 Operation HA V-Turn Intercept (정밀 요격) 전술 탑재]
-# 🚨 MODIFIED: [V74.02 HA V-Turn 정밀 조건 팩트 교정 및 VWAP 강제 락다운 바이패스]
-# - 꼬리(Wick) 계산 시 min/max를 명확히 하여 무결성 확보.
+# 🚨 MODIFIED: [V74.02 HA V-Turn 정밀 꼬리(Wick) 파서 및 1양봉 격발 엔진 이식]
+# - 꼬리 계산 시 min/max를 명확히 하여 무결성 확보.
 # - "윗꼬리 없고 아래꼬리 있는 음봉 2연속 이상" + "아래꼬리 없고 윗꼬리 있는 양봉 1개"
 #   사용자의 절대 룰을 100% 팩트로 교차 검증하도록 하드코딩 이식 완료.
-# - V-Turn 감지 찰나에 주가가 당일 VWAP 아래에 있어도 즉시 딥매수 타격하도록 cond2_met 바이패스.
+# 🚨 MODIFIED: [V74.03 최심해 V-Turn 체력 고갈 락다운 영구 바이패스 수술]
+# - 매니저님 지시 팩트 반영: 찐바닥 V-Turn 찰나는 필연적으로 당일 진폭이 극대화되어 
+#   체력이 30% 이하로 고갈되었을 시점.
+# - 잔여 체력이 30% 미만일 때 셧다운이 격발되어 V-Turn 변곡점을 포착해도 타격하지 못하는
+#   치명적 직렬 충돌(Race Condition) 맹점 원천 차단.
+# - V-Turn이 감지(ha_v_turn_detected=True)된 경우, 체력이 30% 미만이라도 
+#   셧다운 방어막을 강제 해방(Bypass)하고 즉각 딥매수를 격발하도록 절대 락온 이식 완료.
 # ==========================================================
 import logging
 import datetime
@@ -215,6 +221,7 @@ class VAvwapHybridPlugin:
         base_vwap = base_curr_p
         vwap_success = False 
 
+        # 🚨 [V74.00 제16경고 스코프 전진 배치] 변수 오염 원천 차단
         ha_2_bullish_no_lower = False
         ha_v_turn_detected = False
         trend_sequence = "PENDING"
@@ -280,7 +287,7 @@ class VAvwapHybridPlugin:
                             df_5m['HA_High'] = df_5m[['high', 'HA_Open', 'HA_Close']].max(axis=1)
                             df_5m['HA_Low'] = df_5m[['low', 'HA_Open', 'HA_Close']].min(axis=1)
 
-                            # 🚨 MODIFIED: [V74.02 HA V-Turn 정밀 꼬리 연산 팩트 교정]
+                            # 🚨 MODIFIED: [V74.02 HA 파서 고도화 및 꼬리 정밀 스캔]
                             df_5m['No_Lower_Wick'] = (df_5m[['HA_Open', 'HA_Close']].min(axis=1) - df_5m['HA_Low']) <= 0.01
                             df_5m['No_Upper_Wick'] = (df_5m['HA_High'] - df_5m[['HA_Open', 'HA_Close']].max(axis=1)) <= 0.01
                             df_5m['Has_Lower_Wick'] = (df_5m[['HA_Open', 'HA_Close']].min(axis=1) - df_5m['HA_Low']) > 0.01
@@ -293,7 +300,8 @@ class VAvwapHybridPlugin:
                                 last_2 = df_5m.tail(2)
                                 ha_2_bullish_no_lower = last_2['Is_Bullish'].all() and last_2['No_Lower_Wick'].all()
 
-                            # 🚨 MODIFIED: [V74.02 HA V-Turn 1양봉 격발 조건 팩트 교정]
+                            # 🚨 MODIFIED: [V74.02 시계열 패턴 스캔 역탐색 이식 (1양봉 찐바닥 격발)]
+                            # 윗꼬리없는 아래꼬리 있는 음봉 연속 2개 이상인 이후에 아래꼬리 없는 윗꼬리 있는 양봉 1개가 나오면 격발.
                             if len(df_5m) >= 3:
                                 last_idx = len(df_5m) - 1
                                 bull_cond = df_5m['Is_Bullish'].iloc[last_idx] and df_5m['No_Lower_Wick'].iloc[last_idx] and df_5m['Has_Upper_Wick'].iloc[last_idx]
@@ -426,10 +434,16 @@ class VAvwapHybridPlugin:
         
         rem_relative_pct = ((atr5 - actual_gap_pct) / atr5 * 100.0) if atr5 > 0 else 0.0
 
+        # 🚨 MODIFIED: [V74.03 최심해 V-Turn 체력 고갈 락다운 영구 바이패스 수술]
+        # V자 반등이 감지되었을 때는 체력이 30% 미만으로 깎여있어도 무조건 진입을 
+        # 허가하도록 셧다운 방어막을 100% 해체(Bypass).
         if rem_relative_pct < 30.0:
-            persistent_state["shutdown"] = True
-            self.save_state(exec_ticker, now_est, persistent_state)
-            return _build_res('SHUTDOWN', 'ATR5_상대체력_30%미만_고갈_당일신규진입_영구동결')
+            if not ha_v_turn_detected:
+                persistent_state["shutdown"] = True
+                self.save_state(exec_ticker, now_est, persistent_state)
+                return _build_res('SHUTDOWN', 'ATR5_상대체력_30%미만_고갈_당일신규진입_영구동결')
+            else:
+                logging.info(f"⚡ [{exec_ticker}] 상대 체력 고갈({rem_relative_pct:.1f}%)이나 HA V-Turn 포착으로 셧다운 강제 바이패스!")
 
         base_day_high = float(kwargs.get('base_day_high', 0.0))
         base_day_low = float(kwargs.get('base_day_low', 0.0))
@@ -448,7 +462,8 @@ class VAvwapHybridPlugin:
                 ha_latched_bull = True
                 latch_changed = True
                 
-        if (trend_sequence == "BEAR" and not ha_v_turn_detected) or rem_relative_pct < 30.0:
+        # 🚨 MODIFIED: [V74.03 HA V-Turn 시 래치 해제 방어]
+        if (trend_sequence == "BEAR" and not ha_v_turn_detected) or (rem_relative_pct < 30.0 and not ha_v_turn_detected):
             if ha_latched_bull:
                 ha_latched_bull = False
                 latch_changed = True
@@ -459,7 +474,9 @@ class VAvwapHybridPlugin:
 
         # 🚨 MODIFIED: [V74.02] HA V-Turn 타점 정밀 교정 시 VWAP 락다운 해방 바이패스 락온
         cond2_met = ((base_curr_p > base_vwap) and ha_latched_bull) or ha_v_turn_detected
-        cond3_met = True
+        
+        # 🚨 MODIFIED: [V74.03] HA V-Turn 시 단기 체력 조건 무조건 바이패스
+        cond3_met = (rem_relative_pct >= 30.0) or ha_v_turn_detected
 
         cond_seq = True
         if trend_sequence == "BEAR":
