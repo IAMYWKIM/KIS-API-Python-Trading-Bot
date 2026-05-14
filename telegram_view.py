@@ -1,7 +1,6 @@
 # ==========================================================
 # FILE: telegram_view.py
 # ==========================================================
-# (상단 주석 생략...)
 # 🚨 NEW: [V73.00 UI 렌더링 디커플링 해체] 
 # - 텔레그램 시작 화면 및 통합 지시서에 잔존하는 17:05 KST 예약 장전 레거시 텍스트를 전면 소각.
 # - 15:26 EST 지연 장전 팩트 교정으로 시각적 환각(UI 디커플링) 100% 해체 완료.
@@ -9,6 +8,9 @@
 # - EST/KST 혼용 표기로 인한 인지 부조화를 막기 위해 시작 화면의 모든 시간을 KST 기반으로 동적 래핑하여 통일.
 # - 시간순 배열 오류(15:26 EST가 23:20 KST보다 먼저 표출되던 현상)를 연대기 순으로 완벽히 정렬 완료.
 # - 옴니 매트릭스 스캔 시간이 10:00 EST로 전진 배치되었음에도 23:20으로 하드코딩되어 있던 낡은 UI 찌꺼기를 23:00(서머타임) / 00:00(윈터)로 100% 팩트 교정 완료.
+# 🚨 MODIFIED: [V73.10 확정 정산 16:05 EST 전진 배치 및 시각적 디커플링 해체]
+# - 시작 화면의 운영 스케줄에서 10:00 KST 확정 정산 레거시 텍스트를 전면 소각.
+# - 16:05 EST를 서머타임에 맞춰 05:05/06:05 KST로 동적 래핑하고, 연대기 순으로 스케줄 타임라인 완벽 재정렬 완료.
 # ==========================================================
 import os
 import math
@@ -66,22 +68,23 @@ class TelegramView:
         est_tz = ZoneInfo('America/New_York')
         is_dst = bool(datetime.datetime.now(est_tz).dst())
         
-        # 🚨 MODIFIED: [V73.01 시작 화면 타임라인 팩트 동기화 및 직관성 대수술]
+        # 🚨 MODIFIED: [V73.10 스케줄 연대기 순 정렬 및 16:05 EST 동적 래핑 락온]
         fact_hour = 17 if is_dst else 18
         matrix_time = "23:00" if is_dst else "00:00"  # 10:00 EST 팩트 교정
         trap_time = "04:26" if is_dst else "05:26"    # 15:26 EST 팩트 교정
+        sync_time = "05:05" if is_dst else "06:05"    # 16:05 EST 팩트 교정
         dst_state = "🌞서머타임 ON" if is_dst else "❄️서머타임 OFF"
         
         msg = f"🌌 [ 옴니 매트릭스 퀀트 엔진 {latest_version} ]\n"
         msg += "💠 무결성 싱글 롱 모멘텀 (SOXL 전용) & V-REV 갭 스위칭\n\n"
         
         msg += f"🕒 [ 운영 스케줄 (KST 기준 / {dst_state}) ]\n"
-        msg += "🔹 6시간 간격 : 🔑 API 토큰 자동 갱신\n"
-        msg += "🔹 10:00 : 📝 확정 정산 스캔 & 졸업 발급\n"
         msg += f"🔹 {fact_hour}:00 : 🔐 매매 초기화 및 변동성 락온\n"
         msg += f"🔹 {fact_hour}:05 : 📸 당일 스냅샷 박제 및 모의 장전\n"
         msg += f"🔹 {matrix_time} : 🏛️ 옴니 매트릭스 시장 국면 판별\n"
-        msg += f"🔹 {trap_time} (익일) : 🌃 본진 덫 KIS 실전 투하 (자전거래 차단)\n\n"
+        msg += f"🔹 {trap_time} (익일) : 🌃 본진 덫 KIS 실전 투하 (자전거래 차단)\n"
+        msg += f"🔹 {sync_time} (익일) : 📝 확정 정산 스캔 & 졸업 발급\n"
+        msg += "🔹 6시간 간격 : 🔑 API 토큰 자동 갱신\n\n"
         
         msg += "🛠 [ 주요 명령어 ]\n"
         msg += "▶️ /sync : 📜 통합 지시서 조회\n"
@@ -100,8 +103,6 @@ class TelegramView:
         
         msg += "⚠️ /update : 🚀 시스템 자가 업데이트 (경고: 로컬 코드가 초기화됨)\n"
         return msg
-
-# ... (하위 로직 기존과 100% 동일하게 락온 유지) ...
 
     def get_update_confirm_menu(self):
         msg = "🚨 <b>[ 시스템 코어 자가 업데이트 (Self-Update) ]</b>\n\n"
@@ -157,7 +158,7 @@ class TelegramView:
         msg += f"▫️ 총 장전 수량 : {total_q} 주\n"
         msg += f"▫️ 지층 통합 평단가 : ${avg_p:.2f}\n\n"
         msg += "<b>[ LIFO 지층별 상세 (최근 매수 = 1지층) ]</b>\n"
-        msg += "<code>지층 일자        수량   평단가\n"
+        msg += "<code>지층 일자         수량   평단가\n"
         msg += "-"*30 + "\n"
         
         keyboard = []
@@ -412,7 +413,7 @@ class TelegramView:
                         target_price = safe_avg * (1 + safe_target / 100.0)
                         body_msg += f"⚙️ 🎯 익절 목표가: <b>${target_price:.2f}</b> (+{safe_target}%)\n"
                     body_msg += f"⚙️ ⭐ 별지점: {safe_star_pct}% | 🎯감시: {sniper_status_txt}\n"
-                    
+                     
                 if sniper_status_txt == "ON":
                     if not is_trade_active:
                         body_msg += "🎯 상방 스나이퍼: 감시 종료 (장마감)\n"
