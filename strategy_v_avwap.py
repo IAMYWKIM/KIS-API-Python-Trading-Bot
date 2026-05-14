@@ -10,16 +10,13 @@
 # 🚨 NEW: [V72.16 AVWAP 정점요격 스위치 탑재 및 IndentationError 팩트 수술]
 # 🚨 NEW: [V74.00 Operation HA V-Turn Intercept (정밀 요격) 전술 탑재]
 # 🚨 MODIFIED: [V74.02 HA V-Turn 정밀 꼬리(Wick) 파서 및 1양봉 격발 엔진 이식]
-# - 꼬리 계산 시 min/max를 명확히 하여 무결성 확보.
-# - "윗꼬리 없고 아래꼬리 있는 음봉 2연속 이상" + "아래꼬리 없고 윗꼬리 있는 양봉 1개"
-#   사용자의 절대 룰을 100% 팩트로 교차 검증하도록 하드코딩 이식 완료.
 # 🚨 MODIFIED: [V74.03 최심해 V-Turn 체력 고갈 락다운 영구 바이패스 수술]
-# - 매니저님 지시 팩트 반영: 찐바닥 V-Turn 찰나는 필연적으로 당일 진폭이 극대화되어 
-#   체력이 30% 이하로 고갈되었을 시점.
-# - 잔여 체력이 30% 미만일 때 셧다운이 격발되어 V-Turn 변곡점을 포착해도 타격하지 못하는
-#   치명적 직렬 충돌(Race Condition) 맹점 원천 차단.
-# - V-Turn이 감지(ha_v_turn_detected=True)된 경우, 체력이 30% 미만이라도 
-#   셧다운 방어막을 강제 해방(Bypass)하고 즉각 딥매수를 격발하도록 절대 락온 이식 완료.
+# 🚨 NEW: [V74.04 심해 고도 필터(Deep-Sea Altitude Filter) 락온 및 스코프 전진 배치]
+# - 고점 부근의 캔들 노이즈를 찐바닥으로 오판하여 추격 매수하는 하극상 원천 차단.
+# - exec_curr_p가 당일 진폭(day_high - day_low)의 하위 30% 이내인 심해(Bottom) 구간에 
+#   위치할 때만 ha_v_turn_detected = True 를 인정하도록 이중 교차 검증망 하드코딩 완료.
+# - 제16경고에 따라 day_amplitude, deep_sea_threshold 등 신규 변수를 로직 최상단에 
+#   기본값(0.0)으로 선언(Scope Lift)하여 런타임 붕괴 영구 소각.
 # ==========================================================
 import logging
 import datetime
@@ -221,13 +218,16 @@ class VAvwapHybridPlugin:
         base_vwap = base_curr_p
         vwap_success = False 
 
-        # 🚨 [V74.00 제16경고 스코프 전진 배치] 변수 오염 원천 차단
+        # 🚨 [V74.04 제16경고 스코프 전진 배치 및 심해 필터 변수 락온] 변수 오염 원천 차단
         ha_2_bullish_no_lower = False
         ha_v_turn_detected = False
         trend_sequence = "PENDING"
         
         is_pure_5m_2_bearish = False
         current_5m_is_bearish = False
+        
+        day_amplitude = 0.0
+        deep_sea_threshold = 0.0
 
         if df_1min_base is not None and not df_1min_base.empty:
             try:
@@ -300,8 +300,9 @@ class VAvwapHybridPlugin:
                                 last_2 = df_5m.tail(2)
                                 ha_2_bullish_no_lower = last_2['Is_Bullish'].all() and last_2['No_Lower_Wick'].all()
 
-                            # 🚨 MODIFIED: [V74.02 시계열 패턴 스캔 역탐색 이식 (1양봉 찐바닥 격발)]
-                            # 윗꼬리없는 아래꼬리 있는 음봉 연속 2개 이상인 이후에 아래꼬리 없는 윗꼬리 있는 양봉 1개가 나오면 격발.
+                            # 🚨 MODIFIED: [V74.04 심해 고도 필터(Deep-Sea Altitude Filter) 락온]
+                            # 윗꼬리없는 아래꼬리 있는 음봉 연속 2개 이상인 이후에 아래꼬리 없는 윗꼬리 있는 양봉 1개가 나오더라도,
+                            # 현재가가 당일 저가 대비 전체 진폭의 30% 이하인 심해(Bottom) 구간에 위치할 때만 찐바닥으로 격발.
                             if len(df_5m) >= 3:
                                 last_idx = len(df_5m) - 1
                                 bull_cond = df_5m['Is_Bullish'].iloc[last_idx] and df_5m['No_Lower_Wick'].iloc[last_idx] and df_5m['Has_Upper_Wick'].iloc[last_idx]
@@ -313,7 +314,13 @@ class VAvwapHybridPlugin:
                                         else:
                                             break
                                     if bear_count >= 2:
-                                        ha_v_turn_detected = True
+                                        day_amplitude = day_high - day_low
+                                        if day_amplitude > 0:
+                                            deep_sea_threshold = day_low + (day_amplitude * 0.3)
+                                            if exec_curr_p <= deep_sea_threshold:
+                                                ha_v_turn_detected = True
+                                            else:
+                                                logging.debug(f"🚨 [V_AVWAP] HA V-Turn 캔들 패턴 포착되었으나, 현재가({exec_curr_p})가 심해 임계선({deep_sea_threshold}) 초과로 기각(Bypass).")
 
             except Exception as e:
                 logging.error(f"🚨 [V_AVWAP] 기초자산 HA 및 5분봉 연산 실패: {e}")
@@ -443,7 +450,7 @@ class VAvwapHybridPlugin:
                 self.save_state(exec_ticker, now_est, persistent_state)
                 return _build_res('SHUTDOWN', 'ATR5_상대체력_30%미만_고갈_당일신규진입_영구동결')
             else:
-                logging.info(f"⚡ [{exec_ticker}] 상대 체력 고갈({rem_relative_pct:.1f}%)이나 HA V-Turn 포착으로 셧다운 강제 바이패스!")
+                logging.info(f"⚡ [{exec_ticker}] 상대 체력 고갈({rem_relative_pct:.1f}%)이나 심해 고도 필터를 통과한 HA V-Turn 포착으로 셧다운 강제 바이패스!")
 
         base_day_high = float(kwargs.get('base_day_high', 0.0))
         base_day_low = float(kwargs.get('base_day_low', 0.0))
