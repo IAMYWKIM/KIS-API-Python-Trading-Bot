@@ -11,15 +11,15 @@
 # 🚨 MODIFIED: [V71.05 정규장 스케줄러 라이브 주문 런타임 붕괴 수술 및 시간 인젝션]
 # 🚨 MODIFIED: [V71.12 로컬 캐시 의존성 영구 소각 및 코어 압축]
 # 🚨 MODIFIED: [V71.14 지정가 VWAP 일반주문(Regular Order) 100% 팩트 락온]
-# - KIS 명세에 따라 VWAP(36)은 일반주문 API(TTTT1002U)로만 전송되어야 하므로, 
-#   예약주문 API로 쏘아 Reject 당하던 하극상 맹점을 원천 차단하고 분기 라우팅을 100% 역배선 완료.
 # 🚨 NEW: [V73.00 본진 통합 지시서 덫 장전 디커플링 및 자전거래 원천 차단]
 # - 17:05 KST 스케줄을 실제 주문 전송 없이 스냅샷만 박제하고 모의 장전 메시지를 렌더링하는 전용 코루틴(scheduled_snapshot_only)으로 분할 캡슐화.
 # - 15:26 EST 기상하여 박제된 스냅샷을 로드 후 실원장에 투하하는 실전 장전 코루틴(scheduled_regular_trade_delayed) 신설 락온.
-# 🚨 NEW: [V75.06 KIS 알고리즘 VWAP 지터 시간 역전 패러독스 완벽 수술]
-# - 17:05 스냅샷에 박제된 낡은 타임 파라미터가 180초 지터(Jitter) 대기 후 과거 시각으로 전락하여
-#   KIS 서버에서 '현재시간 이후로 입력' 리젝(Reject)을 뱉는 맹점 완벽 수술.
-# - 전송 직전 런타임 현재 시각을 스캔하여 +3분 시프트된 동적 시간으로 팩트 오버라이드 락온.
+# 🚨 MODIFIED: [V75.06 KIS 알고리즘 VWAP 지터 시간 역전 패러독스 완벽 수술]
+# 🚨 MODIFIED: [V75.11 예약 덫 정규장 100% 일반주문 직결 락온 (✨사용자 제보 박제)]
+# - KIS 서버의 예약 주문 API가 10:00~22:20 KST 사이에만 열려 있어 04:26 KST 전송 시
+#   LOC 및 LIMIT 주문이 100% 리젝 당하던 치명적 맹점을 원천 차단.
+# - 정규장 중이므로 VWAP뿐만 아니라 LOC, LIMIT 주문도 무조건 일반 주문 API(send_order)로
+#   다이렉트 패스하도록 디커플링 라우팅 역배선 완비.
 # ==========================================================
 import logging
 import datetime
@@ -230,10 +230,7 @@ async def scheduled_regular_trade_delayed(context):
             msgs = {t: "" for t in active_tickers_list}
             all_success_map = {t: True for t in active_tickers_list}
 
-            # 🚨 NEW: [V75.06 KIS 알고리즘 VWAP 지터 시간 역전 패러독스 완벽 수술]
-            # 스냅샷에 박제된 낡은 타임 파라미터가 180초 지터(Jitter) 대기로 인해 과거 시간으로 전락하여 
-            # KIS 서버에서 '현재시간 이후로 입력' 리젝(Reject)을 뱉는 맹점 원천 차단.
-            # 실전 전송 직전 런타임 현재 시각을 스캔하여 +3분 시프트된 동적 시간으로 팩트 오버라이드.
+            # 🚨 MODIFIED: [V75.12 정규장 덫 KIS 예약 주문 거절 맹점 및 지터 시간 역전 대통합 수술]
             est_z = ZoneInfo('America/New_York')
             kst_z = ZoneInfo('Asia/Seoul')
             curr_est = datetime.datetime.now(est_z)
@@ -273,24 +270,21 @@ async def scheduled_regular_trade_delayed(context):
                 plans[t] = plan
                 if plan.get('core_orders', []) or plan.get('orders', []):
                     is_rev = plan.get('is_reverse', False)
-                    msgs[t] += f"🔄 <b>[{t}] 리버스(VWAP) 예약 덫 실전 장전 완료</b>\n" if is_rev else f"💎 <b>[{t}] 정규장(LOC/VWAP) 실전 덫 장전 완료</b>\n"
+                    msgs[t] += f"🔄 <b>[{t}] 리버스(VWAP) 덫 실전 장전 완료</b>\n" if is_rev else f"💎 <b>[{t}] 정규장(LOC/VWAP) 실전 덫 장전 완료</b>\n"
 
-            # 🚨 MODIFIED: [V71.14 일반주문 배선 복구] VWAP은 예약이 아닌 일반주문으로 직결
+            # 🚨 MODIFIED: [V75.11 예약 덫 정규장 100% 일반주문 직결 락온 (✨사용자 제보 박제)]
+            # KIS 서버 예약주문 가능 시간(10:00~22:20 KST) 맹점을 해체하고 정규장이므로 일반주문(send_order) 100% 직결
             for t in active_tickers_list:
                 if t not in plans: continue
                 target_orders = plans[t].get('core_orders', plans[t].get('orders', []))
                 for o in target_orders:
-                    if o['type'] == "VWAP":
-                        res = await asyncio.to_thread(
-                            broker.send_order, 
-                            t, o['side'], o['qty'], o['price'], o['type'],
-                            start_time=dyn_start_t, end_time=dyn_end_t
-                        )
-                    else:
-                        res = await asyncio.to_thread(
-                            broker.send_reservation_order, 
-                            t, o['side'], o['qty'], o['price'], o['type']
-                        )
+                    # VWAP, LOC 등 모든 타입을 예약 API가 아닌 일반 API로 강제 통과시킵니다.
+                    res = await asyncio.to_thread(
+                        broker.send_order, 
+                        t, o['side'], o['qty'], o['price'], o['type'],
+                        start_time=dyn_start_t if o['type'] == 'VWAP' else None, 
+                        end_time=dyn_end_t if o['type'] == 'VWAP' else None
+                    )
                     
                     is_success = res.get('rt_cd') == '0'
                     if not is_success: all_success_map[t] = False
@@ -304,17 +298,12 @@ async def scheduled_regular_trade_delayed(context):
                 if t not in plans: continue
                 target_bonus = plans[t].get('bonus_orders', [])
                 for o in target_bonus:
-                    if o['type'] == "VWAP":
-                        res = await asyncio.to_thread(
-                            broker.send_order, 
-                            t, o['side'], o['qty'], o['price'], o['type'],
-                            start_time=dyn_start_t, end_time=dyn_end_t
-                        )
-                    else:
-                        res = await asyncio.to_thread(
-                            broker.send_reservation_order, 
-                            t, o['side'], o['qty'], o['price'], o['type']
-                        )
+                    res = await asyncio.to_thread(
+                        broker.send_order, 
+                        t, o['side'], o['qty'], o['price'], o['type'],
+                        start_time=dyn_start_t if o['type'] == 'VWAP' else None, 
+                        end_time=dyn_end_t if o['type'] == 'VWAP' else None
+                    )
                     
                     is_success = res.get('rt_cd') == '0'
 
