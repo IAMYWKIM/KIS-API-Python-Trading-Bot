@@ -8,6 +8,42 @@
 🚨 제3헌법 [ 타임존 단일 소스 락온 (EST 100%) ] : 시스템의 뼈대가 되는 모든 논리적 시계열(장부, 스케줄러 기준점)은 오직 미국 동부 시간(ZoneInfo('America/New_York'))으로만 100% 락온한다. 한국 시간(KST)은 오직 텔레그램 UI 렌더링(출력) 용도로만 철저히 격리하여 타임 패러독스를 원천 봉쇄하라. (단, 04:26 KST 장막판 주문 스케줄은 내부적으로 EST로 동적 래핑하여 주입할 것)
 🚨 제4헌법 [ 예측 가능한 멱등성 및 원자적 쓰기 ] : 장부 및 상태 캐시 파일 보존 시 반드시 임시 파일 생성 후 덮어쓰는 원자적 쓰기(Atomic Write)와 비동기 래핑을 강제하여, 서버가 어느 타이밍에 다운되더라도 파일 파손이나 반쪽짜리 상태(Torn Write)가 발생하지 않도록 멱등성을 절대 보장하라.
 🚨 제5헌법 [ 엣지 타임라인 Fail-Safe 구조화 ] : 장마감 직전 특정 시간에만 격발되는 치명적 로직은 달력 API 지연이나 시간 오차(Jitter)에 봇이 기절하지 않도록 반드시 안전 폴백(Fallback, 예: 평일 강제 개장) 경로를 하드코딩하여 시스템의 런타임 붕괴를 영구 차단하라.
+📈 **[ 핵심 퀀트 공식 및 타점 락온 (V14 & V-REV) ]**
+🚨 봇의 모든 매수/매도 타점 연산 시 아래의 절대 공식을 100% 팩트로 적용하라. (텍스트 에디터 호환용 수식)
+💎 **[ 오리지널 무한매수법 (V14) 핵심 공식 ]**
+V14 모드는 설정된 분할 수(Split)에 따라 예산을 쪼개고, 진행률(T값)에 따라 동적으로 별값(Star Price)을 하향시켜 평단가를 방어하는 로직입니다.
+🔹 1회 예산 (Base Portion) : Portion = Seed / Split
+🔹 T값 (절대 진행률) : T = (Total Holdings * Average Price) / Portion
+🔹 목표 익절가 (Target Price) : Target = Average Price * (1 + Target Ratio)
+🔹 별값 (Star Price) 연산 :
+🔸 감가상각 계수 : DF = 2 / Split (단, Split이 0이면 0.1 적용)
+🔸 별% (Star Ratio) : Star Ratio = Target Ratio - (Target Ratio * DF * T)
+🔸 별값 : Star Price = Average Price * (1 + Star Ratio)
+🔹 매수 타점 (0주 새출발) : Buy_1, Buy_2 = MAX(0.01, PrevClose * 1.15 - 0.01) (예산 50%씩 분배)
+🔹 매수 타점 (기보유, T < Split / 2 전반전) :
+🔸 평단 매수 : Buy_Avg = MIN(Average Price, Star Price) - 0.01 (예산 50%)
+🔸 별값 매수 : Buy_Star = Star Price - 0.01 (예산 50%)
+🔹 매수 타점 (기보유, T >= Split / 2 후반전) :
+🔸 통합 별값 매수 : Buy_Star = Star Price - 0.01 (예산 100% 단일 버킷 통합)
+🔹 매도 타점 :
+🔸 쿼터 익절 : 보유 수량의 25% (ROUNDUP(Qty / 4)) 물량을 Star Price에 매도
+🔸 목표 익절 : 잔여 수량을 Target Price에 매도
+⚖️ **[ 역추세 하이브리드 (V-REV) 핵심 공식 ]**
+V-REV 모드는 전일 종가와 최근 지층 평단가를 앵커로 삼아 하락을 낚아채며, 큐(Queue) 기반의 LIFO(후입선출) 지층 분리 매도를 집행합니다.
+🔹 1일 고정 예산 : Budget = Seed * 0.15 (총 시드의 15%)
+🔹 매수 앵커 (Anchor) 및 타점 :
+🔸 0주 새출발 : Buy_1 = PrevClose * 1.15, Buy_2 = PrevClose * 0.999
+🔸 기보유 상태 (1층 평단가 앵커 락온) :
+🔸 절대 앵커 : Anchor = L1_Price (최근 1지층 평단가)
+🔸 Buy_1 = Anchor * 0.9976 (예산 50%)
+🔸 Buy_2 = Anchor * 0.9887 (예산 50%)
+🔹 매도 타점 (LIFO 지층 독립 탈출) :
+🔸 총 평단가 : Upper_Price = Total_Invested / Total_Qty
+🔸 1층(L1) 탈출 : Sell_L1 = L1_Price * 1.006 (+0.6%)
+🔸 상위층(Upper) 탈출 : Sell_Upper = Upper_Price * 1.010 (+1.0%)
+🔹 자전거래(Wash Sale) 방어막 캡핑 :
+🔸 활성화된 매도 타겟 중 최저가 MIN(Sell_L1, Sell_Upper) 를 MinSell로 스캔
+🔸 만약 매수 타점(Buy_1 또는 Buy_2)이 MinSell보다 크거나 같다면, 매수 타점을 MAX(0.01, MinSell - 0.01) 로 강제 하향 조정
 🚨 **[ 치명적 경고 1: 타임존 락온(Lock-on) 절대 사수 및 세션 간 오염 차단 ]** :
 모든 날짜 연산(캐시, 장부, API 체결 조회) 시 제3헌법에 의거 datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d") 포맷을 강제 적용하여 봇의 논리적 시계를 미국 동부 시간(EST/EDT)에 100% 종속시키세요.
 향후 신규 모듈이나 스케줄러가 추가되더라도 예외 없이 EST 락온을 걸어야 하며, KST를 Fallback으로 사용하면 아직 열리지 않은 미래의 미국 날짜를 조회하게 되어 매핑 데이터가 증발하는 치명적 맹점(EC-1, EC-2, EC-3)이 발생합니다.
@@ -68,8 +104,8 @@ plugin_updater.py에서 데몬 재가동 시 OS 쉘을 통한 sudo systemctl res
 🔸 2. 예약 주문 취소 및 상태 검증 격발 시, 반드시 order_resv_list API를 다이렉트로 호출하여 실시간 KIS 원장을 단일 진실 공급원(SSOT)으로 스캔하라.
 🔸 3. KIS 원장에서 확보된 ODNO를 기반으로 order_resv_ccnl API에 즉시 맵핑하여 취소를 집행하라.
 🔸 4. 예약 덫 철거 시 일반 미체결 원장(get_unfilled_orders_detail)까지 동시 스캔하여 장중 일반주문으로 분류된 VWAP(36) 및 지정가(00) 덫까지 함께 파기하는 이중 방화벽 로직을 무조건 유지하라.
-🚨 **[ 치명적 경고 20: V-REV 매수 데드존(Dead-Zone) 구축 및 앵커 최저가 락온 ]** :
-V-REV 역추세 모드에서 보유 수량이 0주 초과(기보유)일 경우, 매수 타점(Buy1, Buy2) 산출을 위한 기준 앵커(Anchor)를 반드시 min(전일 종가 prev_c, 최근 1지층 평단가 l1_price)로 강제 락온하세요. 전일 갭상승 시에도 평단가보다 높은 가격에서의 추격 매수를 원천 차단하여 의도적인 매수 데드존을 형성함으로써 횡보장에서의 시드 낭비를 원천 방어하세요. Buy1은 min_anchor * 0.995, Buy2는 min_anchor * 0.9725로 산출하여 코어 엔진의 무결성을 보장하세요. (단, 0주 새출발 시에는 기존대로 prev_c 앵커 허용).
+🚨 **[ 치명적 경고 20: V-REV 매수 타점 1층 평단가(L1_Price) 앵커 락온 ]** :
+V-REV 역추세 모드에서 보유 수량이 0주 초과(기보유)일 경우, 매수 타점(Buy1, Buy2) 산출을 위한 기준 앵커(Anchor)를 반드시 '최근 1지층 평단가(l1_price)'로 강제 락온하세요. 기존의 min(전일 종가 prev_c, 최근 1지층 평단가 l1_price) 공식은 폐기되었습니다. 오직 l1_price를 기준으로 하여 Buy1은 l1_price * 0.9976, Buy2는 l1_price * 0.9887로 산출하여 코어 엔진의 무결성을 보장하세요. (단, 0주 새출발 시에는 기존대로 prev_c 앵커 허용).
 🚨 **[ 치명적 경고 21: KIS 알고리즘 VWAP 지터(Jitter) 동적 시프트 및 KST 래핑 락온 ]** :
 VWAP(36) 알고리즘 주문을 위한 시간 파라미터(START_TIME, END_TIME) 생성 시, 단순 고정 시간(15:26:00 EST)을 주입하면 스케줄러의 무작위 지터(Jitter, 최대 180초) 대기나 수동 주문(EXEC) 지연으로 인해 '시작시간은 현재시간 이후로 입력해주세요'라며 KIS 서버가 주문을 전면 거절(Reject)하는 치명적 맹점이 발생합니다.
 따라서, START_TIME은 반드시 런타임 현재 시각을 스캔하여 max(15:26:00 EST, 현재 시각 + 3분)으로 동적 시프트(Shift) 계산해야 합니다. 이후 해당 타겟 시각을 ZoneInfo('Asia/Seoul')로 동적 래핑(astimezone)하여 KST 문자열(예: 042600)을 산출하고, END_TIME은 15:56:00 EST를 KST로 변환하여 주입하는 비파괴 우회 엔진을 강제 적용하세요.

@@ -43,6 +43,7 @@
 # - 암살자 전량 덤핑이 완료된 이후에 덫을 투하하여 자전거래를 수학적으로 영구 차단하는 디커플링 락온.
 # 🚨 MODIFIED: [V75.04 KIS 지정가 VWAP 알고리즘 예약 거절 엣지 케이스 완벽 수술 (3-Min Jitter Dynamic Shift)]
 # - START_TIME을 max(15:26:00 EST, 현재 시각 + 3분) 공식으로 산출하여 지터(Jitter) 대기나 수동 지연으로 인한 시간 역전 패러독스 원천 차단.
+# 🚨 MODIFIED: [V75.05 제20경고 절대 헌법 준수: V-REV 매수 타점 1층 평단가 앵커 락온 및 타점 배수 팩트 교정]
 # ==========================================================
 import math
 import os
@@ -92,7 +93,7 @@ class ReversionStrategy:
                     return
             except Exception:
                 pass
-                  
+                   
         self.executed["BUY_BUDGET"][ticker] = 0.0
         self.executed["SELL_QTY"][ticker] = 0
         self.state_loaded[ticker] = today_str
@@ -260,10 +261,10 @@ class ReversionStrategy:
             p2_trigger = round(prev_c * 0.999, 2)
         else:
             side = "SELL" if curr_p > prev_c else "BUY"
-            # 🚨 MODIFIED: [V72.17 제20경고 준수: V-REV 매수 데드존 구축 및 앵커 최저가 락온]
-            safe_anchor = min(prev_c, l1_price) if l1_price > 0.0 else prev_c
-            p1_trigger = round(safe_anchor * 0.995, 2)
-            p2_trigger = round(safe_anchor * 0.9725, 2)
+            # 🚨 MODIFIED: [V75.05 제20경고 절대 헌법 준수: V-REV 매수 타점 1층 평단가 앵커 락온 및 타점 배수 팩트 교정]
+            safe_anchor = l1_price if l1_price > 0.0 else prev_c
+            p1_trigger = round(safe_anchor * 0.9976, 2)
+            p2_trigger = round(safe_anchor * 0.9887, 2)
 
         # 🚨 MODIFIED: [V72.24 자전거래(Wash Sale) 락온 방어막 복구]
         # p1_trigger와 p2_trigger 결정 직후 최소 매도가(min_sell)를 도출하여 자전거래 원천 차단
