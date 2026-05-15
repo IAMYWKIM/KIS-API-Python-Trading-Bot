@@ -64,7 +64,7 @@
 # 🚨 MODIFIED: [통합 지시서 수동 제어(EXEC/CANCEL) 완벽 스위칭 작전]
 # - CANCEL_EXEC 덫 파기 완료 시(nuked_count > 0), 당일 매매 잠금(REG Lock)을 강제로 해제하도록
 #   cfg.reset_lock_for_ticker를 비동기로 호출하는 무결성 락온 파이프라인 개통 완료.
-# 🚨 NEW: [V75.02 원격 로그 추출 엔진 팩트 교정 및 데이터 증발 수술]
+# 🚨 MODIFIED: [V75.02 원격 로그 추출 엔진 팩트 교정 및 데이터 증발 수술]
 # - cmd_log 내 Traceback 데이터 증발 방어를 위한 꼬리 캡처(_grep_tail_logs) 무결성 락온
 # 🚨 MODIFIED: [V75.03 관찰자 효과 및 시각적 환각 원천 수술]
 # - get_decision 비동기 래핑 및 is_simulation=True 강제 주입 (제1헌법 준수 및 런타임 오염 차단)
@@ -74,6 +74,7 @@
 # 🚨 MODIFIED: [V75.08 관제탑 새로고침 시각적 깜빡임(Flickering) 영구 소각]
 # - 사용자의 지시에 따라, 새로고침 시 메시지가 로딩 텍스트로 줄어들었다가 다시 팽창하는 깜빡임 현상을 원천 차단.
 # - 중간 렌더링 과정을 생략하고 최신 레이더 텍스트만 제자리에 1회 덮어쓰기(Edit)하는 다이렉트 락온 적용 완료.
+# 🚨 MODIFIED: [V75.05 제20경고 절대 헌법 준수: V-REV 매수 타점 1층 평단가 앵커 락온 및 타점 배수 팩트 교정]
 # ==========================================================
 import logging
 import datetime
@@ -238,7 +239,7 @@ class TelegramController:
         elif "스나이퍼" in text:
             return await self.cmd_mode(update, context)
         elif "명예의 전당" in text or "졸업" in text:
-            return await self.cmd_history(update, context)
+             return await self.cmd_history(update, context)
         elif "암살자" in text or "조기" in text or "avwap" in text.lower():
             return await self.cmd_avwap(update, context)
         elif "로그" in text or "에러" in text:
@@ -592,7 +593,7 @@ class TelegramController:
                 half_portion_cash = one_portion_cash * 0.5
             
                 tag = "VWAP" if is_manual_vwap else "LOC"
-                 
+                
                 snap_sells_for_ui = [o for o in cached_snap.get("orders", []) if o.get('side') == 'SELL'] if cached_snap else []
                 if cached_snap and snap_sells_for_ui and logic_qty > 0:
                      for o in snap_sells_for_ui:
@@ -616,7 +617,7 @@ class TelegramController:
                     
                     sell_dict = {}
                     if available_l1 > 0 and trigger_l1 > 0:
-                        sell_dict[trigger_l1] = sell_dict.get(trigger_l1, 0) + available_l1
+                         sell_dict[trigger_l1] = sell_dict.get(trigger_l1, 0) + available_l1
                     if available_upper > 0 and trigger_upper > 0:
                          sell_dict[trigger_upper] = sell_dict.get(trigger_upper, 0) + available_upper
                     
@@ -635,11 +636,11 @@ class TelegramController:
                 else:
                     v_rev_guidance += " 🔵 매도: 대기 물량 없음 (관망)\n"
                
-                # 🚨 MODIFIED: [V72.17 제20경고 준수: V-REV 매수 데드존 구축 및 앵커 최저가 락온]
-                safe_anchor = min(safe_prev_close, l1_price) if l1_price > 0.0 else safe_prev_close
+                # 🚨 MODIFIED: [V75.05 제20경고 절대 헌법 준수: V-REV 매수 타점 1층 평단가 앵커 락온 및 타점 배수 팩트 교정]
+                safe_anchor = l1_price if l1_price > 0.0 else safe_prev_close
                 if safe_anchor > 0:
-                    b1_price = round(safe_prev_close * 1.15 if is_zero_start_fact else safe_anchor * 0.995, 2)
-                    b2_price = round(safe_prev_close * 0.999 if is_zero_start_fact else safe_anchor * 0.9725, 2)
+                    b1_price = round(safe_prev_close * 1.15 if is_zero_start_fact else safe_anchor * 0.9976, 2)
+                    b2_price = round(safe_prev_close * 0.999 if is_zero_start_fact else safe_anchor * 0.9887, 2)
                     
                     b1_qty = math.floor(half_portion_cash / b1_price) if b1_price > 0 else 0
                     b2_qty = math.floor(half_portion_cash / b2_price) if b2_price > 0 else 0
@@ -822,7 +823,7 @@ class TelegramController:
             if res == "SUCCESS": success_tickers.append(t)
         if success_tickers: 
             async with self.tx_lock:
-                 _, holdings = await asyncio.to_thread(self.broker.get_account_balance)
+                _, holdings = await asyncio.to_thread(self.broker.get_account_balance)
             await self.sync_engine._display_ledger(success_tickers[0], chat_id, context, message_obj=status_msg, pre_fetched_holdings=holdings)
         else:
             await status_msg.edit_text("✅ <b>동기화 완료</b> (표시할 진행 중인 장부가 없거나 에러 대기 중입니다)", parse_mode='HTML')
