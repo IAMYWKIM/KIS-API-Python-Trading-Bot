@@ -16,6 +16,10 @@
 # 🚨 NEW: [V73.00 본진 통합 지시서 덫 장전 디커플링 및 자전거래 원천 차단]
 # - 17:05 KST 스케줄을 실제 주문 전송 없이 스냅샷만 박제하고 모의 장전 메시지를 렌더링하는 전용 코루틴(scheduled_snapshot_only)으로 분할 캡슐화.
 # - 15:26 EST 기상하여 박제된 스냅샷을 로드 후 실원장에 투하하는 실전 장전 코루틴(scheduled_regular_trade_delayed) 신설 락온.
+# 🚨 NEW: [V75.06 KIS 알고리즘 VWAP 지터 시간 역전 패러독스 완벽 수술]
+# - 17:05 스냅샷에 박제된 낡은 타임 파라미터가 180초 지터(Jitter) 대기 후 과거 시각으로 전락하여
+#   KIS 서버에서 '현재시간 이후로 입력' 리젝(Reject)을 뱉는 맹점 완벽 수술.
+# - 전송 직전 런타임 현재 시각을 스캔하여 +3분 시프트된 동적 시간으로 팩트 오버라이드 락온.
 # ==========================================================
 import logging
 import datetime
@@ -226,6 +230,23 @@ async def scheduled_regular_trade_delayed(context):
             msgs = {t: "" for t in active_tickers_list}
             all_success_map = {t: True for t in active_tickers_list}
 
+            # 🚨 NEW: [V75.06 KIS 알고리즘 VWAP 지터 시간 역전 패러독스 완벽 수술]
+            # 스냅샷에 박제된 낡은 타임 파라미터가 180초 지터(Jitter) 대기로 인해 과거 시간으로 전락하여 
+            # KIS 서버에서 '현재시간 이후로 입력' 리젝(Reject)을 뱉는 맹점 원천 차단.
+            # 실전 전송 직전 런타임 현재 시각을 스캔하여 +3분 시프트된 동적 시간으로 팩트 오버라이드.
+            est_z = ZoneInfo('America/New_York')
+            kst_z = ZoneInfo('Asia/Seoul')
+            curr_est = datetime.datetime.now(est_z)
+            
+            b_start = curr_est.replace(hour=15, minute=26, second=0, microsecond=0)
+            s_start = curr_est + datetime.timedelta(minutes=3)
+            a_start = max(b_start, s_start)
+            
+            b_end = curr_est.replace(hour=15, minute=56, second=0, microsecond=0)
+            
+            dyn_start_t = a_start.astimezone(kst_z).strftime("%H%M%S")
+            dyn_end_t = b_end.astimezone(kst_z).strftime("%H%M%S")
+
             for t in active_tickers_list:
                 is_locked = await asyncio.to_thread(cfg.check_lock, t, "REG")
                 if is_locked:
@@ -263,7 +284,7 @@ async def scheduled_regular_trade_delayed(context):
                         res = await asyncio.to_thread(
                             broker.send_order, 
                             t, o['side'], o['qty'], o['price'], o['type'],
-                            start_time=o.get('start_time'), end_time=o.get('end_time')
+                            start_time=dyn_start_t, end_time=dyn_end_t
                         )
                     else:
                         res = await asyncio.to_thread(
@@ -274,7 +295,6 @@ async def scheduled_regular_trade_delayed(context):
                     is_success = res.get('rt_cd') == '0'
                     if not is_success: all_success_map[t] = False
 
-                    # 🚨 [V71.12 로컬 캐시 의존성 영구 소각] _save_resv_odno_sync 호출부 전면 적출 완료.
                     err_msg = res.get('msg1', '오류')
                     status_icon = '✅' if is_success else f'❌({err_msg})'
                     msgs[t] += f"└ 1차 필수: {o['desc']} {o['qty']}주 (${o['price']}): {status_icon}\n"
@@ -284,12 +304,11 @@ async def scheduled_regular_trade_delayed(context):
                 if t not in plans: continue
                 target_bonus = plans[t].get('bonus_orders', [])
                 for o in target_bonus:
-                    # 🚨 MODIFIED: [V71.14 일반주문 배선 복구] VWAP은 예약이 아닌 일반주문으로 직결
                     if o['type'] == "VWAP":
                         res = await asyncio.to_thread(
                             broker.send_order, 
                             t, o['side'], o['qty'], o['price'], o['type'],
-                            start_time=o.get('start_time'), end_time=o.get('end_time')
+                            start_time=dyn_start_t, end_time=dyn_end_t
                         )
                     else:
                         res = await asyncio.to_thread(
@@ -299,7 +318,6 @@ async def scheduled_regular_trade_delayed(context):
                     
                     is_success = res.get('rt_cd') == '0'
 
-                    # 🚨 [V71.12 로컬 캐시 의존성 영구 소각] _save_resv_odno_sync 호출부 전면 적출 완료.
                     err_msg = res.get('msg1', '잔금패스')
                     status_icon = '✅' if is_success else f'❌({err_msg})'
                     msgs[t] += f"└ 2차 보너스: {o['desc']} {o['qty']}주 (${o['price']}): {status_icon}\n"
