@@ -12,13 +12,9 @@
 # 🚨 MODIFIED: [V71.05 KIS VWAP 30분 압축 타격 및 예약 주문 파이프라인 정밀 수술]
 # 🚨 MODIFIED: [V71.14 지정가 VWAP 일반주문(Regular Order) 100% 팩트 락온 및 예약주문 내 데드코드 전면 폐기]
 # 🚨 MODIFIED: [V71.16 KIS API 알고리즘 타임 파라미터 명세 100% 팩트 교정]
-# - START_TIME / END_TIME 이라는 존재하지 않는 키값을 던져 
-#   '❌(시작시간이 장시간을 벗어났습니다.)' 리젝을 유발하던 치명적 맹점 수술.
-# - KIS 공식 명세인 ALGO_ORD_STRT_TMD / ALGO_ORD_END_TMD 로 정밀 역배선 완료.
 # 🚨 NEW: [V71.23 KIS API 알고리즘 타임 파라미터 유령 Key 소각 및 팩트 교정]
-# - 과거 명세서 오판으로 삽입된 ALGO_ORD_STRT_TMD 키를 전면 철거.
-# - 팩트에 맞게 START_TIME / END_TIME 으로 100% 원상 복구 완료.
 # 🚨 NEW: [V77.00 V7.1 백테스트 절대 동기화] 순수 진폭 Amp 5MA 엔진 이식 및 get_amp_5d_data 개통
+# 🚨 MODIFIED: [V77.01 들여쓰기 붕괴 런타임 즉사 방어] get_execution_history 내 else: break 구문 IndentationError 팩트 교정 완료.
 # ==========================================================
 
 import requests
@@ -706,6 +702,8 @@ class KoreaInvestmentBroker:
         body = {"CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "RSVN_ORD_RCIT_DT": order_date, "OVRS_RSVN_ODNO": order_id}
         return self._call_api("TTTT3017U", "/uapi/overseas-stock/v1/trading/order-resv-ccnl", "POST", body=body)
 
+    # 🚨 MODIFIED: [V77.01 들여쓰기 붕괴 런타임 즉사 방어]
+    # else: break 구문이 for 구문과 동일한 인덴트로 이탈했던 맹점 100% 팩트 교정 완료
     def get_execution_history(self, ticker, start_date, end_date):
         excg_cd = self._get_exchange_code(ticker, target_api="ORDER")
         odno_map = {}
@@ -730,8 +728,7 @@ class KoreaInvestmentBroker:
                     except: continue
                 if res.headers.get('tr_cont', '') in ['M', 'F']: time.sleep(0.3); continue
                 else: break
-     
-        else: break
+            else: break  # 🚨 [팩트 교정 완료] if 분기문에 100% 결속되도록 인덴트 수정
         return [{"ft_ccld_qty": str(d["total_qty"]), "ft_ccld_unpr3": str(d["total_amt"]/d["total_qty"] if d["total_qty"]>0 else 0), **d["item"]} for d in odno_map.values()]
 
     def get_genesis_ledger(self, ticker, limit_date_str=None):
