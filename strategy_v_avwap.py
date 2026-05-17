@@ -11,6 +11,8 @@
 # - 프리마켓 1분봉 스캔 기반 PM_H, PM_L 및 ATR5 오프셋 타겟(T_H, T_L) 연산 락온.
 # - 정규장 실시간 1분봉 스캔, 일반 하락 셧다운 및 갭상승 휩소 방어(5분봉 HA 양봉 검증) 이식.
 # - 95% 가용 자금 투입 및 +2.0% 익절 / 15:20 EST 전량 덤핑 투트랙 청산 파이프라인 개통.
+# 🚨 MODIFIED: [V76.01 ATR5 동적 하드스탑 영구 소각 및 투트랙 엑시트 절대 락온]
+# - V7.4 암살자 투트랙 엑시트 룰에 정면 위배되는 ATR5 하드스탑(손절) 렌더링 및 연산 로직 전면 폐기.
 # ==========================================================
 import logging
 import datetime
@@ -242,7 +244,7 @@ class VAvwapHybridPlugin:
             }
 
         # ---------------------------------------------------------
-        # 1. 매도 (보유 중일 때) 로직 - V7.4 투트랙 자동 청산 및 ATR5 하드스탑
+        # 1. 매도 (보유 중일 때) 로직 - V7.4 투트랙 자동 청산
         # ---------------------------------------------------------
         if avwap_qty > 0:
             safe_avg = avwap_avg_price if avwap_avg_price > 0 else exec_curr_p
@@ -250,14 +252,7 @@ class VAvwapHybridPlugin:
             if safe_avg <= 0:
                 return _build_res('SELL', 'CORRUPT_PRICE_EMERGENCY_DUMP', qty=avwap_qty, target_price=exec_curr_p)
 
-            # 🚨 [제17경고] ATR5 동적 하드스탑 락온
-            if atr5 > 0 and exec_curr_p > 0 and safe_avg > 0:
-                loss_pct = ((safe_avg - exec_curr_p) / safe_avg) * 100.0
-                if loss_pct >= atr5:
-                    persistent_state["shutdown"] = True
-                    if not is_simulation:
-                        self.save_state(exec_ticker, now_est, persistent_state)
-                    return _build_res('SELL', f'ATR5_동적_하드스탑_피격(-{loss_pct:.2f}%)_당일영구동결', qty=avwap_qty, target_price=exec_curr_p)
+            # MODIFIED: [V76.01 ATR5 동적 하드스탑 영구 소각 (투트랙 엑시트 원칙 사수)]
 
             # 🚨 [V7.4 룰 7] 체결되지 않고 15:20 EST 도달 시 미체결 지정가 매도 취소 후 즉시 전량 시장가 덤핑
             if curr_time >= time_1520:
@@ -333,7 +328,7 @@ class VAvwapHybridPlugin:
 
                     if not is_simulation:
                         self.save_state(exec_ticker, now_est, persistent_state)
-                        logging.info(f"🎯 [V7.4 암살자 락온] {exec_ticker} PM_H: {pm_h:.2f}, PM_L: {pm_l:.2f}, Offset: {offset:.2f} | T_H: {t_h:.2f}, T_L: {t_l:.2f}")
+                    logging.info(f"🎯 [V7.4 암살자 락온] {exec_ticker} PM_H: {pm_h:.2f}, PM_L: {pm_l:.2f}, Offset: {offset:.2f} | T_H: {t_h:.2f}, T_L: {t_l:.2f}")
                 else:
                     return _build_res('WAIT', '프리마켓_데이터_결측_대기중')
 

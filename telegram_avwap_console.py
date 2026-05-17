@@ -16,6 +16,8 @@
 # - 당일 타겟 팩트 데이터(PM_H, PM_L, T_H, T_L, Offset) 및 실시간 현재가 스프레드를 진공 압축으로 렌더링.
 # - 암살자의 실시간 감시 상태를 대기, 셧다운, 갭상승 휩소 방어, 익절 2.0% 청산 대기 등으로 직관적 표출하도록 뷰포트 교정.
 # - 0주 강제 동기화 락온 뷰포트는 기존 절대 헌법에 따라 유지 보존.
+# 🚨 MODIFIED: [V76.01 ATR5 동적 하드스탑 렌더링 영구 소각 및 투트랙 엑시트 UI 동기화]
+# - V7.4 암살자 투트랙 엑시트 룰에 정면 위배되는 ATR5 하드스탑(손절) 관련 UI 잔재 텍스트 스캔 및 클리닝 완료.
 # ==========================================================
 import logging
 import datetime
@@ -49,7 +51,7 @@ class AvwapConsolePlugin:
         
         active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
         avwap_tickers = [t for t in active_tickers if t == "SOXL"]
-            
+        
         if not avwap_tickers:
             return "⚠️ <b>[AVWAP 암살자 오프라인]</b>\n▫️ AVWAP 지원 종목이 없습니다.", None
            
@@ -207,4 +209,3 @@ class AvwapConsolePlugin:
         msg += f"\n\n⏱️ <i>마지막 스캔: {now_est.strftime('%Y-%m-%d %H:%M:%S')} (EST)</i>\n"
 
         return msg, InlineKeyboardMarkup(keyboard)
-
