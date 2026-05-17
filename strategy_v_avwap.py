@@ -18,6 +18,9 @@
 # 🚨 MODIFIED: [V76.03 암살자 덤핑 지터(Jitter) 코어 연산 디커플링 해체 및 동적 타임라인 락온]
 # - 15:20 EST 고정 하드코딩을 전면 소각하고 상태 객체의 dump_jitter_sec를 수혈받아
 #   동적 덤핑 시간(time_dynamic_dump)을 팩트로 연산하도록 아키텍처 수술 완료.
+# 🚨 MODIFIED: [순수익 2.0% 절대 보장 타점 공식]
+# - get_decision 엔진 호출 시그니처에 fee_rate 파라미터 수신망을 추가합니다.
+# - 투트랙 자동 청산 로직 중 exit_target_price 연산 시 하드코딩된 1.02 곱연산을 폐기하고 주입된 수수료율 기반 순수익 2.0% 절대 타점 공식으로 전면 오버라이드하여 코어 타격 시그널의 무결성을 확보합니다.
 # ==========================================================
 import logging
 import datetime
@@ -209,7 +212,8 @@ class VAvwapHybridPlugin:
             logging.error(f"🚨 [V_AVWAP] YF 기초자산 매크로 컨텍스트 추출 실패 ({base_ticker}): {e}")
             return None
 
-    def get_decision(self, base_ticker=None, exec_ticker=None, base_curr_p=0.0, exec_curr_p=0.0, base_day_open=0.0, avwap_avg_price=0.0, avwap_qty=0, avwap_alloc_cash=0.0, context_data=None, df_1min_base=None, now_est=None, avwap_state=None, regime_data=None, is_apex_on=True, is_simulation=False, **kwargs):
+    # 🚨 MODIFIED: [순수익 2.0% 절대 보장 타점 공식] fee_rate 파라미터 수신망 추가
+    def get_decision(self, base_ticker=None, exec_ticker=None, base_curr_p=0.0, exec_curr_p=0.0, base_day_open=0.0, avwap_avg_price=0.0, avwap_qty=0, avwap_alloc_cash=0.0, context_data=None, df_1min_base=None, now_est=None, avwap_state=None, regime_data=None, is_apex_on=True, is_simulation=False, fee_rate=0.25, **kwargs):
         # NEW: [V7.4 스코프 상단 선언 원칙 준수] UnboundLocalError 차단을 위한 초기값 명시
         avwap_qty = avwap_qty if avwap_qty != 0 else kwargs.get('current_qty', 0)
         exec_curr_p = exec_curr_p if exec_curr_p > 0 else kwargs.get('exec_curr_p', 0.0)
@@ -269,8 +273,9 @@ class VAvwapHybridPlugin:
                     self.save_state(exec_ticker, now_est, persistent_state)
                 return _build_res('SELL', '동적_덤핑_타임라인_도달_전량_시장가_덤핑', qty=avwap_qty, target_price=exec_curr_p)
 
-            # 🚨 [V7.4 룰 7] 매수 체결 즉시, 평단가 대비 +2.0% 지정가 매도(Limit Order) 전송
-            exit_target_price = round(safe_avg * 1.02, 2)
+            # 🚨 MODIFIED: [순수익 2.0% 절대 보장 타점 공식] 하드코딩된 1.02를 폐기하고 주입된 수수료율 기반 순수익 2.0% 절대 타점 공식으로 전면 오버라이드
+            # 🚨 [V7.4 룰 7] 매수 체결 즉시, 평단가 대비 +2.0% (수수료 보전) 지정가 매도(Limit Order) 전송
+            exit_target_price = round(safe_avg * (1.02 + (fee_rate / 100.0) * 2), 2)
             if exec_curr_p >= exit_target_price:
                 return _build_res('SELL', '목표가(+2.0%)_도달_익절_격발', qty=avwap_qty, target_price=exit_target_price)
 

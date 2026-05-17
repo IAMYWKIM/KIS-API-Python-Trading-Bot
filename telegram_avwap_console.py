@@ -18,6 +18,9 @@
 # - 0주 강제 동기화 락온 뷰포트는 기존 절대 헌법에 따라 유지 보존.
 # 🚨 MODIFIED: [V76.01 ATR5 동적 하드스탑 렌더링 영구 소각 및 투트랙 엑시트 UI 동기화]
 # - V7.4 암살자 투트랙 엑시트 룰에 정면 위배되는 ATR5 하드스탑(손절) 관련 UI 잔재 텍스트 스캔 및 클리닝 완료.
+# 🚨 MODIFIED: [순수익 2.0% 절대 보장 타점 공식]
+# - 관제탑 레이더 UI에 렌더링되는 익절목표 가격인 trap_price 연산식에 수수료 공식을 동기화
+# - 섀도우 스캔을 위한 get_decision 호출 시 fee_rate 파라미터 결속하여 시각적 환각 소각
 # ==========================================================
 import logging
 import datetime
@@ -130,8 +133,11 @@ class AvwapConsolePlugin:
             msg += f"▫️ 전일종가: <b>${prev_c:.2f}</b> (ATR5: {atr5:.2f}%)\n"
             msg += f"▫️ 현재가: <b>${curr_p:.2f}</b>\n"
 
+            # 🚨 MODIFIED: [순수익 2.0% 절대 보장 타점 공식] 수수료율 팩트 스캔 및 다이렉트 수혈 락온
+            fee_rate = await asyncio.to_thread(self.cfg.get_fee, t)
+
             if avwap_qty > 0:
-                trap_price = round(avwap_avg * 1.02, 2)
+                trap_price = round(avwap_avg * (1.02 + (fee_rate / 100.0) * 2), 2)
                 msg += f"▫️ 매수평단: <b>${avwap_avg:.2f}</b> ({avwap_qty}주)\n"
                 msg += f"▫️ 익절목표(+2.0%): <b>${trap_price:.2f}</b>\n"
 
@@ -167,6 +173,9 @@ class AvwapConsolePlugin:
                         "whipsaw_checked": tracking_cache.get(f"AVWAP_WHIPSAW_CHECKED_{t}", False),
                         "dump_jitter_sec": tracking_cache.get(f"AVWAP_DUMP_JITTER_{t}", 0)
                     }
+                    
+                    is_apex_on = await asyncio.to_thread(getattr(self.cfg, 'get_avwap_apex_mode', lambda x: True), t)
+                    # 🚨 MODIFIED: [순수익 2.0% 절대 보장 타점 공식] fee_rate 파라미터 결속하여 시각적 환각(Split-Brain) 영구 소각
                     decision = await asyncio.wait_for(
                         asyncio.to_thread(
                             self.strategy.v_avwap_plugin.get_decision,
@@ -174,8 +183,10 @@ class AvwapConsolePlugin:
                             base_curr_p=curr_p, exec_curr_p=curr_p,
                             df_1min_base=None, avwap_qty=avwap_qty,
                             now_est=now_est, avwap_state=avwap_state_dict,
-                            prev_close=prev_c, atr5=atr5,
-                            is_simulation=True
+                            context_data=avwap_ctx,
+                            is_apex_on=is_apex_on,
+                            is_simulation=True,
+                            fee_rate=fee_rate
                         ),
                         timeout=10.0
                     )
