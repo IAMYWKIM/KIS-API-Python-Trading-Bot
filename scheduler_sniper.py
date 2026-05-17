@@ -2,7 +2,7 @@
 # FILE: scheduler_sniper.py
 # ==========================================================
 # MODIFIED: [V53.06 전투 사령부 외부 통신 10초 타임아웃 및 폴백 방어막 이식]
-# MODIFIED: [V53.08 들여쓰기(Indentation) 붕괴 런타임 즉사 버그 완벽 수술]
+# 🚨 MODIFIED: [V53.08 들여쓰기(Indentation) 붕괴 런타임 즉사 버그 완벽 수술]
 # 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
 # 제1헌법: queue_ledger.get_queue 등 모든 파일 I/O 및 락 점유 메서드는 무조건 asyncio.to_thread로 래핑하여 이벤트 루프 교착(Deadlock)을 원천 차단함.
 # MODIFIED: [V44.47 이벤트 루프 데드락 영구 소각] 동기식 블로킹 호출 전면 비동기 래핑 완료.
@@ -42,6 +42,7 @@
 # - 수수료 보전 타점 공식을 100% 소각하고 순수 1.02 고정 곱연산으로 전면 롤백 완료.
 # 🚨 MODIFIED: [V77.01 데이터 기아 방어 및 런타임 무결성 팩트 수술]
 # - get_avwap_decision 호출부 파라미터에 df_1min_exec=df_1min_t를 명시적으로 주입하여 1분봉 팩트 데이터 다이렉트 수혈.
+# - AVWAP 딥매수 성공 후 메시지 렌더링 블록 및 미체결 스캔 블록의 IndentationError(들여쓰기) 붕괴 전면 팩트 교정
 # ==========================================================
 import logging
 import datetime
@@ -278,7 +279,6 @@ async def scheduled_sniper_monitor(context):
                     df_1min_base = None
                     try:
                         prev_c_task = asyncio.to_thread(broker.get_previous_close, t)
-                        # 🚨 MODIFIED: [V77.00 V7.1 백테스트 절대 동기화 롤백] ATR5 대신 순수 진폭 Amp 5MA 엔진 수혈
                         amp_task = asyncio.to_thread(broker.get_amp_5d_data, t)
                         df_t_task = asyncio.to_thread(broker.get_1min_candles_df, t)
                         df_base_task = asyncio.to_thread(broker.get_1min_candles_df, target_base)
@@ -392,7 +392,6 @@ async def scheduled_sniper_monitor(context):
                                     my_order = next((ox for ox in safe_unfilled if ox.get('odno') == odno), None)
                                     if my_order:
                                         ccld_qty = int(float(my_order.get('tot_ccld_qty') or 0))
-                                        # 🚨 NEW: [Operation No More Ghost] 들여쓰기 붕괴 교정
                                         if ccld_qty >= qty:
                                             break
                                     else:
@@ -407,12 +406,12 @@ async def scheduled_sniper_monitor(context):
                                         logging.warning(f"⚠️ [{t}] AVWAP 매수 잔여 취소 실패: {e_cancel}")
                                   
                                 if ccld_qty > 0:
-                                     avwap_free_cash -= (ccld_qty * price)
-                                      
+                                    avwap_free_cash -= (ccld_qty * price)
+                                    
                                     msg = f"⚔️ <b>[AVWAP] 암살자 V7.4 딥매수 타격 성공!</b>\n▫️ 타겟: {t}\n▫️ 타점: ${exec_price:.2f}\n▫️ 팩트 체결수량: {ccld_qty}주 (목표 {qty}주)\n▫️ 사유: {reason}"
                                     if ccld_qty < qty:
-                                         msg += f"\n▫️ 미체결 {qty - ccld_qty}주는 안전을 위해 즉각 취소(Nuke)되었습니다."
-                                          
+                                        msg += f"\n▫️ 미체결 {qty - ccld_qty}주는 안전을 위해 즉각 취소(Nuke)되었습니다."
+                                        
                                     old_qty = tracking_cache.get(f"AVWAP_QTY_{t}", 0)
                                     old_avg = tracking_cache.get(f"AVWAP_AVG_{t}", 0.0)
                                     new_qty = old_qty + ccld_qty
@@ -425,7 +424,6 @@ async def scheduled_sniper_monitor(context):
                                     tracking_cache[f"AVWAP_QTY_{t}"] = new_qty
                                     tracking_cache[f"AVWAP_AVG_{t}"] = round(new_avg, 4)
                 
-                                    # 🚨 MODIFIED: [V77.00 V7.1 백테스트 절대 동기화 롤백] 수수료 보전 공식 소각 및 순수 1.02 고정 곱연산 원복
                                     trap_price = round(new_avg * 1.02, 2)
                                     trap_res = await asyncio.to_thread(broker.send_order, t, "SELL", ccld_qty, trap_price, "LIMIT")
                                     trap_odno = trap_res.get('odno', '') if isinstance(trap_res, dict) else ''
@@ -460,7 +458,6 @@ async def scheduled_sniper_monitor(context):
                                     }
                                     await asyncio.to_thread(strategy.v_avwap_plugin.save_state, t, now_est, state_data)
                             else:
-                                # 🚨 NEW: [Operation No More Ghost] KIS 리젝 타전망 이식
                                 err_msg = res.get('msg1', '응답 없음') if res else '통신 장애'
                                 logging.error(f"🚨 [{t}] AVWAP 딥매수 KIS 서버 거절: {err_msg}")
                                 reject_msg = (
@@ -481,7 +478,6 @@ async def scheduled_sniper_monitor(context):
                             exec_price = 0.0
                             total_sold = 0
             
-                            # 🚨 NEW: [V7.4 Assassin Lock-on] 기장전된 익절 덫(Trap) 정밀 파기
                             trap_odno = tracking_cache.get(f"AVWAP_TRAP_ODNO_{t}", "")
                             if trap_odno:
                                 try:
@@ -490,7 +486,6 @@ async def scheduled_sniper_monitor(context):
                                 except Exception as e_cancel:
                                     logging.warning(f"⚠️ [{t}] AVWAP 덫 취소 에러: {e_cancel}")
                                      
-                            # 체결 원장 스캔으로 덫이 이미 체결되었는지 확인
                             today_est_str = now_est.strftime('%Y%m%d')
                             exec_hist = await asyncio.to_thread(broker.get_execution_history, t, today_est_str, today_est_str)
                             
@@ -521,7 +516,6 @@ async def scheduled_sniper_monitor(context):
                                         my_order = next((ox for ox in safe_unfilled if ox.get('odno') == odno), None)
                                         if my_order:
                                             ccld_qty = int(float(my_order.get('tot_ccld_qty') or 0))
-                                            # 🚨 NEW: [Operation No More Ghost] 들여쓰기 붕괴 교정
                                             if ccld_qty >= remaining_qty:
                                                 break
                                         else:
@@ -684,7 +678,6 @@ async def scheduled_sniper_monitor(context):
                         if has_unfilled:
                             continue
                         
-                        # 🚨 MODIFIED: [V75.01 슬리피지 가산 로직 소각 및 현재가 직결 요격 롤백]
                         try:
                              bid_price_val = await asyncio.wait_for(asyncio.to_thread(broker.get_ask_price, t), timeout=5.0)
                              ask_price = float(bid_price_val or 0.0)
@@ -705,7 +698,6 @@ async def scheduled_sniper_monitor(context):
                                  my_order = next((ox for ox in safe_unfilled if ox.get('odno') == odno), None)
                                  if my_order:
                                      ccld_qty = int(float(my_order.get('tot_ccld_qty') or 0))
-                                    # 🚨 NEW: [Operation No More Ghost] 들여쓰기 붕괴 교정 완료
                                      if ccld_qty >= qty:
                                         break
                                  else:
@@ -743,7 +735,6 @@ async def scheduled_sniper_monitor(context):
                                 msg = f"🚨 <b>[{t}] 스나이퍼 딥-매수(Intercept) 명중!</b>\n▫️ 타겟가: ${limit_p:.2f}\n▫️ 팩트 단가: ${display_price:.2f}\n▫️ 체결수량: {ccld_qty}주 (요청: {qty}주)\n▫️ 사유: {reason}\n▫️ 하방 방어망이 잠깁니다 (상방 독립 유지)."
                                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
                         else:
-                            # 🚨 NEW: [Operation No More Ghost] KIS 리젝 타전망 이식
                             err_msg = order_res.get('msg1', '응답 없음') if order_res else '통신 장애'
                             logging.error(f"🚨 [{t}] 스나이퍼 매수 KIS 서버 거절: {err_msg}")
                             reject_msg = (
@@ -795,7 +786,6 @@ async def scheduled_sniper_monitor(context):
                         if has_unfilled:
                             continue
       
-                        # 🚨 MODIFIED: [V75.01 매수 1호가 팩트 스캔 전진 배치 및 조건문 소각]
                         try:
                              bid_price_val = await asyncio.wait_for(asyncio.to_thread(broker.get_bid_price, t), timeout=5.0)
                              bid_price = float(bid_price_val or 0.0)
@@ -816,7 +806,6 @@ async def scheduled_sniper_monitor(context):
                                 my_order = next((ox for ox in safe_unfilled if ox.get('odno') == odno), None)
                                 if my_order:
                                     ccld_qty = int(float(my_order.get('tot_ccld_qty') or 0))
-                                    # 🚨 NEW: [Operation No More Ghost] 들여쓰기 붕괴 교정
                                     if ccld_qty >= qty:
                                         break
                                 else:
@@ -854,7 +843,6 @@ async def scheduled_sniper_monitor(context):
                                 msg = f"🦇 <b>[{t}] 스나이퍼 상방 기습({action}) 명중!</b>\n▫️ 타겟가: ${limit_p:.2f}\n▫️ 팩트 단가: ${display_price:.2f}\n▫️ 체결수량: {ccld_qty}주 (요청: {qty}주)\n▫️ 사유: {reason}\n▫️ 상방 감시망이 잠깁니다 (하방 독립 유지)."
                                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
                         else:
-                            # 🚨 NEW: [Operation No More Ghost] KIS 리젝 타전망 이식
                             err_msg = order_res.get('msg1', '응답 없음') if order_res else '통신 장애'
                             logging.error(f"🚨 [{t}] 스나이퍼 상방 기습 서버 거절: {err_msg}")
                             reject_msg = (
