@@ -15,6 +15,9 @@
 # 🚨 MODIFIED: [V76.02 타점 역전 패러독스 하드 마진 락온 (매니저 제안 수혈)]
 # - 프리마켓 진폭이 극도로 좁아 T_H < T_L 역전이 발생할 경우, 
 #   T_L을 T_H보다 무조건 $0.01 낮게 강제 캡핑(Clamping)하여 수학적 모순 원천 차단.
+# 🚨 MODIFIED: [V76.03 암살자 덤핑 지터(Jitter) 코어 연산 디커플링 해체 및 동적 타임라인 락온]
+# - 15:20 EST 고정 하드코딩을 전면 소각하고 상태 객체의 dump_jitter_sec를 수혈받아
+#   동적 덤핑 시간(time_dynamic_dump)을 팩트로 연산하도록 아키텍처 수술 완료.
 # ==========================================================
 import logging
 import datetime
@@ -220,10 +223,15 @@ class VAvwapHybridPlugin:
         
         time_0925 = datetime.time(9, 25)
         time_0930 = datetime.time(9, 30)
-        time_1520 = datetime.time(15, 20)
 
         persistent_state = self.load_state(exec_ticker, now_est)
         is_shutdown = persistent_state.get('shutdown', False)
+        
+        # 🚨 MODIFIED: [V76.03 암살자 덤핑 지터 동적 타임라인 락온]
+        dump_jitter_sec = persistent_state.get('dump_jitter_sec', 0)
+        base_dump_dt = datetime.datetime.combine(now_est.date(), datetime.time(15, 20)).replace(tzinfo=ZoneInfo('America/New_York'))
+        dynamic_dump_dt = base_dump_dt - datetime.timedelta(seconds=dump_jitter_sec)
+        time_dynamic_dump = dynamic_dump_dt.time()
         
         pm_h = persistent_state.get('PM_H', 0.0)
         pm_l = persistent_state.get('PM_L', 0.0)
@@ -254,22 +262,19 @@ class VAvwapHybridPlugin:
             if safe_avg <= 0:
                 return _build_res('SELL', 'CORRUPT_PRICE_EMERGENCY_DUMP', qty=avwap_qty, target_price=exec_curr_p)
 
-            # MODIFIED: [V76.01 ATR5 동적 하드스탑 영구 소각 (투트랙 엑시트 원칙 사수)]
-
-            # 🚨 [V7.4 룰 7] 체결되지 않고 15:20 EST 도달 시 미체결 지정가 매도 취소 후 즉시 전량 시장가 덤핑
-            if curr_time >= time_1520:
+            # 🚨 [V7.4 룰 7] 체결되지 않고 동적 덤핑 시간 도달 시 미체결 지정가 매도 취소 후 즉시 전량 시장가 덤핑
+            if curr_time >= time_dynamic_dump:
                 persistent_state["shutdown"] = True
                 if not is_simulation:
                     self.save_state(exec_ticker, now_est, persistent_state)
-                return _build_res('SELL', '15:20_도달_전량_시장가_덤핑', qty=avwap_qty, target_price=exec_curr_p)
+                return _build_res('SELL', '동적_덤핑_타임라인_도달_전량_시장가_덤핑', qty=avwap_qty, target_price=exec_curr_p)
 
             # 🚨 [V7.4 룰 7] 매수 체결 즉시, 평단가 대비 +2.0% 지정가 매도(Limit Order) 전송
-            # scheduler_sniper가 SELL action과 target_price를 받으면 지정가를 즉시 꽂아버립니다.
             exit_target_price = round(safe_avg * 1.02, 2)
             if exec_curr_p >= exit_target_price:
                 return _build_res('SELL', '목표가(+2.0%)_도달_익절_격발', qty=avwap_qty, target_price=exit_target_price)
 
-            return _build_res('HOLD', '보유중_익절(+2.0%)_및_15:20덤핑_감시중')
+            return _build_res('HOLD', '보유중_익절(+2.0%)_및_동적덤핑_감시중')
 
         # ---------------------------------------------------------
         # 2. 매수 (포지션 0주 일 때) 로직 - V7.4 암살자 스캔 및 격발
@@ -277,11 +282,12 @@ class VAvwapHybridPlugin:
         if is_shutdown:
             return _build_res('WAIT', '당일영구동결_상태(신규진입금지)')
 
-        if curr_time >= time_1520:
+        # 🚨 [V7.4 룰 7] 동적 덤핑 시간 도달 시 신규 진입 원천 차단
+        if curr_time >= time_dynamic_dump:
             persistent_state["shutdown"] = True
             if not is_simulation:
                 self.save_state(exec_ticker, now_est, persistent_state)
-            return _build_res('SHUTDOWN', '15:20_도달_신규진입_영구동결')
+            return _build_res('SHUTDOWN', '동적_덤핑_타임라인_도달_신규진입_영구동결')
 
         if prev_c <= 0 or atr5 <= 0:
             return _build_res('WAIT', '진입_평가용_필수데이터_결측_대기')
