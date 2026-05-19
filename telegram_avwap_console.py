@@ -27,6 +27,7 @@
 # 🚨 MODIFIED: [V77.18 프리마켓 시계열 경계 누수 완벽 수술 및 T_H/T_L 절대 앵커 락온 (정규장 데이터 유입 원천 차단)]
 # 🚨 MODIFIED: [V77.19 관제탑 섀도우 연산 KIS 실잔고 파이프라인 결속 및 예산부족(0주) 환각 영구 소각]
 # 🚨 MODIFIED: [V77.20 조건 1,2,3 대통합] 16:00 EST 관제탑 연장, REG_H/L 렌더링 추가, T_L 셧다운 소각 팩트 교정 완료
+# 🚨 MODIFIED: [V77.21 UI 팩트 교정] T_L 활성 텍스트 환각 소각 및 단순 참조용 명시
 # ==========================================================
 import logging
 import datetime
@@ -79,7 +80,7 @@ class AvwapConsolePlugin:
             logging.error(f"🚨 AVWAP 관제탑 KIS 예산 스캔 에러: {e}")
             available_cash = 0.0
         
-        msg = f"🔫 <b>[ 차세대 AVWAP V77.20 암살자 관제탑 ]</b>\n{header_status}\n\n"
+        msg = f"🔫 <b>[ 차세대 AVWAP V77.21 암살자 관제탑 ]</b>\n{header_status}\n\n"
         keyboard = []
 
         for t in active_avwap:
@@ -251,8 +252,8 @@ class AvwapConsolePlugin:
             msg += f"▫️ 정규장 최저 (REG_L): <b>${reg_l:.2f}</b>\n"
             msg += f"▫️ Amp5 오프셋 (50%): <b>${offset:.2f}</b>\n"
             msg += f"▫️ 상승 돌파 목표 (T_H): <b>${t_h:.2f}</b> (지정가 덫 장전선)\n"
-            # MODIFIED: [조건 3] 하락 셧다운 기준 문구 철거 및 참조용 지지선으로 팩트 교정
-            msg += f"▫️ 하락 지지 기준 (T_L): <b>${t_l:.2f}</b> (09:30 이후 활성)\n\n"
+            # NEW: [V77.21 UI 팩트 교정] T_L 활성 텍스트 환각 소각 및 단순 참조용 명시
+            msg += f"▫️ 하락 지지 기준 (T_L): <b>${t_l:.2f}</b> (단순 참조용)\n\n"
 
             msg += f"📊 <b>[ 실시간 현재가 스프레드 ]</b>\n"
             msg += f"▫️ 전일종가: <b>${prev_c:.2f}</b> (Amp5 진폭: {amp5*100:.2f}%)\n"
