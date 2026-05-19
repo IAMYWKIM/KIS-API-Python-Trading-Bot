@@ -17,9 +17,7 @@
 # 🚨 MODIFIED: [V77.01 데이터 기아 방어 및 런타임 무결성 팩트 수술]
 # 🚨 NEW: [V77.02 프리마켓 관제탑 데이터 기아 및 런타임 붕괴 완벽 수술]
 # 🚨 MODIFIED: [V77.04 Operation Dawn Sniper - 프리장 선제 타격 및 50% 팩트 오프셋 이식 완비]
-# - 09:25 타겟 락온(pm_locked) 안내문 및 고정 관념 UI 텍스트 전면 영구 소각.
-# - 오프셋 진폭 연산 안내를 40%에서 '50% (Amp_5d * 0.50)'로 텍스트 및 수식 100% 팩트 교정.
-# - 프리장(04:00 EST)부터 매분 실시간 고가/저가(Close 기준) 동적 트레일링 궤적을 뷰포트에 실시간 연동.
+# 🚨 MODIFIED: [V77.05 SyntaxError 핫픽스] unterminated string literal 런타임 즉사 원천 차단 (개행 문자 \n 100% 교정 완료)
 # ==========================================================
 import logging
 import datetime
@@ -56,16 +54,12 @@ class AvwapConsolePlugin:
         avwap_tickers = [t for t in active_tickers if t == "SOXL"]
         
         if not avwap_tickers:
-            return "⚠️ <b>[AVWAP 암살자 오프라인]</b>
-▫️ AVWAP 지원 종목이 없습니다.", None
+            return "⚠️ <b>[AVWAP 암살자 오프라인]</b>\n▫️ AVWAP 지원 종목이 없습니다.", None
            
         active_avwap = avwap_tickers
         tracking_cache = app_data.get('sniper_tracking', {})
         
-        msg = f"🔫 <b>[ 차세대 AVWAP V7.4 암살자 관제탑 ]</b>
-{header_status}
-
-"
+        msg = f"🔫 <b>[ 차세대 AVWAP V7.4 암살자 관제탑 ]</b>\n{header_status}\n\n"
         keyboard = []
 
         for t in active_avwap:
@@ -159,11 +153,11 @@ class AvwapConsolePlugin:
                         "T_H": t_h,
                         "T_L": t_l,
                         "offset": offset,
-                        "pm_locked": False, # [V77.04] pm_locked 로직 영구 소각 처리 무결성 연동
+                        "pm_locked": False, # pm_locked 로직 영구 소각 처리 무결성 연동
                         "dump_jitter_sec": tracking_cache.get(f"AVWAP_DUMP_JITTER_{t}", 0)
                     }
                     
-                    # [V77.02/V77.04] 런타임 수술 완료: 다이렉트 팩트 직접 주입
+                    # 런타임 수술 완료: 다이렉트 팩트 직접 주입
                     decision = await asyncio.wait_for(
                         asyncio.to_thread(
                             self.strategy.v_avwap_plugin.get_decision,
@@ -209,41 +203,26 @@ class AvwapConsolePlugin:
                 except Exception as e:
                     logging.debug(f"AVWAP 상태 텍스트 추출 에러: {e}")
 
-            # 4. Message Assembly (50% 오프셋 및 동적 궤적 팩트 구성)
-            msg += f"🎯 <b>[ {t} (롱) 작전반 - {active_str} ]</b>
-"
-            msg += f"▫️ 프리장 최고 (PM_H): <b>${pm_h:.2f}</b> (종가 트레일링)
-"
-            msg += f"▫️ 프리장 최저 (PM_L): <b>${pm_l:.2f}</b> (종가 트레일링)
-"
-            msg += f"▫️ Amp5 오프셋 (50%): <b>${offset:.2f}</b>
-"
-            msg += f"▫️ 상승 돌파 목표 (T_H): <b>${t_h:.2f}</b> (선제타격 타점)
-"
-            msg += f"▫️ 하락 셧다운 기준 (T_L): <b>${t_l:.2f}</b> (09:30 이후 활성)
+            # 4. Message Assembly (50% 오프셋 및 동적 궤적 팩트 구성, 줄바꿈 \n 교정 완료)
+            msg += f"🎯 <b>[ {t} (롱) 작전반 - {active_str} ]</b>\n"
+            msg += f"▫️ 프리장 최고 (PM_H): <b>${pm_h:.2f}</b> (종가 트레일링)\n"
+            msg += f"▫️ 프리장 최저 (PM_L): <b>${pm_l:.2f}</b> (종가 트레일링)\n"
+            msg += f"▫️ Amp5 오프셋 (50%): <b>${offset:.2f}</b>\n"
+            msg += f"▫️ 상승 돌파 목표 (T_H): <b>${t_h:.2f}</b> (선제타격 타점)\n"
+            msg += f"▫️ 하락 셧다운 기준 (T_L): <b>${t_l:.2f}</b> (09:30 이후 활성)\n\n"
 
-"
-
-            msg += f"📊 <b>[ 실시간 현재가 스프레드 ]</b>
-"
-            msg += f"▫️ 전일종가: <b>${prev_c:.2f}</b> (Amp5 진폭: {amp5*100:.2f}%)
-"
-            msg += f"▫️ 현재가격: <b>${curr_p:.2f}</b>
-"
+            msg += f"📊 <b>[ 실시간 현재가 스프레드 ]</b>\n"
+            msg += f"▫️ 전일종가: <b>${prev_c:.2f}</b> (Amp5 진폭: {amp5*100:.2f}%)\n"
+            msg += f"▫️ 현재가격: <b>${curr_p:.2f}</b>\n"
 
             # [V77.01] 순수 복리 1.02 곱연산 무결성 쉴드
             if avwap_qty > 0:
                 trap_price = round(avwap_avg * 1.02, 2)
-                msg += f"▫️ 매수평단: <b>${avwap_avg:.2f}</b> ({avwap_qty}주)
-"
-                msg += f"▫️ 익절목표(+2.0%): <b>${trap_price:.2f}</b>
-"
+                msg += f"▫️ 매수평단: <b>${avwap_avg:.2f}</b> ({avwap_qty}주)\n"
+                msg += f"▫️ 익절목표(+2.0%): <b>${trap_price:.2f}</b>\n"
 
-            msg += f"
-🚨 <b>[ 작전 수행 현황 ]</b>
-"
-            msg += f"▫️ 현재상태: <b>{status_txt}</b>
-"
+            msg += f"\n🚨 <b>[ 작전 수행 현황 ]</b>\n"
+            msg += f"▫️ 현재상태: <b>{status_txt}</b>\n"
 
             # 5. 0주 강제 동기화 락온 뷰포트 보존 (방탄 헌법 사수)
             if avwap_qty > 0:
@@ -254,9 +233,6 @@ class AvwapConsolePlugin:
             InlineKeyboardButton("🔙 닫기", callback_data="RESET:CANCEL")
         ])
 
-        msg += f"
-
-⏱️ <i>마지막 레이더 스캔: {now_est.strftime('%Y-%m-%d %H:%M:%S')} (EST)</i>
-"
+        msg += f"\n\n⏱️ <i>마지막 레이더 스캔: {now_est.strftime('%Y-%m-%d %H:%M:%S')} (EST)</i>\n"
 
         return msg, InlineKeyboardMarkup(keyboard)
