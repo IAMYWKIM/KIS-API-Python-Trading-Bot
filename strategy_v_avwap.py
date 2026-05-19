@@ -15,11 +15,8 @@
 # 🚨 NEW: [V77.02 프리마켓 관제탑 데이터 기아 및 런타임 붕괴 완벽 수술]
 # 🚨 MODIFIED: [V77.03 갭상승 휩소 원천 차단 및 Strict Touch 절대 락온]
 # 🚨 NEW: [V77.04 Operation Dawn Sniper - 프리장 선제 타격 및 50% 팩트 오프셋 롤백]
-# - 타임 패러독스 원천 차단: 오직 1분봉 '종가(close)' 기반 T_H, T_L 실시간 갱신(Trailing)
-# - 진폭 안전 마진(Offset) 50% 확장
-# - pm_locked 방어막 영구 소각 및 04:00 EST 선제 매수 궤도 개방
-# - 정규장(09:30 EST) 시작 이후 하락 셧다운(퇴근) 판독 지연 가동
-# - 일일 1회 격발 보장용 executed_buy 상태 래치 락온
+# 🚨 MODIFIED: [V77.06 3.0% 한계 돌파 팩트 롤백] 
+# - 백테스트 증명에 따른 익절 목표가 1.03 고정 곱연산(3.0%) 상향 락온
 # ==========================================================
 import logging
 import datetime
@@ -34,8 +31,8 @@ import tempfile
 
 class VAvwapHybridPlugin:
     def __init__(self):
-        # NEW: [V77.04 플러그인 닉네임 교체 - 프리장 선제 타격 모드]
-        self.plugin_name = "AVWAP_V77.04_DAWN_SNIPER"
+        # NEW: [V77.06 플러그인 닉네임 교체 - 3% 한계 돌파 모드]
+        self.plugin_name = "AVWAP_V77.06_DAWN_SNIPER_3PCT"
         self.leverage = 3.0       
 
     def _get_logical_date_str(self, now_est):
@@ -281,11 +278,12 @@ class VAvwapHybridPlugin:
                     self.save_state(exec_ticker, now_est, persistent_state)
                 return _build_res('SELL', '동적_덤핑_타임라인_도달_전량_시장가_덤핑', qty=avwap_qty, target_price=exec_curr_p)
 
-            exit_target_price = round(safe_avg * 1.02, 2)
+            # 🚨 MODIFIED: [V77.06] 2% -> 3% 한계 돌파 익절 상향 락온
+            exit_target_price = round(safe_avg * 1.03, 2)
             if exec_curr_p >= exit_target_price:
-                return _build_res('SELL', '목표가(+2.0%)_도달_순수모멘텀_익절_격발', qty=avwap_qty, target_price=exit_target_price)
+                return _build_res('SELL', '목표가(+3.0%)_도달_순수모멘텀_익절_격발', qty=avwap_qty, target_price=exit_target_price)
 
-            return _build_res('HOLD', '보유중_순수익절(+2.0%)_및_동적덤핑_감시중')
+            return _build_res('HOLD', '보유중_순수익절(+3.0%)_및_동적덤핑_감시중')
 
         # ---------------------------------------------------------
         # 2. 매수 (포지션 0주 일 때) 로직 - V77.04 프리장 선제 타격 엔진
@@ -302,11 +300,11 @@ class VAvwapHybridPlugin:
         if prev_c <= 0 or amp5 <= 0:
             return _build_res('WAIT', '진입_평가용_필수데이터_결측_대기')
             
-        # MODIFIED: [V77.04] 일일 1회 격발 (1-Shot 1-Kill) 절대 룰 락온
+        # 일일 1회 격발 (1-Shot 1-Kill) 절대 룰 락온
         if executed_buy:
             return _build_res('WAIT', '일일_1회_타격_완료_매매_종료(Zero_Sum_대기)')
 
-        # 🚨 MODIFIED: [V77.04] 04:00 EST부터 스코프 전면 개방 및 종가(Close) 기반 동적 타겟 추적(Trailing)
+        # 04:00 EST부터 스코프 전면 개방 및 종가(Close) 기반 동적 타겟 추적(Trailing)
         if curr_time >= time_0400:
             df_1m = df_1min_exec
             if df_1m is not None and not df_1m.empty and 'time_est' in df_1m.columns:
@@ -319,7 +317,7 @@ class VAvwapHybridPlugin:
                     curr_pm_l = float(df_today['close'].min())
                     curr_c = float(df_today.iloc[-1]['close'])
                     
-                    # 🚨 MODIFIED: [V77.04] 진폭 안전 마진(Offset) 50% 팩트 상향 조정
+                    # 진폭 안전 마진(Offset) 50% 팩트 상향 조정
                     curr_offset = prev_c * amp5 * 0.50
                     curr_t_h = curr_pm_h - curr_offset
                     curr_t_l = curr_pm_l + curr_offset
@@ -342,10 +340,10 @@ class VAvwapHybridPlugin:
                     if not is_simulation:
                         self.save_state(exec_ticker, now_est, persistent_state)
                         
-                    # 🚨 MODIFIED: [V77.04] 종가(Close) 기준 하향 돌파(터치) 시 프리장/정규장 구분 없이 선제 격발
+                    # 종가(Close) 기준 하향 돌파(터치) 시 프리장/정규장 구분 없이 선제 격발
                     hit_h = (curr_c <= t_h)
                     
-                    # 🚨 MODIFIED: [V77.04] 하락장 셧다운(퇴근) 판독은 오직 정규장 개장(09:30 EST) 이후에만 가동
+                    # 하락장 셧다운(퇴근) 판독은 오직 정규장 개장(09:30 EST) 이후에만 가동
                     if curr_time >= time_0930:
                         hit_l = (curr_c <= t_l)
                         

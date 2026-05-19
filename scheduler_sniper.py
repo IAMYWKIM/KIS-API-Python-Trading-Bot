@@ -12,7 +12,7 @@
 # MODIFIED: [V46.03 예산 침범 패러독스 방어] KIS 증거금 룰에 의해 AVWAP이 본대 예산을 침범하는 것을 막기 위해 1.05배 하드 마진 락온 이식
 # MODIFIED: [V46.04 AVWAP 증거금 침식 방어] 15:27 해제 조건 소각 및 마진 1.20배 상향 락온
 # MODIFIED: [V46.05 YF API 무한 호출 병목 소각 및 타임아웃 연장] Lock Starvation 방어
-# MODIFIED: [V46.06 기초자산 고/저가 스캔 배선 팩트 개통] 단판 승부 파라미터 누수 수술
+# MODIFIED: [V46.06 기초자산 고/저가 스캔 배선 팩트 개통] 단판 승부 파라 파라미터 누수 수술
 # MODIFIED: [V47.00 AVWAP 오버나이트 홀딩 락온] 일일 누적 매수/매도량 팩트 수혈 파이프라인 이식 (디커플링 대비)
 # MODIFIED: [V47.00 하이킨아시 듀얼 모멘텀] 본대 예산 보호막 무력화 0.0 및 암살자 예산 50% 강제 락온
 # MODIFIED: [V47.00 하이킨아시 듀얼 모멘텀] 옴니 매트릭스 락다운 블록 바이패스 처리(04:00 EST 개방)
@@ -42,6 +42,7 @@
 # 🚨 NEW: [V77.02 프리마켓 관제탑 데이터 기아 및 런타임 붕괴 완벽 수술]
 # 🚨 NEW: [V77.04 Operation Dawn Sniper - 프리장 선제 타격 롤백]
 # 🚨 MODIFIED: [V77.05 데드코드 영구 소각] pm_locked 잔존 뇌관 100% 적출 완비 (제2 절대 헌법 사수)
+# 🚨 MODIFIED: [V77.06 3.0% 한계 돌파 팩트 롤백] 투트랙 엑시트 익절 덫 장전 2.0% -> 3.0% 전면 상향 동기화
 # ==========================================================
 import logging
 import datetime
@@ -204,8 +205,6 @@ async def scheduled_sniper_monitor(context):
                                 tracking_cache[f"AVWAP_T_L_{t}"] = saved_state.get('T_L', 0.0)
                                 tracking_cache[f"AVWAP_OFFSET_{t}"] = saved_state.get('offset', 0.0)
                                 
-                                # MODIFIED: [V77.05] pm_locked 캐시 로드 적출
-                                
                                 tracking_cache[f"AVWAP_WHIPSAW_MODE_{t}"] = saved_state.get('whipsaw_mode', False)
                                 tracking_cache[f"AVWAP_WHIPSAW_ARMED_{t}"] = saved_state.get('whipsaw_armed', False)
                                 tracking_cache[f"AVWAP_WHIPSAW_CHECKED_{t}"] = saved_state.get('whipsaw_checked', False)
@@ -329,7 +328,6 @@ async def scheduled_sniper_monitor(context):
                         "T_H": tracking_cache.get(f"AVWAP_T_H_{t}", 0.0),
                         "T_L": tracking_cache.get(f"AVWAP_T_L_{t}", 0.0),
                         "offset": tracking_cache.get(f"AVWAP_OFFSET_{t}", 0.0),
-                        # MODIFIED: [V77.05] pm_locked 페이로드 적출
                         "whipsaw_mode": tracking_cache.get(f"AVWAP_WHIPSAW_MODE_{t}", False),
                         "whipsaw_armed": tracking_cache.get(f"AVWAP_WHIPSAW_ARMED_{t}", False),
                         "whipsaw_checked": tracking_cache.get(f"AVWAP_WHIPSAW_CHECKED_{t}", False),
@@ -355,7 +353,6 @@ async def scheduled_sniper_monitor(context):
                     tracking_cache[f"AVWAP_T_H_{t}"] = decision.get("T_H", tracking_cache.get(f"AVWAP_T_H_{t}", 0.0))
                     tracking_cache[f"AVWAP_T_L_{t}"] = decision.get("T_L", tracking_cache.get(f"AVWAP_T_L_{t}", 0.0))
                     tracking_cache[f"AVWAP_OFFSET_{t}"] = decision.get("offset", tracking_cache.get(f"AVWAP_OFFSET_{t}", 0.0))
-                    # MODIFIED: [V77.05] decision.get("pm_locked") 수신 캐시 오버라이드 적출
          
                     if action == "BUY":
                         price = float(decision.get("target_price", decision.get("price", 0.0)))
@@ -432,13 +429,14 @@ async def scheduled_sniper_monitor(context):
                                     tracking_cache[f"AVWAP_QTY_{t}"] = new_qty
                                     tracking_cache[f"AVWAP_AVG_{t}"] = round(new_avg, 4)
                 
-                                    trap_price = round(new_avg * 1.02, 2)
+                                    # 🚨 MODIFIED: [V77.06] 3.0% 한계 돌파 익절 덫 장전 팩트 동기화
+                                    trap_price = round(new_avg * 1.03, 2)
                                     trap_res = await asyncio.to_thread(broker.send_order, t, "SELL", ccld_qty, trap_price, "LIMIT")
                                     trap_odno = trap_res.get('odno', '') if isinstance(trap_res, dict) else ''
                      
                                     if trap_res and trap_res.get('rt_cd') == '0' and trap_odno:
                                         tracking_cache[f"AVWAP_TRAP_ODNO_{t}"] = trap_odno
-                                        msg += f"\n\n🎯 <b>[투트랙 엑시트 장전]</b>\n▫️ +2.0% 수익 타점(<b>${trap_price:.2f}</b>)에 익절 덫을 즉시 자동 장전했습니다."
+                                        msg += f"\n\n🎯 <b>[투트랙 엑시트 장전]</b>\n▫️ +3.0% 수익 타점(<b>${trap_price:.2f}</b>)에 익절 덫을 즉시 자동 장전했습니다."
                                     else:
                                         trap_err = trap_res.get('msg1', '오류') if trap_res else '통신 장애'
                                         msg += f"\n\n⚠️ <b>[익절 덫 장전 실패]</b> KIS 서버 거절: {trap_err}"
@@ -460,7 +458,6 @@ async def scheduled_sniper_monitor(context):
                                         "T_H": tracking_cache.get(f"AVWAP_T_H_{t}", 0.0),
                                         "T_L": tracking_cache.get(f"AVWAP_T_L_{t}", 0.0),
                                         "offset": tracking_cache.get(f"AVWAP_OFFSET_{t}", 0.0),
-                                        # MODIFIED: [V77.05] pm_locked 페이로드 적출
                                         "whipsaw_mode": tracking_cache.get(f"AVWAP_WHIPSAW_MODE_{t}", False),
                                         "whipsaw_armed": tracking_cache.get(f"AVWAP_WHIPSAW_ARMED_{t}", False),
                                         "whipsaw_checked": tracking_cache.get(f"AVWAP_WHIPSAW_CHECKED_{t}", False),
@@ -606,7 +603,6 @@ async def scheduled_sniper_monitor(context):
                                     "T_H": tracking_cache.get(f"AVWAP_T_H_{t}", 0.0),
                                     "T_L": tracking_cache.get(f"AVWAP_T_L_{t}", 0.0),
                                     "offset": tracking_cache.get(f"AVWAP_OFFSET_{t}", 0.0),
-                                    # MODIFIED: [V77.05] pm_locked 페이로드 적출
                                     "whipsaw_mode": tracking_cache.get(f"AVWAP_WHIPSAW_MODE_{t}", False),
                                     "whipsaw_armed": tracking_cache.get(f"AVWAP_WHIPSAW_ARMED_{t}", False),
                                     "whipsaw_checked": tracking_cache.get(f"AVWAP_WHIPSAW_CHECKED_{t}", False),
@@ -635,7 +631,6 @@ async def scheduled_sniper_monitor(context):
                                 "T_H": tracking_cache.get(f"AVWAP_T_H_{t}", 0.0),
                                 "T_L": tracking_cache.get(f"AVWAP_T_L_{t}", 0.0),
                                 "offset": tracking_cache.get(f"AVWAP_OFFSET_{t}", 0.0),
-                                # MODIFIED: [V77.05] pm_locked 페이로드 적출
                                 "whipsaw_mode": tracking_cache.get(f"AVWAP_WHIPSAW_MODE_{t}", False),
                                 "whipsaw_armed": tracking_cache.get(f"AVWAP_WHIPSAW_ARMED_{t}", False),
                                 "whipsaw_checked": tracking_cache.get(f"AVWAP_WHIPSAW_CHECKED_{t}", False),

@@ -13,11 +13,11 @@
 # 🚨 MODIFIED: [V75.05 텍스트 다이어트 팩트 교정] 프리장/정규장 텍스트 전면 소각
 # 🚨 NEW: [V7.4 Assassin Lock-on] 관제탑 UI 렌더링 디커플링 해체
 # 🚨 MODIFIED: [V76.01 ATR5 동적 하드스탑 렌더링 영구 소각 및 투트랙 엑시트 UI 동기화]
-# 🚨 MODIFIED: [순수익 2.0% 절대 보장 타점 공식]
 # 🚨 MODIFIED: [V77.01 데이터 기아 방어 및 런타임 무결성 팩트 수술]
 # 🚨 NEW: [V77.02 프리마켓 관제탑 데이터 기아 및 런타임 붕괴 완벽 수술]
 # 🚨 MODIFIED: [V77.04 Operation Dawn Sniper - 프리장 선제 타격 및 50% 팩트 오프셋 이식 완비]
-# 🚨 MODIFIED: [V77.05 SyntaxError 핫픽스] unterminated string literal 런타임 즉사 원천 차단 (개행 문자 \n 100% 교정 완료)
+# 🚨 MODIFIED: [V77.05 SyntaxError 핫픽스] unterminated string literal 런타임 즉사 원천 차단
+# 🚨 MODIFIED: [V77.06 3.0% 한계 돌파 팩트 롤백] 익절 렌더링 2.0% -> 3.0% 전면 상향 동기화
 # ==========================================================
 import logging
 import datetime
@@ -134,7 +134,8 @@ class AvwapConsolePlugin:
                 status_txt = "🛑 당일 영구동결 (SHUTDOWN 퇴근)"
             elif avwap_qty > 0:
                 if trap_odno:
-                    status_txt = "🎯 딥매수 체결 완료 (+2.0% 익절 덫 작동 중)"
+                    # 🚨 MODIFIED: [V77.06] 3.0% 익절 덫 장전 텍스트 롤백
+                    status_txt = "🎯 딥매수 체결 완료 (+3.0% 익절 덫 작동 중)"
                 else:
                     status_txt = "🎯 딥매수 체결 완료 (15:20 청산 지터 대기)"
             else:
@@ -215,11 +216,11 @@ class AvwapConsolePlugin:
             msg += f"▫️ 전일종가: <b>${prev_c:.2f}</b> (Amp5 진폭: {amp5*100:.2f}%)\n"
             msg += f"▫️ 현재가격: <b>${curr_p:.2f}</b>\n"
 
-            # [V77.01] 순수 복리 1.02 곱연산 무결성 쉴드
+            # 🚨 MODIFIED: [V77.06] 순수 복리 1.03 곱연산 무결성 쉴드 및 렌더링 텍스트 교정
             if avwap_qty > 0:
-                trap_price = round(avwap_avg * 1.02, 2)
+                trap_price = round(avwap_avg * 1.03, 2)
                 msg += f"▫️ 매수평단: <b>${avwap_avg:.2f}</b> ({avwap_qty}주)\n"
-                msg += f"▫️ 익절목표(+2.0%): <b>${trap_price:.2f}</b>\n"
+                msg += f"▫️ 익절목표(+3.0%): <b>${trap_price:.2f}</b>\n"
 
             msg += f"\n🚨 <b>[ 작전 수행 현황 ]</b>\n"
             msg += f"▫️ 현재상태: <b>{status_txt}</b>\n"
