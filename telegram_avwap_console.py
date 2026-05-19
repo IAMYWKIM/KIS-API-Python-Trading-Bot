@@ -21,6 +21,7 @@
 # 🚨 NEW: [V77.08] 백테스트 절대 동기화 - 3단 상태 표시기 개조 및 시각적 노이즈 100% 영구 소각 에디션
 # 🚨 MODIFIED: [V77.11] 덫 장전 조건 교집합(AND) 락온 시각적 디커플링 해체
 # 🚨 MODIFIED: [V77.12] 순수 지정가(T_H) 절대 락온 타격 엔진 상태 렌더링 동기화
+# 🚨 MODIFIED: [V77.14] 3분봉 마일드 필터 튜닝 시각적 동기화 락온
 # ==========================================================
 import logging
 import datetime
@@ -133,8 +134,8 @@ class AvwapConsolePlugin:
             offset = tracking_cache.get(f"AVWAP_OFFSET_{t}", 0.0)
             
             # 3. Action Scan & 3단 상태 표시기 무결성 가동 (시각적 노이즈 100% 소각)
-            # MODIFIED: [V77.11] 덫 장전 대기 상태 텍스트 오버라이드
-            status_txt = "⚡ T_H 터치 & 5분 지지(5m_L > PM_L) 대기 중"
+            # MODIFIED: [V77.14] 덫 장전 대기 상태 텍스트 오버라이드 (3분봉 지지 팩트 교정)
+            status_txt = "⚡ T_H 터치 & 3분 지지(3m_L > PM_L) 대기 중"
             if not is_avwap_active:
                 status_txt = "⚪ 모드 비활성 (레이더 관측 중)"
             elif is_shutdown: 
@@ -210,9 +211,9 @@ class AvwapConsolePlugin:
                         elif action == 'SHUTDOWN':
                             status_txt = f"🛑 셧다운 격발 ({reason})"
                         elif reason:
-                            # MODIFIED: [V77.11] 코어 반환 대기 상태 오버라이드
+                            # MODIFIED: [V77.14] 코어 반환 대기 상태 오버라이드 (3분봉 지지 팩트 교정)
                             if "동적_순수타격선_도달_감시중" in reason or "스캔" in status_txt:
-                                status_txt = "⚡ T_H 터치 & 5분 지지(5m_L > PM_L) 대기 중"
+                                status_txt = "⚡ T_H 터치 & 3분 지지(3m_L > PM_L) 대기 중"
                             else:
                                 status_txt = f"⏳ 대기 ({reason})"
                                 

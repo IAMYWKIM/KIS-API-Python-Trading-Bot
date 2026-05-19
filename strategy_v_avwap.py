@@ -21,6 +21,7 @@
 # 🚨 MODIFIED: [V77.11] 덫 장전 조건 교집합(AND) 락온: T_H 하향 터치 AND 5분봉 저가 지지 동시 충족
 # 🚨 MODIFIED: [V77.12] 추격 매수(Negative Slippage) 원천 차단 및 순수 지정가(T_H) 절대 락온 타격 엔진 이식
 # 🚨 MODIFIED: [V77.13 수학적 락온 및 환각 수술] T_H 1센트 팽창 방어(Floor 처리) 및 0주 예산 산출 시 상태 변이(Split-Brain) 원천 차단
+# 🚨 MODIFIED: [V77.14 3분봉 마일드 필터 튜닝] V자 반등 정밀 요격을 위해 5분봉 지지선을 3분봉으로 단축 락온 및 텍스트 디커플링 영구 소각.
 # ==========================================================
 import logging
 import datetime
@@ -35,7 +36,7 @@ import tempfile
 
 class VAvwapHybridPlugin:
     def __init__(self):
-        self.plugin_name = "AVWAP_V77.13_LIMIT_TRAP_3PCT"
+        self.plugin_name = "AVWAP_V77.14_LIMIT_TRAP_3PCT"
         self.leverage = 3.0       
 
     def _get_logical_date_str(self, now_est):
@@ -226,7 +227,7 @@ class VAvwapHybridPlugin:
         curr_pm_l = 0.0
         curr_c = 0.0
         curr_l = 0.0
-        curr_5m_l = 0.0
+        curr_3m_l = 0.0 # MODIFIED: [V77.14] 3분봉 변수명 팩트 동기화
         curr_offset = 0.0
         curr_t_h = 0.0
         curr_t_l = 0.0
@@ -319,7 +320,8 @@ class VAvwapHybridPlugin:
                     
                     curr_l = float(df_today.iloc[-1]['low'])
                     
-                    curr_5m_l = float(df_today['low'].tail(5).min())
+                    # 🚨 MODIFIED: [V77.14 3분봉 마일드 필터] 5분봉(tail(5))에서 3분봉(tail(3))으로 단축 락온
+                    curr_3m_l = float(df_today['low'].tail(3).min())
                     
                     curr_offset = prev_c * amp5 * 0.50
                     
@@ -357,9 +359,9 @@ class VAvwapHybridPlugin:
                         logging.info(f"🛑 [V77.13 정규장 셧다운] 1분봉 종가({curr_c:.2f})가 T_L({curr_t_l:.2f}) 하향 돌파. 당일 매매 퇴근 및 덫 파기 완료!")
                         return _build_res('SHUTDOWN', '정규장_T_L하향돌파_당일매매퇴근')
                         
-                    # MODIFIED: [V77.13] 덫 장전 조건 교집합(AND) 락온, 변수 스코프 전진 배치 및 Split-Brain 방어
+                    # MODIFIED: [V77.14] 덫 장전 조건 교집합(AND) 락온, 변수 스코프 전진 배치 및 3분봉 마일드 필터 이식
                     if not limit_order_placed:
-                        if curr_l <= curr_t_h and curr_pm_l < curr_5m_l:
+                        if curr_l <= curr_t_h and curr_pm_l < curr_3m_l:
                             
                             # 🚨 제16 절대 헌법: 예산 분할 연산을 상태 변이 앞단으로 전진 배치
                             safe_budget = avwap_alloc_cash * 0.95
@@ -375,8 +377,9 @@ class VAvwapHybridPlugin:
                                 if not is_simulation:
                                     self.save_state(exec_ticker, now_est, persistent_state)
                                 
-                                logging.info(f"🚀 [V77.13 덫 장전] 1분봉 저가({curr_l:.2f}) T_H 관통 및 5분봉 지지(PM_L < 5m_L) 충족. 순수 지정가({placed_target_th:.2f}) 타격 락온!")
-                                return _build_res('PLACE_TRAP', 'T_H관통_AND_5분봉지지_순수지정가_덫장전', qty=buy_qty, target_price=placed_target_th)
+                                # MODIFIED: [V77.14] 로깅 및 사유 텍스트 3분봉으로 팩트 교정
+                                logging.info(f"🚀 [V77.14 덫 장전] 1분봉 저가({curr_l:.2f}) T_H 관통 및 3분봉 지지(PM_L < 3m_L) 충족. 순수 지정가({placed_target_th:.2f}) 타격 락온!")
+                                return _build_res('PLACE_TRAP', 'T_H관통_AND_3분봉지지_순수지정가_덫장전', qty=buy_qty, target_price=placed_target_th)
                             else:
                                 return _build_res('WAIT', '조건_충족이나_예산부족(0주)_덫장전_보류')
                     else:
