@@ -26,6 +26,7 @@
 # 🚨 MODIFIED: [V77.17 관제탑 용어 교정] 실시간 트레일링 팩트를 반영하여 '프리장 최고/최저' 명칭 수정
 # 🚨 MODIFIED: [V77.18 프리마켓 시계열 경계 누수 완벽 수술 및 T_H/T_L 절대 앵커 락온 (정규장 데이터 유입 원천 차단)]
 # 🚨 MODIFIED: [V77.19 관제탑 섀도우 연산 KIS 실잔고 파이프라인 결속 및 예산부족(0주) 환각 영구 소각]
+# 🚨 MODIFIED: [V77.20 조건 1,2,3 대통합] 16:00 EST 관제탑 연장, REG_H/L 렌더링 추가, T_L 셧다운 소각 팩트 교정 완료
 # ==========================================================
 import logging
 import datetime
@@ -55,7 +56,8 @@ class AvwapConsolePlugin:
         if curr_time < time_0930:
             header_status = "🌅 <b>[ 프리장 선제 타격 모드 (04:00~09:29 스캔 중) ]</b>"
         else:
-            header_status = "🔥 <b>[ 정규장 실시간 추격 모드 (V77.08 지정가 덫 요격) ]</b>"
+            # MODIFIED: [조건 1] 16:00 EST 정규장 마감까지 관제탑 마스킹 해제 및 렌더링 연장
+            header_status = "🔥 <b>[ 정규장 실시간 추격 모드 (09:30~16:00 감시 중) ]</b>"
         
         active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
         avwap_tickers = [t for t in active_tickers if t == "SOXL"]
@@ -77,7 +79,7 @@ class AvwapConsolePlugin:
             logging.error(f"🚨 AVWAP 관제탑 KIS 예산 스캔 에러: {e}")
             available_cash = 0.0
         
-        msg = f"🔫 <b>[ 차세대 AVWAP V77.08 암살자 관제탑 ]</b>\n{header_status}\n\n"
+        msg = f"🔫 <b>[ 차세대 AVWAP V77.20 암살자 관제탑 ]</b>\n{header_status}\n\n"
         keyboard = []
 
         for t in active_avwap:
@@ -103,7 +105,7 @@ class AvwapConsolePlugin:
                         tracking_cache[f"AVWAP_T_H_{t}"] = saved_state.get('T_H', 0.0)
                         tracking_cache[f"AVWAP_T_L_{t}"] = saved_state.get('T_L', 0.0)
                         tracking_cache[f"AVWAP_OFFSET_{t}"] = saved_state.get('offset', 0.0)
-           
+                        
                     tracking_cache[f"AVWAP_INIT_{t}"] = True
                 except Exception as e:
                     logging.error(f"🚨 AVWAP 관제탑 상태 로드 에러 ({t}): {e}")
@@ -133,6 +135,14 @@ class AvwapConsolePlugin:
             except Exception as e:
                 logging.debug(f"🚨 데이터 팩트 수혈 에러: {e}")
                 curr_p, prev_c, amp5, df_1m = 0.0, 0.0, 0.0, None
+
+            # NEW: [조건 2] 정규장 고저가(REG_H, REG_L) 렌더링 추가
+            reg_h, reg_l = 0.0, 0.0
+            if df_1m is not None and not df_1m.empty and 'time_est' in df_1m.columns:
+                df_reg = df_1m[(df_1m['time_est'] >= '093000') & (df_1m['time_est'] <= '155959')]
+                if not df_reg.empty:
+                    reg_h = float(df_reg['high'].astype(float).max())
+                    reg_l = float(df_reg['low'].astype(float).min())
 
             avwap_qty = tracking_cache.get(f"AVWAP_QTY_{t}", 0)
             avwap_avg = tracking_cache.get(f"AVWAP_AVG_{t}", 0.0)
@@ -177,7 +187,7 @@ class AvwapConsolePlugin:
                         base_ticker=t, exec_ticker=t,
                         base_curr_p=curr_p, exec_curr_p=curr_p,
                         df_1min_base=None, df_1min_exec=df_1m, avwap_qty=avwap_qty,
-                        avwap_alloc_cash=available_cash, # 🚨 MODIFIED: [V77.19] 예산 팩트 파이프라인 결속
+                        avwap_alloc_cash=available_cash, 
                         now_est=now_est, avwap_state=avwap_state_dict,
                         context_data=None,
                         is_simulation=True,
@@ -205,7 +215,8 @@ class AvwapConsolePlugin:
         
                     # 🚨 팩트 스캔 상태 텍스트 렌더링 락온
                     if is_shutdown: 
-                        status_txt = f"🛑 셧다운 격발 ({reason})" if reason and action == 'SHUTDOWN' else "🛑 당일 영구동결 (SHUTDOWN 퇴근)"
+                        # MODIFIED: [조건 1] 셧다운 후에도 퇴근(동결) 마스킹을 해제하고 16:00 EST까지 감시 유지 렌더링 반영
+                        status_txt = f"🛑 셧다운 격발 ({reason})" if reason and action == 'SHUTDOWN' else "🛑 당일 신규진입 동결 (16:00 EST까지 감시 유지)"
                     elif avwap_qty > 0:
                         if trap_odno:
                             status_txt = "🎯 체결 완료 ➡️ [3.0% 지정가 익절 덫] 가동 중"
@@ -235,9 +246,13 @@ class AvwapConsolePlugin:
             msg += f"🎯 <b>[ {t} (롱) 작전반 - {active_str} ]</b>\n"
             msg += f"▫️ 프리장 최고 (PM_H): <b>${pm_h:.2f}</b> (종가 트레일링)\n"
             msg += f"▫️ 프리장 최저 (PM_L): <b>${pm_l:.2f}</b> (종가 트레일링)\n"
+            # NEW: [조건 2] 정규장 고저가 (REG_H, REG_L) 직관적 팩트 렌더링 탑재
+            msg += f"▫️ 정규장 최고 (REG_H): <b>${reg_h:.2f}</b>\n"
+            msg += f"▫️ 정규장 최저 (REG_L): <b>${reg_l:.2f}</b>\n"
             msg += f"▫️ Amp5 오프셋 (50%): <b>${offset:.2f}</b>\n"
             msg += f"▫️ 상승 돌파 목표 (T_H): <b>${t_h:.2f}</b> (지정가 덫 장전선)\n"
-            msg += f"▫️ 하락 셧다운 기준 (T_L): <b>${t_l:.2f}</b> (09:30 이후 활성)\n\n"
+            # MODIFIED: [조건 3] 하락 셧다운 기준 문구 철거 및 참조용 지지선으로 팩트 교정
+            msg += f"▫️ 하락 지지 기준 (T_L): <b>${t_l:.2f}</b> (09:30 이후 활성)\n\n"
 
             msg += f"📊 <b>[ 실시간 현재가 스프레드 ]</b>\n"
             msg += f"▫️ 전일종가: <b>${prev_c:.2f}</b> (Amp5 진폭: {amp5*100:.2f}%)\n"

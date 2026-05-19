@@ -46,6 +46,7 @@
 # 🚨 NEW: [V77.08] 백테스트 절대 동기화 - T_H 지정가 덫 선제 장전, 슬리피지 소각 및 투트랙 익절 락온
 # 🚨 MODIFIED: [V77.11] 덫 장전 조건 교집합(AND) 락온 대응
 # 🚨 MODIFIED: [V77.12] 추격 매수(Negative Slippage) 원천 차단 및 순수 지정가(T_H) 절대 락온 타격 엔진 이식
+# 🚨 MODIFIED: [V77.20 조건 2 대통합] 정규장 고저가(REG_H, REG_L) 관제탑 렌더링 파이프라인 직결 락온 및 T_L 셧다운 소각 팩트 반영
 # ==========================================================
 import logging
 import datetime
@@ -229,7 +230,7 @@ async def scheduled_sniper_monitor(context):
                             if ctx_data:
                                  tracking_cache[f"AVWAP_CTX_{t}"] = ctx_data
                         except Exception: pass
-                        
+                         
                     if not ctx_data:
                         continue 
      
@@ -267,10 +268,10 @@ async def scheduled_sniper_monitor(context):
                             return 0.0
                
                         try:
-                            fetched_open_val = await asyncio.wait_for(asyncio.to_thread(_fetch_open, target_base), timeout=10.0)
-                            fetched_open = float(fetched_open_val or 0.0)
+                             fetched_open_val = await asyncio.wait_for(asyncio.to_thread(_fetch_open, target_base), timeout=10.0)
+                             fetched_open = float(fetched_open_val or 0.0)
                         except asyncio.TimeoutError:
-                            fetched_open = 0.0
+                             fetched_open = 0.0
                         except Exception:
                              fetched_open = 0.0
  
@@ -288,7 +289,7 @@ async def scheduled_sniper_monitor(context):
                         amp_task = asyncio.to_thread(broker.get_amp_5d_data, t)
                         df_t_task = asyncio.to_thread(broker.get_1min_candles_df, t)
                         df_base_task = asyncio.to_thread(broker.get_1min_candles_df, target_base)
-                   
+           
                         res_prev, res_amp, res_df_t, res_df_base = await asyncio.wait_for(
                             asyncio.gather(prev_c_task, amp_task, df_t_task, df_base_task, return_exceptions=True),
                             timeout=10.0
@@ -302,18 +303,24 @@ async def scheduled_sniper_monitor(context):
                         if df_1min_t is not None and not df_1min_t.empty:
                             df_t_copy = df_1min_t.copy()
                             if 'time_est' in df_t_copy.columns and is_regular_session:
-                                df_t_copy = df_t_copy[(df_t_copy['time_est'] >= '093000') & (df_t_copy['time_est'] <= '155900')]
+                                # MODIFIED: [V77.20 조건 2 대통합] 15:59:59까지 정밀 슬라이싱
+                                df_t_copy = df_t_copy[(df_t_copy['time_est'] >= '093000') & (df_t_copy['time_est'] <= '155959')]
                             if not df_t_copy.empty:
                                 day_high = float(df_t_copy['high'].astype(float).max())
                                 day_low = float(df_t_copy['low'].astype(float).min())
+                                
+                                # NEW: [V77.20 조건 2 대통합] 정규장 팩트 고저가(REG_H, REG_L) 관제탑 렌더링 파이프라인 직결 락온
+                                tracking_cache[f"AVWAP_REG_H_{t}"] = day_high
+                                tracking_cache[f"AVWAP_REG_L_{t}"] = day_low
             
                         if df_1min_base is not None and not df_1min_base.empty:
                             df_b_copy = df_1min_base.copy()
                             if 'time_est' in df_b_copy.columns and is_regular_session:
-                                df_b_copy = df_b_copy[(df_b_copy['time_est'] >= '093000') & (df_b_copy['time_est'] <= '155900')]
+                                # MODIFIED: [V77.20 조건 2 대통합] 15:59:59까지 정밀 슬라이싱
+                                df_b_copy = df_b_copy[(df_b_copy['time_est'] >= '093000') & (df_b_copy['time_est'] <= '155959')]
                             if not df_b_copy.empty:
-                                base_day_high = float(df_b_copy['high'].astype(float).max())
-                                base_day_low = float(df_b_copy['low'].astype(float).min())
+                                 base_day_high = float(df_b_copy['high'].astype(float).max())
+                                 base_day_low = float(df_b_copy['low'].astype(float).min())
                     except asyncio.TimeoutError:
                         logging.warning("⚠️ AVWAP 파라미터 병렬 스캔 타임아웃. 0.0 폴백.")
                     except Exception as e:
@@ -380,7 +387,7 @@ async def scheduled_sniper_monitor(context):
 
                             res = await asyncio.to_thread(broker.send_order, t, "BUY", qty, exec_price, "LIMIT")
                             odno = res.get('odno', '') if isinstance(res, dict) else ''
-            
+             
                             if res and res.get('rt_cd') == '0' and odno:
                                 tracking_cache[f"AVWAP_BUY_ODNO_{t}"] = odno
                                 msg = f"🎯 <b>[AVWAP] Dawn Sniper 순수 지정가 덫 선제 장전 절대 락온!</b>\n▫️ 타겟: {t}\n▫️ 고정 덫 단가: ${exec_price:.2f}\n▫️ 목표 수량: {qty}주\n▫️ 사유: {reason}"
@@ -508,7 +515,7 @@ async def scheduled_sniper_monitor(context):
                                     await asyncio.sleep(1.0)
                                 except Exception as e_cancel:
                                     logging.warning(f"⚠️ [{t}] AVWAP 익절 덫 취소 에러: {e_cancel}")
-                                     
+                                
                             today_est_str = now_est.strftime('%Y%m%d')
                             exec_hist = await asyncio.to_thread(broker.get_execution_history, t, today_est_str, today_est_str)
                             
@@ -573,7 +580,7 @@ async def scheduled_sniper_monitor(context):
                                 new_qty = max(0, old_qty - total_sold)
                                
                                 shutdown_flag = tracking_cache.get(f"AVWAP_SHUTDOWN_{t}", False)
-                                        
+                                
                                 if new_qty == 0:
                                     strikes = tracking_cache.get(f"AVWAP_STRIKES_{t}", 0) + 1
                                     tracking_cache[f"AVWAP_STRIKES_{t}"] = strikes
@@ -603,7 +610,7 @@ async def scheduled_sniper_monitor(context):
                                 tracking_cache[f"AVWAP_SHUTDOWN_{t}"] = shutdown_flag
                                 tracking_cache[f"AVWAP_QTY_{t}"] = new_qty
                                 tracking_cache[f"AVWAP_AVG_{t}"] = new_avg
-              
+       
                                 state_data = avwap_state_dict.copy()
                                 state_data.update({
                                     'bought': tracking_cache[f"AVWAP_BOUGHT_{t}"],
@@ -691,7 +698,7 @@ async def scheduled_sniper_monitor(context):
                                 has_unfilled = True
                                 break
                             await asyncio.sleep(2.0)
-                          
+                        
                         if has_unfilled:
                             continue
                         
@@ -745,7 +752,7 @@ async def scheduled_sniper_monitor(context):
                                         p = float(ex.get('ft_ccld_unpr3', '0'))
                                         if p > 0: return p
                                     return 0.0
-                                  
+                               
                                 actual_exec_price = get_actual_execution_price(exec_history, "02", odno)
                                 display_price = actual_exec_price if actual_exec_price > 0 else limit_p
             
@@ -771,7 +778,7 @@ async def scheduled_sniper_monitor(context):
                         if is_manual_vwap and hasattr(strategy, 'v14_vwap_plugin'):
                             snap = await asyncio.to_thread(strategy.v14_vwap_plugin.load_daily_snapshot, t)
                         elif hasattr(strategy, 'v14_plugin') and hasattr(strategy.v14_plugin, 'load_daily_snapshot'):
-                            snap = await asyncio.to_thread(strategy.v14_plugin.load_daily_snapshot, t)
+                             snap = await asyncio.to_thread(strategy.v14_plugin.load_daily_snapshot, t)
                     if snap:
                         is_zero_start_session = snap.get("is_zero_start", snap.get("total_q", snap.get("initial_qty", -1)) == 0)
                 except Exception:
@@ -781,7 +788,7 @@ async def scheduled_sniper_monitor(context):
                 is_upward_active = upward_mode and not is_rev and not sniper_sell_locked and master_switch != "DOWN_ONLY"
             
                 if is_zero_start_session:
-                    is_upward_active = False
+                     is_upward_active = False
 
                 if is_upward_active and action in ["SELL_QUARTER", "SELL_JACKPOT"]:
                     qty = res.get("qty", 0)
@@ -799,7 +806,7 @@ async def scheduled_sniper_monitor(context):
                                 has_unfilled = True
                                 break
                             await asyncio.sleep(2.0)
-                         
+                          
                         if has_unfilled:
                             continue
       
@@ -828,19 +835,19 @@ async def scheduled_sniper_monitor(context):
                                 else:
                                     ccld_qty = qty
                                     break
-                    
+                     
                             if ccld_qty < qty:
                                  try:
-                                    await asyncio.to_thread(broker.cancel_order, t, odno)
-                                    await asyncio.sleep(1.0)
+                                     await asyncio.to_thread(broker.cancel_order, t, odno)
+                                     await asyncio.sleep(1.0)
                                  except: pass
 
                             if ccld_qty > 0:
                                 if hasattr(cfg, 'set_sniper_sell_locked'):
                                     await asyncio.to_thread(cfg.set_sniper_sell_locked, t, True)
-                                    
+                                     
                                 exec_history = await asyncio.to_thread(broker.get_execution_history, t, today_est_str, today_est_str)
-                                  
+                                   
                                 def get_actual_execution_price(history, side_code, target_odno):
                                     if not history: return 0.0
                                     for ex in history:

@@ -22,6 +22,7 @@
 # 🚨 MODIFIED: [V77.13 수학적 락온 및 환각 수술] 0주 예산 산출 시 상태 변이(Split-Brain) 원천 차단
 # 🚨 MODIFIED: [V77.14 백테스트 절대기준 동기화] 5분봉 과잉 방어 철거 및 순수 T_H 관통 타격 롤백
 # 🚨 MODIFIED: [V77.18 프리마켓 시계열 경계 누수 완벽 수술 및 T_H/T_L 절대 앵커 락온 (정규장 데이터 유입 원천 차단)]
+# 🚨 MODIFIED: [V77.20 조건 3 대통합] 정규장 T_L 하향 돌파 셧다운(퇴근) 로직 영구 소각 및 장마감까지 T_H 요격 전면 개방
 # ==========================================================
 import logging
 import datetime
@@ -36,7 +37,7 @@ import tempfile
 
 class VAvwapHybridPlugin:
     def __init__(self):
-        self.plugin_name = "AVWAP_V77.18_LIMIT_TRAP_3PCT"
+        self.plugin_name = "AVWAP_V77.20_LIMIT_TRAP_3PCT"
         self.leverage = 3.0       
 
     def _get_logical_date_str(self, now_est):
@@ -302,7 +303,7 @@ class VAvwapHybridPlugin:
 
         if prev_c <= 0 or amp5 <= 0:
             return _build_res('WAIT', '진입_평가용_필수데이터_결측_대기')
-            
+             
         if executed_buy:
             return _build_res('WAIT', '일일_1회_타격_완료_매매_종료(Zero_Sum_대기)')
 
@@ -349,20 +350,9 @@ class VAvwapHybridPlugin:
                     if not is_simulation:
                         self.save_state(exec_ticker, now_est, persistent_state)
                         
-                    hit_l = (curr_time >= time_0930 and curr_c <= curr_t_l)
-                    
-                    if hit_l:
-                        persistent_state["shutdown"] = True
-                        persistent_state["limit_order_placed"] = False
-                        persistent_state["placed_target_th"] = 0.0
-                        limit_order_placed = False
-                        placed_target_th = 0.0
-                        
-                        if not is_simulation:
-                            self.save_state(exec_ticker, now_est, persistent_state)
-                        logging.info(f"🛑 [V77.14 정규장 셧다운] 1분봉 종가({curr_c:.2f})가 T_L({curr_t_l:.2f}) 하향 돌파. 당일 매매 퇴근 및 덫 파기 완료!")
-                        return _build_res('SHUTDOWN', '정규장_T_L하향돌파_당일매매퇴근')
-                        
+                    # 🚨 MODIFIED: [V77.20 조건 3 대통합] 정규장 T_L 하향 돌파 셧다운(퇴근) 로직 영구 소각 및 장마감까지 T_H 요격 전면 개방
+                    # (기존 hit_l 셧다운 락다운 블록 100% 영구 적출)
+
                     # MODIFIED: [V77.14] 백테스트 절대기준 동기화: 5분봉 지지 필터 소각 및 순수 T_H 타점 관통 락온
                     if not limit_order_placed:
                         if curr_l <= curr_t_h:
