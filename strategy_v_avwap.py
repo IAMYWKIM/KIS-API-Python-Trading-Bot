@@ -23,7 +23,7 @@
 # 🚨 MODIFIED: [V77.14 백테스트 절대기준 동기화] 5분봉 과잉 방어 철거 및 순수 T_H 관통 타격 롤백
 # 🚨 MODIFIED: [V77.18 프리마켓 시계열 경계 누수 완벽 수술 및 T_H/T_L 절대 앵커 락온 (정규장 데이터 유입 원천 차단)]
 # 🚨 MODIFIED: [V77.20 조건 3 대통합] 정규장 T_L 하향 돌파 셧다운(퇴근) 로직 영구 소각 및 장마감까지 T_H 요격 전면 개방
-# 🚨 MODIFIED: [V77.22 상시 개방 가드 이식] 장후 세션 프리장 데이터 유실 시 캐시 보존 및 오염 차단 완벽 적용
+# 🚨 MODIFIED: [V77.24 상시 개방 가드 이식 및 스코프 전진 배치] 조기 셧다운 반환 시 프리장 데이터가 0.00으로 증발하는 데이터 기아 원천 차단
 # ==========================================================
 import logging
 import datetime
@@ -38,7 +38,7 @@ import tempfile
 
 class VAvwapHybridPlugin:
     def __init__(self):
-        self.plugin_name = "AVWAP_V77.22_LIMIT_TRAP_3PCT"
+        self.plugin_name = "AVWAP_V77.24_LIMIT_TRAP_3PCT"
         self.leverage = 3.0       
 
     def _get_logical_date_str(self, now_est):
@@ -225,13 +225,8 @@ class VAvwapHybridPlugin:
         amp5 = float(kwargs.get('amp5', 0.0))
         prev_c = float(kwargs.get('prev_close', 0.0))
         
-        curr_pm_h = 0.0
-        curr_pm_l = 0.0
         curr_c = 0.0
         curr_l = 0.0
-        curr_offset = 0.0
-        curr_t_h = 0.0
-        curr_t_l = 0.0
         
         now_est = now_est or datetime.datetime.now(ZoneInfo('America/New_York'))
         curr_time = now_est.time()
@@ -256,6 +251,40 @@ class VAvwapHybridPlugin:
         t_h = persistent_state.get('T_H', 0.0)
         t_l = persistent_state.get('T_L', 0.0)
         offset = persistent_state.get('offset', 0.0)
+
+        # 🚨 [V77.24] ABSOLUTE TOP 스코프 전진 배치: 팩트 데이터 추출 엔진 (조기 셧다운으로 인한 데이터 기아 및 0.00 표출 맹점 원천 차단)
+        if df_1min_exec is not None and not df_1min_exec.empty and 'time_est' in df_1min_exec.columns:
+            df_1m = df_1min_exec
+            curr_time_str = curr_time.strftime('%H%M%S')
+            slice_end_str = '092959' if curr_time >= time_0930 else curr_time_str
+            df_pm = df_1m[(df_1m['time_est'] >= '040000') & (df_1m['time_est'] <= slice_end_str)]
+            
+            if not df_pm.empty:
+                curr_pm_h = float(df_pm['close'].max())
+                curr_pm_l = float(df_pm['close'].min())
+            else:
+                curr_pm_h = pm_h if pm_h > 0.0 else 0.0
+                curr_pm_l = pm_l if pm_l > 0.0 else 0.0
+                
+            curr_offset = prev_c * amp5 * 0.50 if (prev_c > 0.0 and amp5 > 0.0) else (offset if offset > 0.0 else 0.0)
+            curr_t_h = curr_pm_h - curr_offset if curr_pm_h > 0.0 else (t_h if t_h > 0.0 else 0.0)
+            curr_t_l = curr_pm_l + curr_offset if curr_pm_l > 0.0 else (t_l if t_l > 0.0 else 0.0)
+            
+            pm_h = curr_pm_h
+            pm_l = curr_pm_l
+            t_h = curr_t_h
+            t_l = curr_t_l
+            offset = curr_offset
+
+            persistent_state['PM_H'] = pm_h
+            persistent_state['PM_L'] = pm_l
+            persistent_state['T_H'] = t_h
+            persistent_state['T_L'] = t_l
+            persistent_state['offset'] = offset
+            
+            # 관측 효과(Observer effect) 방지: 시뮬레이션 모드가 아닐 때만 물리적 파일에 영속화
+            if not is_simulation:
+                self.save_state(exec_ticker, now_est, persistent_state)
 
         def _build_res(action, reason, qty=0, target_price=0.0):
             return {
@@ -308,6 +337,7 @@ class VAvwapHybridPlugin:
         if executed_buy:
             return _build_res('WAIT', '일일_1회_타격_완료_매매_종료(Zero_Sum_대기)')
 
+        # 정규장 액션(Action) 스캔 및 덫 장전 판독 블록
         if curr_time >= time_0400:
             df_1m = df_1min_exec
             if df_1m is not None and not df_1m.empty and 'time_est' in df_1m.columns:
@@ -315,57 +345,21 @@ class VAvwapHybridPlugin:
                 df_today = df_1m[(df_1m['time_est'] >= '040000') & (df_1m['time_est'] <= curr_time_str)]
                 
                 if not df_today.empty:
-                    slice_end_str = '092959' if curr_time >= time_0930 else curr_time_str
-                    df_pm = df_1m[(df_1m['time_est'] >= '040000') & (df_1m['time_est'] <= slice_end_str)]
-                    
-                    if not df_pm.empty:
-                        curr_pm_h = float(df_pm['close'].max())
-                        curr_pm_l = float(df_pm['close'].min())
-                    else:
-                        # MODIFIED: [상시 개방 가드] 장마감 후 장외 세션에서 프리장 데이터 증발 시 기존 영속 캐시 팩트 보존
-                        curr_pm_h = pm_h if pm_h > 0.0 else 0.0
-                        curr_pm_l = pm_l if pm_l > 0.0 else 0.0
-
                     curr_c = float(df_today.iloc[-1]['close'])
                     curr_l = float(df_today.iloc[-1]['low'])
                     
-                    # MODIFIED: [상시 개방 가드] 결측 대비 기존 오프셋 및 목표 타점(T_H, T_L) 유효 캐시 가드 결속
-                    curr_offset = prev_c * amp5 * 0.50 if (prev_c > 0.0 and amp5 > 0.0) else (offset if offset > 0.0 else 0.0)
-                    curr_t_h = curr_pm_h - curr_offset if curr_pm_h > 0.0 else (t_h if t_h > 0.0 else 0.0)
-                    curr_t_l = curr_pm_l + curr_offset if curr_pm_l > 0.0 else (t_l if t_l > 0.0 else 0.0)
-
-                    pm_h = curr_pm_h
-                    pm_l = curr_pm_l
-                    t_h = curr_t_h
-                    t_l = curr_t_l
-                    offset = curr_offset
-
-                    persistent_state['PM_H'] = pm_h
-                    persistent_state['PM_L'] = pm_l
-                    persistent_state['T_H'] = t_h
-                    persistent_state['T_L'] = t_l
-                    persistent_state['offset'] = offset
-                    
-                    if not is_simulation:
-                        self.save_state(exec_ticker, now_est, persistent_state)
-                        
-                    # 🚨 MODIFIED: [V77.20 조건 3 대통합] 정규장 T_L 하향 돌파 셧다운(퇴근) 로직 영구 소각 및 장마감까지 T_H 요격 전면 개방
-                    # (기존 hit_l 셧다운 락다운 블록 100% 영구 적출 완료)
-
-                    # MODIFIED: [V77.14] 백테스트 절대기준 동기화: 5분봉 지지 필터 소각 및 순수 T_H 타점 관통 락온
                     if not limit_order_placed:
-                        if curr_l <= curr_t_h:
-                            
+                        if curr_l <= t_h:
                             # 🚨 제16 절대 헌법: 예산 분할 연산을 상태 변이 앞단으로 전진 배치
                             safe_budget = avwap_alloc_cash * 0.95
-                            buy_qty = int(math.floor(safe_budget / curr_t_h)) if curr_t_h > 0 else 0
+                            buy_qty = int(math.floor(safe_budget / t_h)) if t_h > 0 else 0
                             
                             # 🚨 0주 산출 시 발생하는 기억 상실 환각(Split-Brain) 맹점 원천 차단
                             if buy_qty > 0:
                                 persistent_state['limit_order_placed'] = True
-                                persistent_state['placed_target_th'] = curr_t_h
+                                persistent_state['placed_target_th'] = t_h
                                 limit_order_placed = True
-                                placed_target_th = curr_t_h
+                                placed_target_th = t_h
                                 
                                 if not is_simulation:
                                     self.save_state(exec_ticker, now_est, persistent_state)
