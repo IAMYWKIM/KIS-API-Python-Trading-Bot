@@ -7,7 +7,8 @@
 # 🚨 MODIFIED: [V77.19 관제탑 섀도우 연산 KIS 실잔고 파이프라인 결속 및 예산부족(0주) 환각 영구 소각]
 # 🚨 MODIFIED: [V77.20 조건 1,2,3 대통합] 16:00 EST 관제탑 연장, REG_H/L 렌더링 추가, T_L 셧다운 소각 팩트 교정 완료
 # 🚨 MODIFIED: [V77.21 UI 팩트 교정] T_L 활성 텍스트 환각 소각 및 단순 참조용 명시
-# 🚨 MODIFIED: [V77.23 애프터마켓 마스킹 개방] 16:00 EST 이후 애프터마켓 상태 직관적 팩트 렌더링 이식
+# 🚨 MODIFIED: [V77.23 애프터마켓 마스킹 전면 개방] 16:00 EST 이후 애프터마켓 상태 직관적 팩트 렌더링(🌙) 락온
+# 🚨 MODIFIED: [V77.25 UI 팩트 교정] 텍스트 다이어트 및 가독성 최적화를 위한 꼬리표 소각 및 줄바꿈 적용
 # ==========================================================
 import logging
 import datetime
@@ -35,13 +36,13 @@ class AvwapConsolePlugin:
         time_0930 = datetime.time(9, 30)
         time_1600 = datetime.time(16, 0)
      
-        # MODIFIED: [V77.23] 16:00 EST 기준 애프터마켓 타임라인 팩트 렌더링 추가
+        # MODIFIED: [V77.25] 불필요한 꼬리표 텍스트 소각
         if curr_time < time_0930:
             header_status = "🌅 <b>[ 프리장 선제 타격 모드 (04:00~09:29 스캔 중) ]</b>"
         elif curr_time < time_1600:
             header_status = "🔥 <b>[ 정규장 실시간 추격 모드 (09:30~16:00 감시 중) ]</b>"
         else:
-            header_status = "🌙 <b>[ 애프터마켓 / 감시 종료 (16:00 이후 대기 중) ]</b>"
+            header_status = "🌙 <b>[ 애프터마켓 / 감시 종료 ]</b>"
         
         active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
         avwap_tickers = [t for t in active_tickers if t == "SOXL"]
@@ -62,7 +63,8 @@ class AvwapConsolePlugin:
             logging.error(f"🚨 AVWAP 관제탑 KIS 예산 스캔 에러: {e}")
             available_cash = 0.0
         
-        msg = f"🔫 <b>[ 차세대 AVWAP V77.23 암살자 관제탑 ]</b>\n{header_status}\n\n"
+        # MODIFIED: [V77.25] '암살자' 워딩 소각
+        msg = f"🔫 <b>[ 차세대 AVWAP V77.25 관제탑 ]</b>\n{header_status}\n\n"
         keyboard = []
 
         for t in active_avwap:
@@ -218,17 +220,18 @@ class AvwapConsolePlugin:
             except Exception as e:
                 logging.debug(f"AVWAP 상태 텍스트 추출 에러: {e}")
 
+            # MODIFIED: [V77.25] 텍스트 다이어트 및 줄바꿈 적용
             msg += f"🎯 <b>[ {t} (롱) 작전반 - {active_str} ]</b>\n"
-            msg += f"▫️ 프리장 최고 (PM_H): <b>${pm_h:.2f}</b> (종가 트레일링)\n"
-            msg += f"▫️ 프리장 최저 (PM_L): <b>${pm_l:.2f}</b> (종가 트레일링)\n"
+            msg += f"▫️ 프리장 최고 (PM_H): <b>${pm_h:.2f}</b>\n"
+            msg += f"▫️ 프리장 최저 (PM_L): <b>${pm_l:.2f}</b>\n"
             msg += f"▫️ 정규장 최고 (REG_H): <b>${reg_h:.2f}</b>\n"
             msg += f"▫️ 정규장 최저 (REG_L): <b>${reg_l:.2f}</b>\n"
             msg += f"▫️ Amp5 오프셋 (50%): <b>${offset:.2f}</b>\n"
-            msg += f"▫️ 상승 돌파 목표 (T_H): <b>${t_h:.2f}</b> (지정가 덫 장전선)\n"
-            msg += f"▫️ 하락 지지 기준 (T_L): <b>${t_l:.2f}</b> (단순 참조용)\n\n"
+            msg += f"▫️ 상승 돌파 목표 (T_H): <b>${t_h:.2f}</b>\n      (지정가 덫 장전선)\n"
+            msg += f"▫️ 하락 지지 기준 (T_L): <b>${t_l:.2f}</b>\n      (단순 참조용)\n\n"
 
             msg += f"📊 <b>[ 실시간 현재가 스프레드 ]</b>\n"
-            msg += f"▫️ 전일종가: <b>${prev_c:.2f}</b> (Amp5 진폭: {amp5*100:.2f}%)\n"
+            msg += f"▫️ 전일종가: <b>${prev_c:.2f}</b>\n      (Amp5 진폭: {amp5*100:.2f}%)\n"
             msg += f"▫️ 현재가격: <b>${curr_p:.2f}</b>\n"
 
             if avwap_qty > 0:

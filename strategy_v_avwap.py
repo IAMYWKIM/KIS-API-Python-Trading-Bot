@@ -1,29 +1,13 @@
 # ==========================================================
 # FILE: strategy_v_avwap.py
 # ==========================================================
-# 🚨 MODIFIED: [V59.00 AVWAP 암살자 예산 100% 수혈 및 15:25 전량 덤핑 팩트 교정]
-# 🚨 MODIFIED: [V60.00 옴니 매트릭스 진입 차단망 전면 폐기 및 데드코드 소각]
-# 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각 작전 지시서 적용]
-# 🚨 NEW: [V65.00 AVWAP 동적 하드스탑 락온]
-# 🚨 NEW: [V66.00 AVWAP 암살자 덤핑 지터(Jitter) 분산 락온]
-# 🚨 NEW: [V75.04 상태 캐시 기억상실(Amnesia) 완벽 수술]
-# 🚨 MODIFIED: [V76.01 ATR5 동적 하드스탑 렌더링 영구 소각 및 투트랙 엑시트 절대 락온]
-# 🚨 MODIFIED: [V76.02 타점 역전 패러독스 하드 마진 락온 (매니저 제안 수혈)]
-# 🚨 MODIFIED: [V76.03 암살자 덤핑 지터(Jitter) 코어 연산 디커플링 해체 및 동적 타임라인 락온]
-# 🚨 NEW: [V77.00 V7.1 백테스트 절대 동기화 롤백 (Animal Spirit 야성 회복)]
-# 🚨 MODIFIED: [V77.01 데이터 기아 방어 및 런타임 무결성 팩트 수술] 
-# 🚨 NEW: [V77.02 프리마켓 관제탑 데이터 기아 및 런타임 붕괴 완벽 수술]
-# 🚨 MODIFIED: [V77.03 갭상승 휩소 원천 차단 및 Strict Touch 절대 락온]
-# 🚨 NEW: [V77.04 Operation Dawn Sniper - 프리장 선제 타격 및 50% 팩트 오프셋 롤백]
-# 🚨 MODIFIED: [V77.06 3.0% 한계 돌파 팩트 롤백] 
-# 🚨 NEW: [V77.08] 백테스트 절대 동기화 - T_H 지정가 덫 선제 장전 및 상태기계 3.0% 청산 절대 락온
-# 🚨 MODIFIED: [V77.09] 타점 역전 패러독스 강제 캡핑(Clamping) 영구 소각 및 순수 수학적 교차(Cross-over) 허용
-# 🚨 MODIFIED: [V77.12] 추격 매수(Negative Slippage) 원천 차단 및 순수 지정가(T_H) 절대 락온 타격 엔진 이식
 # 🚨 MODIFIED: [V77.13 수학적 락온 및 환각 수술] 0주 예산 산출 시 상태 변이(Split-Brain) 원천 차단
 # 🚨 MODIFIED: [V77.14 백테스트 절대기준 동기화] 5분봉 과잉 방어 철거 및 순수 T_H 관통 타격 롤백
 # 🚨 MODIFIED: [V77.18 프리마켓 시계열 경계 누수 완벽 수술 및 T_H/T_L 절대 앵커 락온 (정규장 데이터 유입 원천 차단)]
 # 🚨 MODIFIED: [V77.20 조건 3 대통합] 정규장 T_L 하향 돌파 셧다운(퇴근) 로직 영구 소각 및 장마감까지 T_H 요격 전면 개방
-# 🚨 MODIFIED: [V77.24 상시 개방 가드 이식 및 스코프 전진 배치] 조기 셧다운 반환 시 프리장 데이터가 0.00으로 증발하는 데이터 기아 원천 차단
+# 🚨 MODIFIED: [V77.22 상시 개방 가드 이식] 장후 세션 프리장 데이터 유실 시 캐시 보존 및 오염 차단 완벽 적용
+# 🚨 MODIFIED: [V77.23 스코프 전진 배치] 팩트 데이터 추출 엔진 최상단 이동으로 조기 반환 시 데이터 증발(0.00 달러 표출) 원천 차단
+# 🚨 MODIFIED: [V77.25 텍스트 다이어트] 상태 메시지 간소화 (동적_덤핑_타임라인_도달_전량_시장가_덤핑 -> 덤핑_타임라인_도달_전량_시장가_덤핑)
 # ==========================================================
 import logging
 import datetime
@@ -38,7 +22,7 @@ import tempfile
 
 class VAvwapHybridPlugin:
     def __init__(self):
-        self.plugin_name = "AVWAP_V77.24_LIMIT_TRAP_3PCT"
+        self.plugin_name = "AVWAP_V77.25_LIMIT_TRAP_3PCT"
         self.leverage = 3.0       
 
     def _get_logical_date_str(self, now_est):
@@ -252,7 +236,7 @@ class VAvwapHybridPlugin:
         t_l = persistent_state.get('T_L', 0.0)
         offset = persistent_state.get('offset', 0.0)
 
-        # 🚨 [V77.24] ABSOLUTE TOP 스코프 전진 배치: 팩트 데이터 추출 엔진 (조기 셧다운으로 인한 데이터 기아 및 0.00 표출 맹점 원천 차단)
+        # 🚨 [V77.24] ABSOLUTE TOP 스코프 전진 배치
         if df_1min_exec is not None and not df_1min_exec.empty and 'time_est' in df_1min_exec.columns:
             df_1m = df_1min_exec
             curr_time_str = curr_time.strftime('%H%M%S')
@@ -282,7 +266,6 @@ class VAvwapHybridPlugin:
             persistent_state['T_L'] = t_l
             persistent_state['offset'] = offset
             
-            # 관측 효과(Observer effect) 방지: 시뮬레이션 모드가 아닐 때만 물리적 파일에 영속화
             if not is_simulation:
                 self.save_state(exec_ticker, now_est, persistent_state)
 
@@ -314,7 +297,8 @@ class VAvwapHybridPlugin:
                 persistent_state["shutdown"] = True
                 if not is_simulation:
                     self.save_state(exec_ticker, now_est, persistent_state)
-                return _build_res('SELL', '동적_덤핑_타임라인_도달_전량_시장가_덤핑', qty=avwap_qty, target_price=exec_curr_p)
+                # MODIFIED: [V77.25 텍스트 다이어트]
+                return _build_res('SELL', '덤핑_타임라인_도달_전량_시장가_덤핑', qty=avwap_qty, target_price=exec_curr_p)
 
             exit_target_price = round(safe_avg * 1.03, 2)
             if exec_curr_p >= exit_target_price:
@@ -329,7 +313,8 @@ class VAvwapHybridPlugin:
             persistent_state["shutdown"] = True
             if not is_simulation:
                 self.save_state(exec_ticker, now_est, persistent_state)
-            return _build_res('SHUTDOWN', '동적_덤핑_타임라인_도달_신규진입_영구동결')
+            # MODIFIED: [V77.25 텍스트 다이어트]
+            return _build_res('SHUTDOWN', '덤핑_타임라인_도달_신규진입_동결')
 
         if prev_c <= 0 or amp5 <= 0:
             return _build_res('WAIT', '진입_평가용_필수데이터_결측_대기')
@@ -337,7 +322,6 @@ class VAvwapHybridPlugin:
         if executed_buy:
             return _build_res('WAIT', '일일_1회_타격_완료_매매_종료(Zero_Sum_대기)')
 
-        # 정규장 액션(Action) 스캔 및 덫 장전 판독 블록
         if curr_time >= time_0400:
             df_1m = df_1min_exec
             if df_1m is not None and not df_1m.empty and 'time_est' in df_1m.columns:
@@ -350,11 +334,9 @@ class VAvwapHybridPlugin:
                     
                     if not limit_order_placed:
                         if curr_l <= t_h:
-                            # 🚨 제16 절대 헌법: 예산 분할 연산을 상태 변이 앞단으로 전진 배치
                             safe_budget = avwap_alloc_cash * 0.95
                             buy_qty = int(math.floor(safe_budget / t_h)) if t_h > 0 else 0
                             
-                            # 🚨 0주 산출 시 발생하는 기억 상실 환각(Split-Brain) 맹점 원천 차단
                             if buy_qty > 0:
                                 persistent_state['limit_order_placed'] = True
                                 persistent_state['placed_target_th'] = t_h
