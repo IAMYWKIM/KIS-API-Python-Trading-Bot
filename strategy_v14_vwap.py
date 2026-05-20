@@ -6,6 +6,10 @@
 # - 상태 파일(_load_state_if_needed)에서 날짜(date) 비교가 누락되어 어제의 예산 지출(BUY_BUDGET)이 
 #   오늘로 강제 이월(Carry-over)되는 치명적 하극상 원천 차단.
 # - 날짜가 일치할 때만 잔차를 로드하고, 다르면 0.0으로 팩트 초기화하도록 멱등성 락온.
+# 🚨 MODIFIED: [V77.25 V14 VWAP 타점 공식 디커플링 팩트 교정]
+# - 0주 매수 타점에 MAX(0.01, PrevClose * 1.15 - 0.01) 공식을 100% 락온.
+# - 전반전 평단 매수 타점에 MIN(Average Price, Star Price) - 0.01 공식을 100% 락온하여
+#   불필요한 고점 추격 매수를 원천 차단하고 수학적 무결성 복원 완료.
 # ==========================================================
 import math
 import logging
@@ -78,7 +82,8 @@ class V14VwapStrategy:
         temp_path = None
         try:
             dir_name = os.path.dirname(state_file)
-            os.makedirs(dir_name, exist_ok=True) 
+            if dir_name and not os.path.exists(dir_name):
+                os.makedirs(dir_name, exist_ok=True) 
             fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
@@ -109,7 +114,8 @@ class V14VwapStrategy:
         temp_path = None
         try:
             dir_name = os.path.dirname(snap_file)
-            os.makedirs(dir_name, exist_ok=True)
+            if dir_name and not os.path.exists(dir_name):
+                os.makedirs(dir_name, exist_ok=True)
             fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
@@ -197,7 +203,7 @@ class V14VwapStrategy:
         star_price = self._ceil(avg_price * (1 + star_ratio)) if avg_price > 0 else 0
         target_price = self._ceil(avg_price * (1 + target_ratio)) if avg_price > 0 else 0
         
-        buy_star_price = round(star_price - 0.01, 2) if star_price > 0.01 else 0.0
+        buy_star_price = max(0.01, round(star_price - 0.01, 2)) if star_price > 0 else 0.0
 
         _, dynamic_budget, _ = self.cfg.calculate_v14_state(ticker)
         
@@ -224,11 +230,12 @@ class V14VwapStrategy:
 
         if qty == 0:
             is_zero_start_fact = True
-            p_buy = self._ceil(prev_close * 1.15)
+            # 🚨 MODIFIED: [V14 핵심 공식 팩트 교정] 0주 매수 타점 MAX(0.01, PrevClose * 1.15 - 0.01) 절대 락온
+            p_buy = max(0.01, round((prev_close * 1.15) - 0.01, 2))
             buy_star_price = p_buy 
             
             b1_budget = dynamic_budget * 0.5
-            b2_budget = dynamic_budget * 0.5
+            b2_budget = dynamic_budget - b1_budget
             q1 = math.floor(b1_budget / p_buy) if p_buy > 0 else 0
             q2 = math.floor(b2_budget / p_buy) if p_buy > 0 else 0
             
@@ -245,10 +252,13 @@ class V14VwapStrategy:
                 core_orders.append({"side": "BUY", "price": p_buy, "qty": q2, "type": o_type, "start_time": start_t if o_type == "VWAP" else None, "end_time": end_t if o_type == "VWAP" else None, "desc": desc})
             process_status = "✨새출발"
         else:
-            p_avg = self._ceil(avg_price)
+            # 🚨 MODIFIED: [V14 핵심 공식 팩트 교정] 전반전 평단 매수 타점 MIN(Average Price, Star Price) - 0.01 절대 락온
+            safe_ceiling = min(avg_price, star_price) if star_price > 0 else avg_price
+            p_avg = max(0.01, round(safe_ceiling - 0.01, 2))
+            
             if t_val < (split / 2):
                 b1_budget = dynamic_budget * 0.5
-                b2_budget = dynamic_budget * 0.5
+                b2_budget = dynamic_budget - b1_budget
                 q_avg = math.floor(b1_budget / p_avg) if p_avg > 0 else 0
                 q_star = math.floor(b2_budget / buy_star_price) if buy_star_price > 0 else 0
                  
@@ -296,7 +306,7 @@ class V14VwapStrategy:
             'is_zero_start': is_zero_start_fact 
         }
         
-        self.save_daily_snapshot(ticker, plan_result)
+        self.save_daily_snapshot(ticker, plan_data=plan_result)
         return plan_result
 
     def get_dynamic_plan(self, ticker, current_price, prev_close, current_weight, min_idx, alloc_cash, qty, avg_price, market_type="REG"):
