@@ -29,6 +29,8 @@
 # 🚨 MODIFIED: [V77.22 사이보그(Cyborg) 엑시트 전술 이식] 관제탑 0주 상태 시 수동 강제 요격 팩트 버튼 렌더링 락온
 # 🚨 MODIFIED: [V77.23 팻핑거 오조작 차단] 수동 요격 버튼을 즉각 격발(MANUAL_FIRE)에서 승인 요청(MANUAL_FIRE_REQ) 파이프라인으로 정밀 변환
 # 🚨 NEW: [V77.25 관제탑 UI 렌더링 대수술 및 정규장 고/저가 파이프라인 결속]
+# 🚨 MODIFIED: [V77.26 셧다운 락온 시 정규장 데이터 기아(Data Starvation) 완벽 수술] 
+# 스나이퍼가 셧다운(퇴근)되어 캐시 갱신을 멈추더라도, 관제탑은 자체 수혈한 df_1m을 통해 정규장 팩트(REG_H, REG_L)를 강제 역산하여 시각적 환각 원천 차단.
 # ==========================================================
 import logging
 import datetime
@@ -111,8 +113,7 @@ class AvwapConsolePlugin:
             logging.error(f"🚨 AVWAP 관제탑 KIS 예산 스캔 에러: {e}")
             available_cash = 0.0
         
-        # MODIFIED: [V77.25 차세대 AVWAP 버전 명세 상향 락온]
-        msg = f"🔫 <b>[ 차세대 AVWAP V77.25 관제탑 ]</b>\n{header_status}\n\n"
+        msg = f"🔫 <b>[ 차세대 AVWAP V77.26 관제탑 ]</b>\n{header_status}\n\n"
         keyboard = []
 
         for t in active_avwap:
@@ -165,6 +166,14 @@ class AvwapConsolePlugin:
             except Exception as e:
                 logging.debug(f"🚨 데이터 팩트 수혈 에러: {e}")
                 curr_p, prev_c, amp5, df_1m = 0.0, 0.0, 0.0, None
+
+            # 🚨 MODIFIED: [V77.26 셧다운(Shutdown) 락온 시 정규장 팩트 증발(Data Starvation) 완벽 수술]
+            # 스나이퍼가 셧다운되어 캐시 갱신을 멈추더라도 관제탑은 자체 수혈한 df_1m으로 팩트를 강제 추출합니다.
+            if df_1m is not None and not df_1m.empty and 'time_est' in df_1m.columns:
+                df_reg = df_1m[(df_1m['time_est'] >= '093000') & (df_1m['time_est'] <= '155959')]
+                if not df_reg.empty:
+                    tracking_cache[f"AVWAP_REG_H_{t}"] = float(df_reg['high'].astype(float).max())
+                    tracking_cache[f"AVWAP_REG_L_{t}"] = float(df_reg['low'].astype(float).min())
 
             avwap_qty = tracking_cache.get(f"AVWAP_QTY_{t}", 0)
             avwap_avg = tracking_cache.get(f"AVWAP_AVG_{t}", 0.0)
@@ -261,9 +270,9 @@ class AvwapConsolePlugin:
             except Exception as e:
                 logging.debug(f"AVWAP 상태 텍스트 추출 에러: {e}")
 
-            # MODIFIED: [V77.25 텍스트 다이어트 및 정규장 고/저가 실시간 수혈 표출 수술]
             reg_h = tracking_cache.get(f"AVWAP_REG_H_{t}", 0.0)
             reg_l = tracking_cache.get(f"AVWAP_REG_L_{t}", 0.0)
+            
             msg += f"🎯 <b>[ {t} (롱) 작전반 - {active_str} ]</b>\n"
             msg += f"▫️ 프리장 최고 (PM_H): <b>${pm_h:.2f}</b>\n"
             msg += f"▫️ 프리장 최저 (PM_L): <b>${pm_l:.2f}</b>\n"
