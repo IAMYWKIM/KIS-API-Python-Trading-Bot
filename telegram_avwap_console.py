@@ -5,6 +5,7 @@
 # 🚨 NEW: [Case 11] 다중 출격(Multi-Sortie) 모드 관제탑 헤더 상태 렌더링 동기화
 # 🚨 MODIFIED: [Case 14 절대 헌법 준수] 달력 API(mcal) 호출 시 10.0초 타임아웃 락온으로 이벤트 루프 교착 완벽 차단
 # 🚨 MODIFIED: [Case 28 준수] 팻핑거 방어를 위한 수동 요격 UI 디커플링 팩트 교정 (타점 이탈 시 버튼 비활성화)
+# 🚨 MODIFIED: [0.0달러 환각 방어] 통신 장애 시 0.0달러 폴백 값이 수동 요격 버튼을 강제 활성화시키는 맹점 원천 차단
 # ==========================================================
 import logging
 import datetime
@@ -278,12 +279,13 @@ class AvwapConsolePlugin:
                 if avwap_qty > 0:
                     keyboard.append([InlineKeyboardButton(f"🧯 {t} 암살자 수동 청산 (0주 락온)", callback_data=f"AVWAP_SET:SYNC_ZERO:{t}")])
                 else:
-                    if t_h > 0.0 and curr_p < t_h:
+                    # MODIFIED: [0.0달러 환각 방어] 통신 장애 시 0.0달러 폴백 값이 수동 요격 버튼을 강제 활성화시키는 맹점 원천 차단
+                    if t_h > 0.0 and curr_p > 0.0 and curr_p < t_h:
                         keyboard.append([InlineKeyboardButton(f"🔫 [{t}] 수동 강제 요격 (Manual Fire)", callback_data=f"AVWAP_SET:MANUAL_FIRE_REQ:{t}")])
                     elif t_h > 0.0 and curr_p >= t_h:
                         keyboard.append([InlineKeyboardButton(f"❌ [{t}] 수동 요격 불가 (타점 이탈)", callback_data="AVWAP_SET:REFRESH:NONE")])
                     else:
-                        keyboard.append([InlineKeyboardButton(f"❌ [{t}] 수동 요격 불가 (T_H 대기)", callback_data="AVWAP_SET:REFRESH:NONE")])
+                        keyboard.append([InlineKeyboardButton(f"❌ [{t}] 수동 요격 불가 (T_H 대기 또는 현재가 스캔 실패)", callback_data="AVWAP_SET:REFRESH:NONE")])
             else:
                 keyboard.append([InlineKeyboardButton(f"⛔ [{t}] 장마감 (수동 제어 불가)", callback_data="AVWAP_SET:REFRESH:NONE")])
 
