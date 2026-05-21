@@ -5,6 +5,7 @@
 # 🚨 MODIFIED: [V77.29 데드코드 영구 소각] 중복 선언된 get_version_history 라우터를 전면 적출하고 get_full_version_history로 단일 진실 공급원(SSOT) 락온 완료
 # 🚨 NEW: [Case 11] AVWAP 다중 출격(Multi-Sortie) 모드 데이터 영속성 맵핑 및 락온
 # 🚨 MODIFIED: [Case 27 절대 위반 수술] 에스크로(Escrow) 엔진 100% 영구 적출 및 잔재 코드(Reset Locks) 소각 완료
+# 🚨 NEW: [데이터 기아 방어] V-REV 및 AVWAP 갭 스위칭 임계치 제어 파라미터 맵핑 100% 팩트 이식 완료
 # ==========================================================
 
 import json
@@ -77,7 +78,6 @@ class ConfigManager:
         self.DEFAULT_SNIPER_MULTIPLIER = {"SOXL": 1.0, "TQQQ": 0.9}
         self.DEFAULT_FEE = {"SOXL": 0.07, "TQQQ": 0.07} 
         
-        # MODIFIED: [Case 27 절대 위반 수술] _escrow_cache 잔재 소각
         self._locks_mutex = threading.Lock()
         self._io_lock = threading.RLock()
 
@@ -181,6 +181,34 @@ class ConfigManager:
                 try: os.remove(temp_path)
                 except Exception: pass
 
+    # NEW: [데이터 기아 방어] 갭 스위칭 파라미터 제어기 이식
+    def get_vrev_gap_threshold(self, ticker):
+        return float(self._load_json(self.FILES["VREV_GAP_THRESH_CFG"], {}).get(ticker, -0.67))
+
+    def set_vrev_gap_threshold(self, ticker, v):
+        with self._io_lock:
+            d = self._load_json(self.FILES["VREV_GAP_THRESH_CFG"], {})
+            d[ticker] = float(v)
+            self._save_json(self.FILES["VREV_GAP_THRESH_CFG"], d)
+            
+    def get_vrev_gap_switching_mode(self, ticker):
+        return self._load_json(self.FILES["VREV_GAP_SWITCH_CFG"], {}).get(ticker, False)
+
+    def set_vrev_gap_switching_mode(self, ticker, v):
+        with self._io_lock:
+            d = self._load_json(self.FILES["VREV_GAP_SWITCH_CFG"], {})
+            d[ticker] = bool(v)
+            self._save_json(self.FILES["VREV_GAP_SWITCH_CFG"], d)
+            
+    def get_avwap_gap_threshold(self, ticker):
+        return float(self._load_json(self.FILES["VREV_GAP_THRESH_CFG"], {}).get(ticker, -0.67))
+
+    def set_avwap_gap_threshold(self, ticker, v):
+        with self._io_lock:
+            d = self._load_json(self.FILES["VREV_GAP_THRESH_CFG"], {})
+            d[ticker] = float(v)
+            self._save_json(self.FILES["VREV_GAP_THRESH_CFG"], d)
+
     def get_last_split_date(self, ticker):
         return self._load_json(self.FILES["SPLIT_HISTORY"], {}).get(ticker, "")
 
@@ -192,8 +220,6 @@ class ConfigManager:
 
     def get_ledger(self):
         return self._load_json(self.FILES["LEDGER"], [])
-
-    # 🚨 MODIFIED: [Case 27 절대 위반 교정] 에스크로 연관 5대 접근자 100% 영구 적출 완료
 
     def get_order_locked(self, ticker):
         locks = self._load_json(self.FILES["LOCKS"], {})
@@ -217,7 +243,6 @@ class ConfigManager:
 
     def reset_locks(self):
         def _update(locks):
-            # 🚨 MODIFIED: [Case 27] 에스크로 락온 보존(ESCROW_) 키워드 영구 철거
             keys_to_keep = [k for k in locks.keys() if k.startswith("ORDER_LOCKED_")]
             surviving_locks = {k: locks[k] for k in keys_to_keep}
             locks.clear()
