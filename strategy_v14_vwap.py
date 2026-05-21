@@ -1,15 +1,7 @@
 # ==========================================================
 # FILE: strategy_v14_vwap.py
 # ==========================================================
-# 🚨 MODIFIED: [V75.11 예산 증발 데이터 기아(Amnesia) 완벽 수술]
-# - 상태 파일(_load_state_if_needed)에서 날짜(date) 비교가 누락되어 어제의 예산 지출(BUY_BUDGET)이 
-#   오늘로 강제 이월(Carry-over)되는 치명적 하극상 원천 차단.
-# - 날짜가 일치할 때만 잔차를 로드하고, 다르면 0.0으로 팩트 초기화하도록 멱등성 락온.
-# 🚨 MODIFIED: [V77.25 V14 VWAP 타점 공식 디커플링 팩트 교정]
-# - 0주 매수 타점에 MAX(0.01, PrevClose * 1.15 - 0.01) 공식을 100% 락온.
-# - 전반전 평단 매수 타점에 MIN(Average Price, Star Price) - 0.01 공식을 100% 락온하여
-#   불필요한 고점 추격 매수를 원천 차단하고 수학적 무결성 복원 완료.
-# 🚨 MODIFIED: [데드코드 영구 소각] 식물인간 상태인 _floor, refund_residual, reset_residual 메서드 전면 적출 완료
+# 🚨 MODIFIED: [스냅샷 무결성 파이프라인 팩트 교정] os.path.exists 방어막 소각
 # ==========================================================
 import math
 import logging
@@ -42,7 +34,6 @@ class V14VwapStrategy:
         today_str = self._get_logical_date_str()
         return f"data/daily_snapshot_V14VWAP_{today_str}_{ticker}.json"
 
-    # 🚨 MODIFIED: [V75.11 예산 증발 기억상실 맹점 완벽 수술]
     def _load_state_if_needed(self, ticker):
         today_str = self._get_logical_date_str()
         if self.state_loaded.get(ticker) == today_str:
@@ -53,7 +44,6 @@ class V14VwapStrategy:
             try:
                 with open(state_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    # 🚨 팩트 스캔: 날짜가 같을 때만 예산 복원
                     if data.get("date") == today_str:
                         for k in self.executed.keys():
                             raw_val = data.get("executed", {}).get(k, 0)
@@ -66,7 +56,7 @@ class V14VwapStrategy:
         self.executed["BUY_BUDGET"][ticker] = 0.0
         self.executed["SELL_QTY"][ticker] = 0
         self.state_loaded[ticker] = today_str
-        self._save_state(ticker) # 🚨 초기화 저장 강제 락온
+        self._save_state(ticker)
 
     def _save_state(self, ticker):
         today_str = self._get_logical_date_str()
@@ -79,7 +69,6 @@ class V14VwapStrategy:
                 "SELL_QTY": int(self.executed.get("SELL_QTY", {}).get(ticker, 0))
             }
         }
-        temp_path = None
         try:
             dir_name = os.path.dirname(state_file)
             if dir_name and not os.path.exists(dir_name):
@@ -90,25 +79,18 @@ class V14VwapStrategy:
                 f.flush()
                 os.fsync(f.fileno()) 
             os.replace(temp_path, state_file)
-            temp_path = None
         except Exception as e:
             logging.critical(f"🚨 [STATE SAVE FAILED] {ticker} 상태 저장 실패. 봇 기억상실 위험! 원인: {e}")
-            if temp_path and os.path.exists(temp_path):
-                try: os.unlink(temp_path)
-                except OSError: pass
 
     def save_daily_snapshot(self, ticker, plan_data):
         today_str = self._get_logical_date_str()
         snap_file = self._get_snapshot_file(ticker)
         
-        if os.path.exists(snap_file):
-            return
-
+        # 🚨 [스냅샷 무결성 락온] os.path.exists 방어막 영구 소각 (무조건 최신 팩트로 오버라이드)
         data = {
             "date": today_str,
             "plan": plan_data
         }
-        temp_path = None
         try:
             dir_name = os.path.dirname(snap_file)
             if dir_name and not os.path.exists(dir_name):
@@ -119,12 +101,8 @@ class V14VwapStrategy:
                 f.flush()
                 os.fsync(f.fileno()) 
             os.replace(temp_path, snap_file)
-            temp_path = None
         except Exception as e:
             logging.critical(f"🚨 [SNAPSHOT SAVE FAILED] {ticker} 스냅샷 저장 실패. 지시서 보존 불가! 원인: {e}")
-            if temp_path and os.path.exists(temp_path):
-                try: os.unlink(temp_path)
-                except OSError: pass
 
     def load_daily_snapshot(self, ticker):
         snap_file = self._get_snapshot_file(ticker)
@@ -155,7 +133,7 @@ class V14VwapStrategy:
         except Exception:
             pass
             
-        logging.warning(f"🚨 [{ticker}] V14_VWAP 스냅샷 증발 감지! 페일세이프 긴급 복원 가동 (총잔고:{total_qty} - 암살자:{avwap_qty} = 본대:{pure_qty}주 | 이월 장부:{legacy_qty}주)")
+        logging.warning(f"🚨 [{ticker}] V14_VWAP 스냅샷 증발 감지! 페일세이프 긴급 복원 가동")
         
         return self.get_plan(
             ticker=ticker,
@@ -204,7 +182,6 @@ class V14VwapStrategy:
         process_status = "예방적방어선"
         is_zero_start_fact = False
         
-        # 🚨 MODIFIED: [V75.04 KIS VWAP 3-Min 지터 동적 시프트(Shift) 및 KST 래핑 락온]
         est_zone = ZoneInfo('America/New_York')
         kst_zone = ZoneInfo('Asia/Seoul')
         now_est = datetime.now(est_zone)
@@ -223,7 +200,6 @@ class V14VwapStrategy:
 
         if qty == 0:
             is_zero_start_fact = True
-            # 🚨 MODIFIED: [V14 핵심 공식 팩트 교정] 0주 매수 타점 MAX(0.01, PrevClose * 1.15 - 0.01) 절대 락온
             p_buy = max(0.01, round((prev_close * 1.15) - 0.01, 2))
             buy_star_price = p_buy 
             
@@ -245,7 +221,6 @@ class V14VwapStrategy:
                 core_orders.append({"side": "BUY", "price": p_buy, "qty": q2, "type": o_type, "start_time": start_t if o_type == "VWAP" else None, "end_time": end_t if o_type == "VWAP" else None, "desc": desc})
             process_status = "✨새출발"
         else:
-            # 🚨 MODIFIED: [V14 핵심 공식 팩트 교정] 전반전 평단 매수 타점 MIN(Average Price, Star Price) - 0.01 절대 락온
             safe_ceiling = min(avg_price, star_price) if star_price > 0 else avg_price
             p_avg = max(0.01, round(safe_ceiling - 0.01, 2))
             
