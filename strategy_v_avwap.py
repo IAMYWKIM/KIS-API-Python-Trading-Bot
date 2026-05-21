@@ -26,6 +26,7 @@
 # NEW: [V77.30 관제탑 렌더링 무결성 사수] 암살자가 퇴근(Shutdown)해도 관제탑 레이더에 팩트 데이터가 영구 표출되도록 파싱 스코프 전진 배치 완료
 # 🚨 NEW: [Case 11] 다중 출격(Multi-Sortie) 파이프라인 및 조건부 기요틴 엔진 팩트 락온
 # 🚨 NEW: [Case 31 절대 위반 수술] 1분봉 시차 패러독스(Time-Shield) 원천 차단. 덫 장전 직후 60초간의 하향 돌파 노이즈를 멱등하게 바이패스하여 덫 자폭 방어막 완벽 이식 완료.
+# 🚨 MODIFIED: [V78.00 팩트 교정] AVWAP 오프셋 연산 50% -> 45% 하향 락온 적용.
 # ==========================================================
 import logging
 import datetime
@@ -40,7 +41,7 @@ import tempfile
 
 class VAvwapHybridPlugin:
     def __init__(self):
-        self.plugin_name = "AVWAP_V77.34_MULTI_SORTIE"
+        self.plugin_name = "AVWAP_V78.20_MULTI_SORTIE"
         self.leverage = 3.0       
 
     def _get_logical_date_str(self, now_est):
@@ -80,7 +81,6 @@ class VAvwapHybridPlugin:
                         
                         data['limit_order_placed'] = False
                         data['placed_target_th'] = 0.0
-                        # NEW: [Case 31] 장전 타임스탬프 리셋
                         data['trap_placed_time'] = ""
 
                     data['PM_H'] = 0.0
@@ -104,7 +104,6 @@ class VAvwapHybridPlugin:
                 
                 data['limit_order_placed'] = bool(data.get('limit_order_placed', False))
                 data['placed_target_th'] = float(data.get('placed_target_th', 0.0))
-                # NEW: [Case 31] 상태 로드 시 팩트 추출
                 data['trap_placed_time'] = str(data.get('trap_placed_time', ""))
 
                 return data
@@ -223,7 +222,6 @@ class VAvwapHybridPlugin:
             return None
 
     def get_decision(self, base_ticker=None, exec_ticker=None, base_curr_p=0.0, exec_curr_p=0.0, base_day_open=0.0, avwap_avg_price=0.0, avwap_qty=0, avwap_alloc_cash=0.0, context_data=None, df_1min_base=None, df_1min_exec=None, now_est=None, avwap_state=None, regime_data=None, is_simulation=False, sortie_mode="SINGLE", **kwargs):
-        # 제16 절대 헌법: 변수 스코프 최상단 전진 배치
         avwap_qty = avwap_qty if avwap_qty != 0 else kwargs.get('current_qty', 0)
         exec_curr_p = exec_curr_p if exec_curr_p > 0 else kwargs.get('exec_curr_p', 0.0)
         avwap_avg_price = avwap_avg_price if avwap_avg_price > 0 else kwargs.get('avwap_avg_price', kwargs.get('avg_price', 0.0))
@@ -238,7 +236,7 @@ class VAvwapHybridPlugin:
         curr_offset = 0.0
         curr_t_h = 0.0
         curr_t_l = 0.0
-        curr_candle_time_str = "" # 🚨 NEW: [Case 31] 타임라인 팩트 앵커 전진 배치
+        curr_candle_time_str = "" 
         
         now_est = now_est or datetime.datetime.now(ZoneInfo('America/New_York'))
         curr_time = now_est.time()
@@ -252,7 +250,7 @@ class VAvwapHybridPlugin:
         
         limit_order_placed = persistent_state.get('limit_order_placed', False)
         placed_target_th = persistent_state.get('placed_target_th', 0.0)
-        trap_placed_time = avwap_state.get('trap_placed_time', "") if avwap_state else persistent_state.get('trap_placed_time', "") # NEW: 상태에서 장전 시간 추출
+        trap_placed_time = avwap_state.get('trap_placed_time', "") if avwap_state else persistent_state.get('trap_placed_time', "")
         
         dump_jitter_sec = persistent_state.get('dump_jitter_sec', 0)
         base_dump_dt = datetime.datetime.combine(now_est.date(), datetime.time(15, 20)).replace(tzinfo=ZoneInfo('America/New_York'))
@@ -265,7 +263,6 @@ class VAvwapHybridPlugin:
         t_l = persistent_state.get('T_L', 0.0)
         offset = persistent_state.get('offset', 0.0)
 
-        # 🚨 [V77.30 관제탑 렌더링 무결성 사수]
         if curr_time >= time_0400:
             df_1m = df_1min_exec
             if df_1m is not None and not df_1m.empty and 'time_est' in df_1m.columns:
@@ -273,10 +270,8 @@ class VAvwapHybridPlugin:
                 df_today = df_1m[(df_1m['time_est'] >= '040000') & (df_1m['time_est'] <= curr_time_str_raw)]
                 
                 if not df_today.empty:
-                    # 🚨 NEW: [Case 31] 현재 스캔 중인 캔들의 시간 추출
                     curr_candle_time_str = str(df_today.iloc[-1]['time_est'])
 
-                    # 🚨 MODIFIED: [V77.18] 프리마켓 시계열 경계 누수 완벽 수술 및 T_H/T_L 절대 앵커 락온
                     slice_end_str = '092959' if curr_time >= time_0930 else curr_time_str_raw
                     df_pm = df_1m[(df_1m['time_est'] >= '040000') & (df_1m['time_est'] <= slice_end_str)]
                     
@@ -290,9 +285,9 @@ class VAvwapHybridPlugin:
                     curr_c = float(df_today.iloc[-1]['close'])
                     curr_l = float(df_today.iloc[-1]['low'])
                     
-                    curr_offset = prev_c * amp5 * 0.50
+                    # 🚨 MODIFIED: [V78.00 팩트 교정] 진폭 오프셋 50% -> 45% 하향 락온
+                    curr_offset = prev_c * amp5 * 0.45
                     
-                    # MODIFIED: [V77.14] 백테스트 절대기준 동기화: T_H 하향 캡핑 소각 및 순수 수학적 역전 허용
                     curr_t_h = curr_pm_h - curr_offset
                     curr_t_l = curr_pm_l + curr_offset
 
@@ -327,7 +322,7 @@ class VAvwapHybridPlugin:
                 'offset': offset,
                 'limit_order_placed': limit_order_placed,
                 'placed_target_th': placed_target_th,
-                'trap_placed_time': trap_placed_time if t_time is None else t_time # NEW: [Case 31] 응답 객체에 시간 락온 포함
+                'trap_placed_time': trap_placed_time if t_time is None else t_time 
             }
 
         if avwap_qty > 0:
@@ -342,11 +337,12 @@ class VAvwapHybridPlugin:
                     self.save_state(exec_ticker, now_est, persistent_state)
                 return _build_res('SELL', '동적_덤핑_타임라인_도달_전량_시장가_덤핑', qty=avwap_qty, target_price=exec_curr_p)
 
-            exit_target_price = round(safe_avg * 1.03, 2)
+            # 🚨 MODIFIED: [V78.00] 투트랙 익절 목표가 2.0% 락온 (2.0% 도달 시 즉각 수익 확정)
+            exit_target_price = round(safe_avg * 1.02, 2)
             if exec_curr_p >= exit_target_price:
-                return _build_res('SELL', '목표가(+3.0%)_도달_순수모멘텀_익절_격발', qty=avwap_qty, target_price=exit_target_price)
+                return _build_res('SELL', '목표가(+2.0%)_도달_순수모멘텀_익절_격발', qty=avwap_qty, target_price=exit_target_price)
 
-            return _build_res('HOLD', '보유중_순수익절(+3.0%)_및_동적덤핑_감시중')
+            return _build_res('HOLD', '보유중_순수익절(+2.0%)_및_동적덤핑_감시중')
 
         if is_shutdown:
             return _build_res('WAIT', '당일영구동결_상태(신규진입금지)')
@@ -360,11 +356,9 @@ class VAvwapHybridPlugin:
         if prev_c <= 0 or amp5 <= 0:
             return _build_res('WAIT', '진입_평가용_필수데이터_결측_대기')
             
-        # 🚨 MODIFIED: [Case 11] 다중 출격 모드가 아닐 경우(단일 타격)에만 매매 종료 락온 적용
         if executed_buy and sortie_mode == "SINGLE":
             return _build_res('WAIT', '일일_1회_타격_완료_매매_종료(단일타격_모드)')
 
-        # 🚨 MODIFIED: [Case 11] 조건부 기요틴: 프리장 미체결(executed_buy == False) 상태에서만 정규장 휩소 회피 셧다운 격발
         if curr_time >= time_0930 and not executed_buy:
             persistent_state["shutdown"] = True
             persistent_state["limit_order_placed"] = False
@@ -380,19 +374,15 @@ class VAvwapHybridPlugin:
             logging.info(f"🛑 [09:30 기요틴 셧다운] 프리장 매수 체결 불발. 정규장 폭락 휩소를 회피하기 위해 당일 매매를 종료(퇴근)합니다.")
             return _build_res('SHUTDOWN', '09:30_기요틴_프리장미체결_정규장회피_당일퇴근')
             
-        # 🚨 MODIFIED: [V77.14] 백테스트 절대기준 동기화: 5분봉 지지 필터 소각 및 순수 T_H 타점 관통 락온
         if not limit_order_placed:
             if curr_l > 0 and curr_l <= t_h:
-                
-                # 🚨 제16 절대 헌법: 예산 분할 연산을 상태 변이 앞단으로 전진 배치
                 safe_budget = avwap_alloc_cash * 0.95
                 buy_qty = int(math.floor(safe_budget / t_h)) if t_h > 0 else 0
                 
-                # 🚨 0주 산출 시 발생하는 기억 상실 환각(Split-Brain) 맹점 원천 차단
                 if buy_qty > 0:
                     persistent_state['limit_order_placed'] = True
                     persistent_state['placed_target_th'] = t_h
-                    persistent_state['trap_placed_time'] = curr_candle_time_str # NEW: [Case 31] 타임 쉴드 가동을 위한 캔들 팩트 락온
+                    persistent_state['trap_placed_time'] = curr_candle_time_str 
                     limit_order_placed = True
                     placed_target_th = t_h
                     trap_placed_time = curr_candle_time_str
@@ -406,13 +396,12 @@ class VAvwapHybridPlugin:
                     return _build_res('WAIT', '조건_충족이나_예산부족(0주)_덫장전_보류')
         else:
             is_time_shield_active = False
-            # 🚨 NEW: [Case 31] 1분봉 시차 패러독스 방어망 (Time-Shield Decoupling)
             if trap_placed_time and curr_candle_time_str:
                 try:
                     t1 = datetime.datetime.strptime(trap_placed_time, '%H%M%S')
                     t2 = datetime.datetime.strptime(curr_candle_time_str, '%H%M%S')
                     diff_sec = (t2 - t1).total_seconds()
-                    if diff_sec < 0: # Overnight safe-guard
+                    if diff_sec < 0: 
                         diff_sec += 86400
                     if 0 <= diff_sec <= 60:
                         is_time_shield_active = True
@@ -420,7 +409,6 @@ class VAvwapHybridPlugin:
                     pass
 
             if curr_l > 0 and curr_l <= placed_target_th:
-                # 🚨 MODIFIED: [Case 31] 타임 쉴드가 켜져있다면 저가(Low)가 관통했더라도 노이즈로 간주하고 TRAP_WAIT로 멱등하게 대기함.
                 if is_time_shield_active:
                     logging.info(f"🛡️ [Case 31 시차 패러독스 방어] 1분봉 시차 패러독스 차단: 장전시각({trap_placed_time}) 직후 캔들({curr_candle_time_str}) 노이즈 관통 바이패스. 덫 자폭(Self-Destruct) 방어!")
                     return _build_res('TRAP_WAIT', f'주문전송_지연방어(1분패러독스)_지정가덫({placed_target_th:.2f})_시장대기중', qty=0, target_price=placed_target_th)
