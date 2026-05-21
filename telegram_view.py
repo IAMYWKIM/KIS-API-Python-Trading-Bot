@@ -2,7 +2,7 @@
 # FILE: telegram_view.py
 # ==========================================================
 # 🚨 MODIFIED: [V77.33 엣지케이스 팩트 수술] 통합 지시서 에스크로(Escrow) UI 렌더링 전면 소각
-# 🚨 MODIFIED: [UI 렌더링 무결성] 최신 버전 V77.34 락온 및 시작 메뉴 텍스트 간소화 (들여쓰기 팩트 교정)
+# 🚨 MODIFIED: [UI 렌더링 무결성] 최신 버전 V77.34 락온 및 시작 메뉴 텍스트 간소화 (텔레그램 네이티브 공백 교정)
 # 🚨 NEW: [Case 11] 환경설정(/settlement)에 다중 출격(Multi-Sortie) 스위치 동적 렌더링 팩트 교정
 # ==========================================================
 import os
@@ -72,10 +72,10 @@ class TelegramView:
         
         msg += f"🕒 <b>[ 운영 스케줄 ({dst_state}) ]</b>\n"
         msg += f"🔹 {fact_hour}:00 : 🔐 매매 초기화 및 변동성 락온\n"
-        msg += f"🔹 {fact_hour}:05 : 📸 V14 덫 장전 & V-REV 스냅샷\n"
+        msg += f"🔹 {fact_hour}:05 : 📸 V14장전 & V-REV스냅샷\n"
         msg += f"🔹 {matrix_time} : 🏛️ 옴니 매트릭스 시장 국면 판별\n"
         msg += f"🔹 {trap_time} : 🌃 V-REV 덫 실전 투하\n"
-        msg += "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(자전거래 차단)\n"
+        msg += "       (자전거래 차단)\n"
         msg += f"🔹 {sync_time} : 📝 확정 정산 스캔 & 졸업 발급\n"
         msg += "🔹 6시간 간격 : 🔑 API 토큰 자동 갱신\n\n"
         
@@ -94,7 +94,7 @@ class TelegramView:
         msg += "⚠️ /reset : 🔓 비상 해제 메뉴 (락/리버스)\n"
         msg += "┗ 🚨 수동 닻 올리기: 예산 부족으로 리버스 진입 후 예수금을 추가 입금하셨다면, 이 메뉴에서 반드시 '리버스 강제 해제' 버튼을 눌러주세요!\n\n"
         
-        msg += "⚠️ /update : 🚀 시스템 자가 업데이트 (경고: 로컬 코드가 초기화됨)\n"
+        msg += "⚠️ /update : 🚀 시스템 자가 업데이트 (경고: 로컬 코드가 초기화됨)"
         return msg
 
     def get_update_confirm_menu(self):
