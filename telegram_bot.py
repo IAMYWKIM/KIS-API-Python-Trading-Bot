@@ -2,6 +2,7 @@
 # FILE: telegram_bot.py
 # ==========================================================
 # 🚨 MODIFIED: [Case 27 절대 위반 교정] 통합 지시서(/sync) 호출 시 에스크로 변수 스캔 및 할당 파이프라인 100% 영구 소각 완료
+# 🚨 MODIFIED: [Case 26 절대 위반 교정] 텔레그램 HTML 파서 붕괴 방어용 예외 객체 이스케이프 쉴드 강제 주입
 # ==========================================================
 import logging
 import datetime
@@ -208,7 +209,9 @@ class TelegramController:
             await status_msg.edit_text("❌ <b>[네트워크 지연 발생]</b>\n야후 파이낸스 또는 증권사 서버 응답이 지연되어 스캔을 강제 종료했습니다. 잠시 후 다시 시도해 주세요.", parse_mode='HTML')
         except Exception as e:
             logging.error(f"🚨 AVWAP 관제탑 호출 내부 에러: {e}")
-            await status_msg.edit_text(f"❌ <b>[시스템 에러]</b>\n독립 관제탑 호출 중 내부 오류가 발생했습니다:\n<code>{e}</code>", parse_mode='HTML')
+            # 🚨 MODIFIED: [Case 26] 텔레그램 HTML 파서 붕괴 방어용 html.escape 락온
+            safe_err = html.escape(str(e))
+            await status_msg.edit_text(f"❌ <b>[시스템 에러]</b>\n독립 관제탑 호출 중 내부 오류가 발생했습니다:\n<code>{safe_err}</code>", parse_mode='HTML')
 
     async def cmd_log(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update): return
@@ -233,7 +236,9 @@ class TelegramController:
             await status_msg.edit_text(report, parse_mode='HTML')
         except Exception as e:
             logging.error(f"🚨 원격 로그 추출 실패: {e}")
-            await status_msg.edit_text(f"🚨 <b>[진단 실패]</b> 로그 추출 중 오류 발생:\n<code>{str(e)}</code>", parse_mode='HTML')
+            # 🚨 MODIFIED: [Case 26] 텔레그램 HTML 파서 붕괴 방어용 html.escape 락온
+            safe_err = html.escape(str(e))
+            await status_msg.edit_text(f"🚨 <b>[진단 실패]</b> 로그 추출 중 오류 발생:\n<code>{safe_err}</code>", parse_mode='HTML')
 
     async def cmd_update(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update): return
@@ -245,7 +250,7 @@ class TelegramController:
         status_msg = await update.message.reply_text("⏳ <b>[시스템 업데이트]</b> 깃허브 원격 서버와 통신을 시작합니다...", parse_mode='HTML')
         try:
             success, msg = await updater.pull_latest_code()
-            import html
+            # 🚨 MODIFIED: [Case 26] 텔레그램 HTML 파서 붕괴 방어용 html.escape 락온
             safe_msg = html.escape(msg)
             if success:
                 await status_msg.edit_text(f"✅ <b>[동기화 완료]</b> {safe_msg}\n\n🔄 시스템 데몬(pipiosbot)을 OS 단에서 재가동합니다. 다운타임 후 봇이 다시 깨어납니다.", parse_mode='HTML')
@@ -253,7 +258,7 @@ class TelegramController:
             else:
                 await status_msg.edit_text(f"❌ <b>[동기화 실패]</b>\n▫️ 사유: {safe_msg}", parse_mode='HTML')
         except Exception as e:
-            import html
+            # 🚨 MODIFIED: [Case 26] 텔레그램 HTML 파서 붕괴 방어용 html.escape 락온
             safe_err = html.escape(str(e))
             await status_msg.edit_text(f"🚨 <b>[치명적 오류]</b> 플러그인 호출 및 프로세스 예외 발생: {safe_err}", parse_mode='HTML')
 
@@ -298,7 +303,10 @@ class TelegramController:
             if ticker not in self.sync_engine.sync_locks: self.sync_engine.sync_locks[ticker] = asyncio.Lock()
             if not self.sync_engine.sync_locks[ticker].locked(): await self.sync_engine.process_auto_sync(ticker, chat_id, context, silent_ledger=False)
             await update.message.reply_text(f"✅ <b>[{ticker}] 수동 지층 삽입 완료!</b>\n▫️ {date_str} | {qty}주 | ${price:.2f}", parse_mode='HTML')
-        except Exception as e: await update.message.reply_text(f"❌ 알 수 없는 에러 발생: {e}")
+        except Exception as e:
+            # 🚨 MODIFIED: [Case 26] 텔레그램 HTML 파서 붕괴 방어용 html.escape 락온
+            safe_err = html.escape(str(e))
+            await update.message.reply_text(f"❌ 알 수 없는 에러 발생: {safe_err}")
 
     async def cmd_clear_q(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update): return
@@ -314,7 +322,10 @@ class TelegramController:
             if ticker not in self.sync_engine.sync_locks: self.sync_engine.sync_locks[ticker] = asyncio.Lock()
             if not self.sync_engine.sync_locks[ticker].locked(): await self.sync_engine.process_auto_sync(ticker, chat_id, context, silent_ledger=True)
             await update.message.reply_text(f"🗑️ <b>[{ticker}] 장부가 완전히 소각되었습니다.</b>\n새로운 지층을 구축할 준비가 완료되었습니다.", parse_mode='HTML')
-        except Exception as e: await update.message.reply_text(f"❌ 소각 중 에러 발생: {e}")
+        except Exception as e:
+            # 🚨 MODIFIED: [Case 26] 텔레그램 HTML 파서 붕괴 방어용 html.escape 락온
+            safe_err = html.escape(str(e))
+            await update.message.reply_text(f"❌ 소각 중 에러 발생: {safe_err}")
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update): return

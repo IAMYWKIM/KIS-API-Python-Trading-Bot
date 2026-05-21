@@ -3,6 +3,7 @@
 # ==========================================================
 # 🚨 MODIFIED: [V77.31] 팻핑거 방어 - PRE, REG 시장 상태일 때만 수동 요격 버튼 활성화 락온
 # 🚨 NEW: [Case 11] 다중 출격(Multi-Sortie) 모드 관제탑 헤더 상태 렌더링 동기화
+# 🚨 MODIFIED: [Case 14 절대 헌법 준수] 달력 API(mcal) 호출 시 10.0초 타임아웃 락온으로 이벤트 루프 교착 완벽 차단
 # ==========================================================
 import logging
 import datetime
@@ -34,7 +35,8 @@ class AvwapConsolePlugin:
             def _fetch_schedule():
                 nyse = mcal.get_calendar('NYSE')
                 return nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
-            schedule = await asyncio.to_thread(_fetch_schedule)
+            # 🚨 MODIFIED: [Case 14 절대 헌법 준수] 10초 타임아웃 방어막 이식 완료
+            schedule = await asyncio.wait_for(asyncio.to_thread(_fetch_schedule), timeout=10.0)
             if schedule.empty:
                 status_code = "CLOSE"
             else:
@@ -51,6 +53,12 @@ class AvwapConsolePlugin:
                     status_code = "AFTER"
                 else:
                     status_code = "CLOSE"
+        except asyncio.TimeoutError:
+            logging.error("🚨 달력 API 호출 타임아웃 (10초). Fail-Open 평일 개장으로 강제 폴백합니다.")
+            if now_est.weekday() < 5:
+                status_code = "REG"
+            else:
+                status_code = "CLOSE"
         except Exception:
             if now_est.weekday() < 5:
                 status_code = "REG"

@@ -44,13 +44,10 @@ def get_budget_allocation(cash, tickers, cfg):
     allocated = {}
     
     safe_cash = float(cash) if cash is not None else 0.0
-    vrev_virtual_escrow = 0.0 
     
-    for tx in tickers:
-        if getattr(cfg, 'get_version', lambda x: "V14")(tx) == "V_REV":
-            vrev_virtual_escrow += float(getattr(cfg, 'get_seed', lambda x: 0.0)(tx) or 0.0) * 0.15
-
-    free_cash = max(0.0, safe_cash - vrev_virtual_escrow)
+    # 🚨 MODIFIED: [Case 27 절대 위반 수술] 에스크로(vrev_virtual_escrow) 삭감 로직 100% 영구 소각
+    # 타임라인이 완벽히 분리되었으므로 V14의 가용 예산을 100% 개방함
+    free_cash = safe_cash
     
     for tx in sorted_tickers:
         version = getattr(cfg, 'get_version', lambda x: "V14")(tx)
