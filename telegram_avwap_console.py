@@ -4,6 +4,7 @@
 # 🚨 MODIFIED: [V77.31] 팻핑거 방어 - PRE, REG 시장 상태일 때만 수동 요격 버튼 활성화 락온
 # 🚨 NEW: [Case 11] 다중 출격(Multi-Sortie) 모드 관제탑 헤더 상태 렌더링 동기화
 # 🚨 MODIFIED: [Case 14 절대 헌법 준수] 달력 API(mcal) 호출 시 10.0초 타임아웃 락온으로 이벤트 루프 교착 완벽 차단
+# 🚨 MODIFIED: [Case 28 준수] 팻핑거 방어를 위한 수동 요격 UI 디커플링 팩트 교정 (타점 이탈 시 버튼 비활성화)
 # ==========================================================
 import logging
 import datetime
@@ -272,13 +273,15 @@ class AvwapConsolePlugin:
             msg += f"\n🚨 <b>[ 작전 수행 현황 ]</b>\n"
             msg += f"▫️ 현재상태: <b>{status_txt}</b>\n"
 
-            # 🚨 MODIFIED: [V77.31] 프리/정규장 일때만 수동 버튼 노출 락온 (팻핑거 원천 차단)
+            # 🚨 MODIFIED: [Case 28] 팻핑거 방어를 위한 수동 요격 UI 디커플링 팩트 교정 (타점 이탈 시 버튼 비활성화)
             if status_code in ["PRE", "REG"]:
                 if avwap_qty > 0:
                     keyboard.append([InlineKeyboardButton(f"🧯 {t} 암살자 수동 청산 (0주 락온)", callback_data=f"AVWAP_SET:SYNC_ZERO:{t}")])
                 else:
-                    if t_h > 0.0:
+                    if t_h > 0.0 and curr_p < t_h:
                         keyboard.append([InlineKeyboardButton(f"🔫 [{t}] 수동 강제 요격 (Manual Fire)", callback_data=f"AVWAP_SET:MANUAL_FIRE_REQ:{t}")])
+                    elif t_h > 0.0 and curr_p >= t_h:
+                        keyboard.append([InlineKeyboardButton(f"❌ [{t}] 수동 요격 불가 (타점 이탈)", callback_data="AVWAP_SET:REFRESH:NONE")])
                     else:
                         keyboard.append([InlineKeyboardButton(f"❌ [{t}] 수동 요격 불가 (T_H 대기)", callback_data="AVWAP_SET:REFRESH:NONE")])
             else:

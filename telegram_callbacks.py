@@ -3,6 +3,8 @@
 # ==========================================================
 # 🚨 MODIFIED: [V77.31] 수동 요격(MANUAL_FIRE_REQ/EXEC) 및 수동 청산 진입 전 시간대 이중 필터링 락온
 # 🚨 NEW: [Case 11] 다중 출격(Multi-Sortie) 스위칭 라우터 배선 완벽 개통
+# 🚨 MODIFIED: [Case 16, 26] 전역 스코프 전진 배치로 NameError 런타임 붕괴 완벽 차단
+# 🚨 MODIFIED: [라우팅 누수 방어] 장마감(주말) 시 LOC/LIMIT 덫이 일반 주문으로 빠지는 KIS Reject 맹점 완벽 차단
 # ==========================================================
 import logging
 import datetime
@@ -14,6 +16,8 @@ import math
 import asyncio
 import tempfile
 import yfinance as yf
+# MODIFIED: [Case 16, 26] 전역 스코프 전진 배치로 NameError 런타임 붕괴 완벽 차단
+import html  
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
@@ -65,7 +69,7 @@ class TelegramCallbacks:
                 await query.edit_message_text("⏳ <b>[업데이트 승인됨]</b> GitHub 코드를 강제 페칭합니다...", parse_mode='HTML')
                 try:
                     success, msg = await updater.pull_latest_code()
-                    import html
+                    # MODIFIED: [Case 16, 26] html 모듈 전역 스코프 전진 배치로 중복 import 소각
                     safe_msg = html.escape(msg)
                     if success:
                         await query.edit_message_text(f"✅ <b>[업데이트 완료]</b> {safe_msg}\n\n🔄 데몬을 재가동합니다. 잠시 후 봇이 응답할 것입니다.", parse_mode='HTML')
@@ -73,7 +77,6 @@ class TelegramCallbacks:
                     else:
                         await query.edit_message_text(f"❌ <b>[동기화 실패]</b>\n▫️ 사유: {safe_msg}", parse_mode='HTML')
                 except Exception as e:
-                    import html
                     safe_err = html.escape(str(e))
                     await query.edit_message_text(f"🚨 <b>[치명적 오류]</b> 프로세스 예외 발생: {safe_err}", parse_mode='HTML')
 
@@ -241,7 +244,8 @@ class TelegramCallbacks:
                 is_rev_active = (current_ver == "V_REV")
                 await asyncio.to_thread(self.cfg.set_reverse_state, ticker, is_rev_active, 0)
                 
-                await asyncio.to_thread(self.cfg.clear_escrow_cash, ticker)
+                # MODIFIED: [Case 27] 에스크로 소각 로직 전면 폐기에 따른 데드코드 영구 적출
+                # await asyncio.to_thread(self.cfg.clear_escrow_cash, ticker)
              
                 ledger = await asyncio.to_thread(self.cfg.get_ledger)
                 ledger_data = [r for r in ledger if r.get('ticker') != ticker]
@@ -269,7 +273,7 @@ class TelegramCallbacks:
                 if getattr(self, 'queue_ledger', None):
                     await asyncio.to_thread(self.queue_ledger.clear_queue, ticker)
             
-                await query.edit_message_text(f"✅ <b>[{ticker}] 삼위일체 소각(Nuke) 및 초기화 완료!</b>\n▫️ 본장부, 백업장부, 큐(Queue), 에스크로의 찌꺼기 데이터가 100% 영구 삭제되었습니다.\n▫️ 다음 매수 진입 시 0주 새출발 디커플링 타점 모드로 완벽히 재시작합니다.", parse_mode='HTML')
+                await query.edit_message_text(f"✅ <b>[{ticker}] 삼위일체 소각(Nuke) 및 초기화 완료!</b>\n▫️ 본장부, 백업장부, 큐(Queue) 찌꺼기 데이터가 100% 영구 삭제되었습니다.\n▫️ 다음 매수 진입 시 0주 새출발 디커플링 타점 모드로 완벽히 재시작합니다.", parse_mode='HTML')
        
             elif sub == "CANCEL":
                  await query.edit_message_text("❌ 닫았습니다.", parse_mode='HTML')
@@ -452,8 +456,9 @@ class TelegramCallbacks:
             dyn_start_t = a_start.astimezone(kst_z).strftime("%H%M%S")
             dyn_end_t = b_end.astimezone(kst_z).strftime("%H%M%S")
 
+            # MODIFIED: [라우팅 누수 방어] 장마감 시 LOC/LIMIT는 예약 주문(send_reservation_order)으로 안전하게 이관되도록 팩트 교정
             for o in target_orders:
-                if o['type'] in ["VWAP", "LOC", "LIMIT"] or is_market_active_now:
+                if o['type'] == 'VWAP' or is_market_active_now:
                     res = await asyncio.to_thread(
                         self.broker.send_order, 
                         t, o['side'], o['qty'], o['price'], o['type'],
@@ -477,7 +482,7 @@ class TelegramCallbacks:
             
             target_bonus = plan.get('bonus_orders', [])
             for o in target_bonus:
-                if o['type'] in ["VWAP", "LOC", "LIMIT"] or is_market_active_now:
+                if o['type'] == 'VWAP' or is_market_active_now:
                     res = await asyncio.to_thread(
                         self.broker.send_order, 
                         t, o['side'], o['qty'], o['price'], o['type'],
