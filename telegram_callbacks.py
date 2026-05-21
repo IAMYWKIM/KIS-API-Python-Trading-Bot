@@ -1,25 +1,7 @@
 # ==========================================================
 # FILE: telegram_callbacks.py
 # ==========================================================
-# 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
-# 제1헌법: queue_ledger.get_queue 등 모든 파일 I/O 및 락 점유 메서드는 무조건 asyncio.to_thread로 래핑하여 이벤트 루프 교착(Deadlock)을 원천 차단함.
-# 🚨 MODIFIED: [통합 지시서 수동 제어(EXEC/CANCEL) 완벽 스위칭 작전]
-# - CANCEL_EXEC 덫 파기 완료 시(nuked_count > 0), 당일 매매 잠금(REG Lock)을 강제로 해제하도록
-#   cfg.reset_lock_for_ticker를 비동기로 호출하는 무결성 락온 파이프라인 개통 완료.
-# 🚨 MODIFIED: [V75.11 수동주문 시장 국면 다이내믹 라우팅 락온 (✨사용자 제보 박제)]
-# - 수동 주문(EXEC) 시, 미국 정규장/프리장 시간대(PRE, REG, AFTER)라면 KIS 예약주문 시간 
-#   제약(10:00~22:20 KST)에 걸려 리젝당하는 맹점 완벽 해체.
-# - 장중에는 VWAP, LOC 등 모든 주문을 무조건 일반주문(send_order)으로 강제 직결하고, 
-#   장마감(CLOSE) 시간대에만 예약주문 API를 타도록 스마트 폴백 엔진 이식 완료.
-# 🚨 NEW: [V7.4 Assassin Lock-on] 정점 요격(Apex Intercept) 스위치 콜백 라우터 영구 소각
-# - /settlement 메뉴에서 오조작을 유발하던 APEX_ON, APEX_OFF 콜백 라우팅 블록을 100% 도려내어 팻핑거 맹점 해체.
-# 🚨 NEW: [V77.22 사이보그(Cyborg) 엑시트 전술 이식]
-# - 수동 요격(MANUAL_FIRE) 신호 가로채기 라우터 신설.
-# 🚨 MODIFIED: [V77.23 팻핑거 오조작 차단] 수동 요격 2단계 승인 락온(Safety Catch)
-# - 즉각 격발을 방어하는 MANUAL_FIRE_REQ 뷰포트 신설 및 최종 승인 MANUAL_FIRE_EXEC 파이프라인 격상 완료.
-# 🚨 MODIFIED: [V77.24 팻핑거 오조작 UI 디커플링 완벽 해체]
-# - MANUAL_FIRE_REQ 및 MANUAL_FIRE_EXEC 라우터 내부 4대 절대 방어막 (T_H 결측, 현재가 스캔 실패, 타점 이탈, 예산 부족) 렌더링 대수술.
-# - 기존 화면 덮어쓰기(edit_message_text) 렌더링을 영구 소각하고, 텔레그램 팝업 경고망(query.answer(..., show_alert=True))으로 100% 팩트 교정 완료.
+# 🚨 MODIFIED: [V77.31] 수동 요격(MANUAL_FIRE_REQ/EXEC) 및 수동 청산 진입 전 시간대 이중 필터링 락온
 # ==========================================================
 import logging
 import datetime
@@ -169,7 +151,7 @@ class TelegramCallbacks:
                         new_msg, markup = self.view.get_queue_management_menu(ticker, new_q_data)
                         await query.edit_message_text(new_msg, reply_markup=markup, parse_mode='HTML')
                     else:
-                        err_msg = res.get('msg1', '알 수 없는 에러')
+                        err_msg = html.escape(res.get('msg1', '알 수 없는 에러'))
                         await query.edit_message_text(f"❌ <b>[{ticker}] 수동 긴급 수혈 실패:</b> {err_msg}", parse_mode='HTML')
 
         elif action == "DEL_REQ":
@@ -223,7 +205,8 @@ class TelegramCallbacks:
                     prompt += "<i>(입력을 취소하려면 숫자 이외의 문자를 보내주세요)</i>"
                     await query.edit_message_text(prompt, parse_mode='HTML')
             except Exception as e:
-                await query.answer(f"❌ 처리 중 에러 발생: {e}", show_alert=True)
+                safe_err = html.escape(str(e))
+                await query.answer(f"❌ 처리 중 에러 발생: {safe_err}", show_alert=True)
 
         elif action == "VERSION":
             await query.answer()
@@ -394,7 +377,6 @@ class TelegramCallbacks:
             if holdings is None:
                 return await query.edit_message_text("❌ API 통신 오류로 잔고를 확인할 수 없어 실행을 차단합니다. 잠시 후 다시 시도해 주세요.")
 
-            # 🚨 NEW: [스냅샷 강제 갱신 (Snapshot Override) 락온]
             def _nuke_old_snapshot():
                 est = ZoneInfo('America/New_York')
                 now_est = datetime.datetime.now(est)
@@ -455,7 +437,6 @@ class TelegramCallbacks:
        
             target_orders = plan.get('core_orders', plan.get('orders', []))
             
-            # 🚨 MODIFIED: [V75.11 수동주문 시장 국면 다이내믹 라우팅 락온]
             is_market_active_now = status_code in ["PRE", "REG", "AFTER"]
             
             est_z = ZoneInfo('America/New_York')
@@ -488,7 +469,7 @@ class TelegramCallbacks:
                 if not is_success:
                     all_success = False
                 
-                err_msg = res.get('msg1', '오류')
+                err_msg = html.escape(res.get('msg1', '오류'))
                 status_icon = '✅' if is_success else f'❌({err_msg})'
                 msg += f"└ 1차 필수: {o['desc']} {o['qty']}주: {status_icon}\n"
                 await asyncio.sleep(0.2) 
@@ -509,7 +490,7 @@ class TelegramCallbacks:
                     )
                  
                 is_success = res.get('rt_cd') == '0'
-                err_msg = res.get('msg1', '잔금패스')
+                err_msg = html.escape(res.get('msg1', '잔금패스'))
                 status_icon = '✅' if is_success else f'❌({err_msg})'
                 msg += f"└ 2차 보너스: {o['desc']} {o['qty']}주: {status_icon}\n"
                 await asyncio.sleep(0.2) 
@@ -524,7 +505,6 @@ class TelegramCallbacks:
 
             await context.bot.send_message(chat_id, msg, parse_mode='HTML')
 
-        # NEW: [통합 지시서 수동 매매 취소 버튼 탑재 및 KIS 다이렉트 팩트 취소 라우팅 개통]
         elif action == "CANCEL_EXEC":
             t = sub
             await query.answer()
@@ -533,7 +513,6 @@ class TelegramCallbacks:
             nuked_count = 0
             err_count = 0
             
-            # 1. 예약 원장 덫 파기 (제19경고 준수)
             try:
                 est_now = datetime.datetime.now(ZoneInfo('America/New_York'))
                 d_str = est_now.strftime('%Y%m%d')
@@ -556,13 +535,10 @@ class TelegramCallbacks:
                                 logging.error(f"🚨 [{t}] 수동 예약 덫 취소 실패: {e}")
                                 err_count += 1
             except asyncio.TimeoutError:
-                logging.error(f"🚨 [{t}] 예약 덫 스캔 타임아웃")
                 err_count += 1
             except Exception as e:
-                logging.error(f"🚨 [{t}] 예약 덫 스캔 에러: {e}")
                 err_count += 1
 
-            # 2. 일반 미체결 덫 파기
             try:
                 unfilled = await asyncio.wait_for(
                     asyncio.to_thread(self.broker.get_unfilled_orders_detail, t),
@@ -580,17 +556,13 @@ class TelegramCallbacks:
                                 logging.error(f"🚨 [{t}] 수동 일반 덫 취소 실패: {e}")
                                 err_count += 1
             except asyncio.TimeoutError:
-                logging.error(f"🚨 [{t}] 일반 덫 스캔 타임아웃")
                 err_count += 1
             except Exception as e:
-                logging.error(f"🚨 [{t}] 일반 덫 스캔 에러: {e}")
                 err_count += 1
 
-            # 🚨 MODIFIED: [통합 지시서 수동 제어(EXEC/CANCEL) 완벽 스위칭 작전]
             if nuked_count > 0:
                 await asyncio.to_thread(self.cfg.reset_lock_for_ticker, t)
 
-            # 결과 타전
             if err_count > 0:
                 await context.bot.send_message(chat_id, f"⚠️ <b>[{t}] 수동 취소 완료 (일부 오류 발생)</b>\n▫️ 총 <b>{nuked_count}건</b>의 덫을 파기하고 매매 잠금을 해제했으나, {err_count}건의 오류가 발생했습니다.", parse_mode='HTML')
             elif nuked_count > 0:
@@ -598,7 +570,6 @@ class TelegramCallbacks:
             else:
                 await context.bot.send_message(chat_id, f"ℹ️ <b>[{t}] 수동 취소 결과</b>\n▫️ 취소할 덫이 없습니다.", parse_mode='HTML')
 
-        # 🚨 MODIFIED: [V72.15 settlement 콜백 라우팅 증발 맹점 영구 복원]
         elif action == "SET_VER":
             await query.answer()
             ticker = data[2]
@@ -624,7 +595,6 @@ class TelegramCallbacks:
             
             await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
 
-        # 🚨 MODIFIED: [V72.15 settlement 콜백 라우팅 증발 맹점 영구 복원]
         elif action == "SET_VER_CONFIRM":
             await query.answer()
             ticker = data[2]
@@ -649,7 +619,6 @@ class TelegramCallbacks:
                 
             await query.edit_message_text(msg, parse_mode='HTML')
 
-        # 🚨 MODIFIED: [V72.15 settlement 콜백 라우팅 증발 맹점 영구 복원]
         elif action == "AVWAP":
             if sub == "MENU":
                 await controller.cmd_avwap(update, context)
@@ -683,7 +652,12 @@ class TelegramCallbacks:
 
         elif action == "AVWAP_SET":
             ticker = data[2]
+            # 🚨 MODIFIED: [V77.31] 암살자 수동 버튼(청산/요격) 진입 전 시간대 락온 (팻핑거 원천 차단)
             if sub == "SYNC_ZERO":
+                status_code, _ = await controller._get_market_status()
+                if status_code not in ["PRE", "REG"]:
+                    return await query.answer("❌ [격발 차단] 현재 장운영시간(정규장/프리장)이 아닙니다.", show_alert=True)
+                    
                 await query.answer()
                 try:
                     app_data = context.bot_data.get('app_data', {})
@@ -722,15 +696,19 @@ class TelegramCallbacks:
                     await query.edit_message_text(f"🧯 <b>[{ticker}] AVWAP 수동 청산 (0주 락온) 완료!</b>\n▫️ 암살자 물량이 0주로 강제 포맷되었으며, 금일 남은 시간 동안 영구 동결(SHUTDOWN)됩니다.", parse_mode='HTML')
                 except Exception as e:
                     logging.error(f"🚨 수동 0주 동기화 에러: {e}")
-                    await query.edit_message_text(f"❌ 수동 0주 동기화 중 에러 발생: {e}", parse_mode='HTML')
+                    safe_err = html.escape(str(e))
+                    await query.edit_message_text(f"❌ 수동 0주 동기화 중 에러 발생: {safe_err}", parse_mode='HTML')
             elif sub == "REFRESH":
                 await query.answer()
                 if hasattr(controller, 'cmd_avwap'):
                     await controller.cmd_avwap(update, context)
             
-            # 🚨 MODIFIED: [V77.24 팻핑거 오조작 UI 디커플링 완벽 해체] 수동 요격 2단계 승인 락온(Safety Catch)
             elif sub == "MANUAL_FIRE_REQ":
                 try:
+                    status_code, _ = await controller._get_market_status()
+                    if status_code not in ["PRE", "REG"]:
+                        return await query.answer("❌ [격발 차단] 현재 장운영시간(정규장/프리장)이 아닙니다.", show_alert=True)
+                        
                     app_data = context.bot_data.get('app_data', {})
                     tracking_cache = app_data.get('sniper_tracking', {})
                     
@@ -765,10 +743,13 @@ class TelegramCallbacks:
             
             elif sub == "MANUAL_FIRE_EXEC":
                 try:
+                    status_code, _ = await controller._get_market_status()
+                    if status_code not in ["PRE", "REG"]:
+                        return await query.answer("❌ [격발 차단] 현재 장운영시간(정규장/프리장)이 아닙니다.", show_alert=True)
+                        
                     app_data = context.bot_data.get('app_data', {})
                     tracking_cache = app_data.get('sniper_tracking', {})
                     
-                    # 팩트 스캔: T_H 가져오기
                     t_h = tracking_cache.get(f"AVWAP_T_H_{ticker}", 0.0)
                     if t_h <= 0.0:
                         if hasattr(self.strategy, 'v_avwap_plugin'):
@@ -778,9 +759,8 @@ class TelegramCallbacks:
                             t_h = float(state.get('T_H', 0.0))
                     
                     if t_h <= 0.0:
-                        return await query.answer(f"❌ [{ticker}] 수동 요격 실패\n▫️ T_H(지정가 덫 기준선) 데이터가 존재하지 않습니다. 스캔이 완료될 때까지 대기하십시오.", show_alert=True)
+                        return await query.answer(f"❌ [{ticker}] 수동 요격 실패\n▫️ T_H(지정가 덫 기준선) 데이터가 존재하지 않습니다. 스캔이 완료될 때 대기하십시오.", show_alert=True)
 
-                    # 팩트 스캔: 현재가 가져오기
                     try:
                         curr_p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=5.0)
                         curr_p = float(curr_p_val or 0.0)
@@ -791,11 +771,9 @@ class TelegramCallbacks:
                     if curr_p <= 0.0:
                         return await query.answer(f"❌ [{ticker}] 수동 요격 실패\n▫️ 현재가를 스캔할 수 없습니다. 통신 상태를 확인하십시오.", show_alert=True)
 
-                    # 타점 이탈 방어막
                     if curr_p >= t_h:
                         return await query.answer(f"🛡️ [{ticker}] 수동 요격 차단 (타점 이탈)\n▫️ 현재가(${curr_p:.2f})가 T_H(${t_h:.2f}) 이상입니다.\n▫️ 떨어지는 칼날(Deep Dip) 조건 미충족.", show_alert=True)
 
-                    # 가용 예산 스캔
                     async with self.tx_lock:
                         cash, holdings = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=10.0)
                         
@@ -806,16 +784,13 @@ class TelegramCallbacks:
                     if buy_qty <= 0:
                         return await query.answer(f"❌ [{ticker}] 수동 요격 실패\n▫️ 예산 부족(0주 산출). 가용 현금: ${avwap_free_cash:.2f}", show_alert=True)
 
-                    # 방어막 전면 통과 완료 - 딥매수 팩트 집행 개시
                     await query.answer("🔫 사이보그 요격 시퀀스 정상 가동. KIS 서버로 전송합니다...", show_alert=False)
                     await query.edit_message_text(f"🚀 <b>[{ticker}] 사이보그(Cyborg) 수동 강제 요격(Manual Fire) 격발 중...</b>\n▫️ 팩트 스캔 완료. 딥매수 타점을 검증합니다.", parse_mode='HTML')
 
-                    # 지정가 매수 격발 (T_H 가격 100% 락온)
                     res = await asyncio.to_thread(self.broker.send_order, ticker, "BUY", buy_qty, t_h, "LIMIT")
                     buy_odno = res.get('odno', '') if isinstance(res, dict) else ''
 
                     if res and res.get('rt_cd') == '0' and buy_odno:
-                        # 실체결 교차 검증 (8초 룰)
                         ccld_qty = 0
                         for _ in range(4):
                             await asyncio.sleep(2.0)
@@ -830,7 +805,6 @@ class TelegramCallbacks:
                                 ccld_qty = buy_qty
                                 break
 
-                        # 미체결 잔량 즉시 파기 (Nuke)
                         if ccld_qty < buy_qty:
                             try:
                                 await asyncio.to_thread(self.broker.cancel_order, ticker, buy_odno)
@@ -838,7 +812,6 @@ class TelegramCallbacks:
                             except: pass
 
                         if ccld_qty > 0:
-                            # 3.0% 익절 덫 장전
                             trap_price = round(t_h * 1.03, 2)
                             trap_res = await asyncio.to_thread(self.broker.send_order, ticker, "SELL", ccld_qty, trap_price, "LIMIT")
                             trap_odno = trap_res.get('odno', '') if isinstance(trap_res, dict) else ''
@@ -846,10 +819,9 @@ class TelegramCallbacks:
                             if trap_res and trap_res.get('rt_cd') == '0' and trap_odno:
                                 trap_msg = f"▫️ +3.0% 수익 타점(<b>${trap_price:.2f}</b>)에 익절 덫을 즉시 자동 장전했습니다."
                             else:
-                                trap_err = trap_res.get('msg1', '오류') if trap_res else '통신 장애'
+                                trap_err = html.escape(trap_res.get('msg1', '오류')) if trap_res else '통신 장애'
                                 trap_msg = f"⚠️ <b>[익절 덫 장전 실패]</b> KIS 서버 거절: {trap_err}"
 
-                            # 상태기계 롤백 (JSON 강제 오버라이드)
                             est = ZoneInfo('America/New_York')
                             now_est = datetime.datetime.now(est)
                             
@@ -893,7 +865,7 @@ class TelegramCallbacks:
                             await query.edit_message_text(f"❌ <b>[{ticker}] 수동 요격 체결 실패</b>\n▫️ 8초 검증 결과 체결된 물량이 없어 주문을 철회했습니다.", parse_mode='HTML')
 
                     else:
-                        err_msg = res.get('msg1', '응답 없음') if res else '통신 장애'
+                        err_msg = html.escape(res.get('msg1', '응답 없음')) if res else '통신 장애'
                         logging.error(f"🚨 [{ticker}] 사이보그 수동 요격 서버 거절: {err_msg}")
                         reject_msg = (
                             f"🚨 <b>[{ticker}] 사이보그 수동 딥매수 서버 거절 (Reject)!</b>\n"
@@ -903,7 +875,8 @@ class TelegramCallbacks:
 
                 except Exception as e:
                     logging.error(f"🚨 사이보그 수동 요격 에러: {e}")
-                    await query.edit_message_text(f"❌ 수동 요격 중 에러 발생: {e}", parse_mode='HTML')
+                    safe_err = html.escape(str(e))
+                    await query.edit_message_text(f"❌ 수동 요격 중 에러 발생: {safe_err}", parse_mode='HTML')
 
         elif action == "TICKER":
             await query.answer()

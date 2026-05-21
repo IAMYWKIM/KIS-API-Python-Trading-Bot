@@ -1,7 +1,8 @@
 # ==========================================================
 # FILE: telegram_view.py
 # ==========================================================
-# 🚨 MODIFIED: [V73.15 스케줄 연대기 팩트 패치] 17:05 KST V14 조기 덫 장전 팩트 텍스트 렌더링
+# 🚨 MODIFIED: [V77.33 엣지케이스 팩트 수술] 통합 지시서 에스크로(Escrow) UI 렌더링 전면 소각
+# 🚨 MODIFIED: [UI 렌더링 무결성] 최신 버전 V77.33 락온
 # ==========================================================
 import os
 import math
@@ -240,7 +241,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V77.30 무결점 디커플링 에디션 (V7.4 Assassin)</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V77.33 무결점 디커플링 에디션 (V7.4 Assassin)</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -278,27 +279,17 @@ class TelegramView:
         return msg, InlineKeyboardMarkup(keyboard)
 
     def create_sync_report(self, status_text, dst_text, cash, rp_amount, ticker_data, is_trade_active, p_trade_data=None, exchange_rate=None):
-        total_locked = 0.0
-        header_msg = ""
-        body_msg = ""
-        keyboard = []
-        real_cash = 0.0
-        krw_profit = 0.0
-        
-        total_locked = sum(t_info.get('escrow', 0.0) for t_info in ticker_data)
         header_msg = f"📜 <b>[ 통합 지시서 ({status_text}) ]</b>\n📅 <b>{dst_text}</b>\n"
         
-        if total_locked > 0:
-            real_cash = max(0, cash - total_locked)
-            header_msg += f"💵 한투 전체 잔고: ${cash:,.2f}\n"
-            header_msg += f"🔒 에스크로 격리금: -${total_locked:,.2f}\n"
-            header_msg += f"✅ 실질 가용 예산: ${real_cash:,.2f}\n"
-        else:
-            header_msg += f"💵 주문가능금액: ${cash:,.2f}\n"
-        
+        # 🚨 MODIFIED: [V77.33] 통합 지시서 에스크로 렌더링 팩트 소각
+        header_msg += f"💵 주문가능금액: ${cash:,.2f}\n"
         header_msg += f"🏛️ RP 투자권장: ${rp_amount:,.2f}\n"
         header_msg += "----------------------------\n\n"
         
+        keyboard = []
+        body_msg = ""
+        krw_profit = 0.0
+
         for t_info in ticker_data:
             t = t_info.get('ticker', 'UNK')
             v_mode = t_info.get('version', 'V14')
@@ -368,12 +359,7 @@ class TelegramView:
             
             body_msg += f"💵 총 시드: ${safe_seed:,.0f}\n🛒 <b>{bdg_txt}</b>\n"
        
-            escrow = t_info.get('escrow', 0.0)
-            if escrow > 0:
-                body_msg += f"🔐 내 금고 보호액: ${escrow:,.2f}\n"
-            elif is_rev_logic and proc_status == "🩸리버스(긴급수혈)":
-                body_msg += "🔐 내 금고 보호액: $0.00 (Empty 🚨)\n"
-            
+            # 🚨 MODIFIED: [V77.33] 바디 내 금고 보호액(에스크로) 렌더링 팩트 소각
             body_msg += f"💰 현재 ${safe_curr:,.2f} / 평단 ${safe_avg:,.2f} ({fact_qty}주)\n"
             
             if prev_close > 0 and day_high > 0 and day_low > 0:
