@@ -18,6 +18,7 @@
 # 🚨 MODIFIED: [V77.02 하극상 매수 영구 소각] _ceil_2 내부 파이썬 부동소수점 오차(IEEE 754) 1센트 팽창 버그 원천 차단.
 # 🚨 MODIFIED: [Case 03 준수] 동일 종목 유령 중복 응답 누적 합산 절대 금지 및 무시 처리 팩트 교정 완료.
 # 🚨 MODIFIED: [결함 2 수술] get_amp_5d_data 내 ZeroDivision 런타임 붕괴 방어용 replace(0, np.nan) 락온 팩트 결속
+# 🚨 MODIFIED: [제2헌법 준수] yfinance 네임스페이스 오염을 유발하는 중복 임포트 영구 소각 및 단일화 락온
 # ==========================================================
 
 import requests
@@ -26,7 +27,6 @@ import time
 import datetime
 import os
 import math
-import yfinance as yfinance
 import yfinance as yf
 from zoneinfo import ZoneInfo
 import tempfile
