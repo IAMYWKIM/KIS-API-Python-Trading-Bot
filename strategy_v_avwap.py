@@ -3,6 +3,8 @@
 # ==========================================================
 # 🚨 MODIFIED: [V78.00 팩트 교정] AVWAP 오프셋 연산 50% -> 45% 하향 락온 적용.
 # 🚨 NEW: [Case 32 & 33 절대 규칙] 3단 지수 백오프 및 TPS 캡핑 방어망 전면 이식
+# 🚨 NEW: [Case 11 동적 오프셋] 프리장(PRE) 40%, 정규장(REG) 45% 오프셋 자동 스위칭 엔진 탑재
+# 🚨 NEW: [Case 11 타임 슬라이싱 차단벽] 13:00 EST 도달 시 신규 진입 덫 장전을 원천 차단(SHUTDOWN)하는 절대 금지선(Time-Guillotine) 이식 완료
 # ==========================================================
 import logging
 import datetime
@@ -18,7 +20,7 @@ import tempfile
 
 class VAvwapHybridPlugin:
     def __init__(self):
-        self.plugin_name = "AVWAP_V78.30_MULTI_SORTIE"
+        self.plugin_name = "AVWAP_V79.00_ULTIMATE_SORTIE"
         self.leverage = 3.0       
 
     def _get_logical_date_str(self, now_est):
@@ -127,7 +129,6 @@ class VAvwapHybridPlugin:
         except Exception as e:
             logging.error(f"🚨 [V_AVWAP] 상태 저장 실패 (원자적 쓰기 에러): {e}")
 
-    # 🚨 MODIFIED: [Case 33] 3단 지수 백오프 및 [Case 32] TPS 캡핑 이식
     def fetch_macro_context(self, base_ticker):
         for attempt in range(3):
             try:
@@ -224,6 +225,7 @@ class VAvwapHybridPlugin:
         
         time_0400 = datetime.time(4, 0)
         time_0930 = datetime.time(9, 30)
+        time_1300 = datetime.time(13, 0) # 🚨 NEW: 13시 컷오프(Time-Guillotine)
 
         persistent_state = self.load_state(exec_ticker, now_est)
         is_shutdown = persistent_state.get('shutdown', False)
@@ -266,7 +268,13 @@ class VAvwapHybridPlugin:
                     curr_c = float(df_today.iloc[-1]['close'])
                     curr_l = float(df_today.iloc[-1]['low'])
                     
-                    curr_offset = prev_c * amp5 * 0.45
+                    # 🚨 NEW: 동적 오프셋 멀티플라이어 결정
+                    if curr_time < time_0930:
+                        offset_multiplier = 0.40  # 프리장 얕은 눌림목 (40%)
+                    else:
+                        offset_multiplier = 0.45  # 정규장 깊은 하방 방어 (45%)
+                        
+                    curr_offset = prev_c * amp5 * offset_multiplier
                     
                     curr_t_h = curr_pm_h - curr_offset
                     curr_t_l = curr_pm_l + curr_offset
@@ -305,6 +313,10 @@ class VAvwapHybridPlugin:
                 'trap_placed_time': trap_placed_time if t_time is None else t_time 
             }
 
+        # 🚨 결측치 유입 시 T_H 하이재킹 차단
+        if prev_c <= 0 or amp5 <= 0:
+            return _build_res('WAIT', '진입_평가용_필수데이터_결측_대기')
+
         if avwap_qty > 0:
             safe_avg = avwap_avg_price if avwap_avg_price > 0 else exec_curr_p
 
@@ -331,9 +343,6 @@ class VAvwapHybridPlugin:
             if not is_simulation:
                 self.save_state(exec_ticker, now_est, persistent_state)
             return _build_res('SHUTDOWN', '동적_덤핑_타임라인_도달_신규진입_영구동결')
-
-        if prev_c <= 0 or amp5 <= 0:
-            return _build_res('WAIT', '진입_평가용_필수데이터_결측_대기')
             
         if executed_buy and sortie_mode == "SINGLE":
             return _build_res('WAIT', '일일_1회_타격_완료_매매_종료(단일타격_모드)')
@@ -352,6 +361,15 @@ class VAvwapHybridPlugin:
                 
             logging.info(f"🛑 [09:30 기요틴 셧다운] 프리장 매수 체결 불발. 정규장 폭락 휩소를 회피하기 위해 당일 매매를 종료(퇴근)합니다.")
             return _build_res('SHUTDOWN', '09:30_기요틴_프리장미체결_정규장회피_당일퇴근')
+
+        # 🚨 NEW: 13:00 EST 신규 진입 원천 차단 (Time-Guillotine)
+        if avwap_qty == 0 and curr_time >= time_1300:
+            if limit_order_placed:
+                persistent_state["shutdown"] = True
+                if not is_simulation:
+                    self.save_state(exec_ticker, now_est, persistent_state)
+                return _build_res('SHUTDOWN', '13:00_타임오버_장전덫_파기_및_진입동결')
+            return _build_res('WAIT', '13:00_장마감3시간전_신규진입_타임라인_차단')
             
         if not limit_order_placed:
             if curr_l > 0 and curr_l <= t_h:

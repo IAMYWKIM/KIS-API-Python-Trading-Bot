@@ -1,14 +1,10 @@
 # ==========================================================
 # FILE: telegram_avwap_console.py
 # ==========================================================
-# 🚨 MODIFIED: [V77.31] 팻핑거 방어 - PRE, REG 시장 상태일 때만 수동 요격 버튼 활성화 락온
-# 🚨 NEW: [Case 11] 다중 출격(Multi-Sortie) 모드 관제탑 헤더 상태 렌더링 동기화
 # 🚨 MODIFIED: [Case 14 절대 헌법 준수] 달력 API(mcal) 호출 시 10.0초 타임아웃 락온으로 이벤트 루프 교착 완벽 차단
-# 🚨 MODIFIED: [Case 28 준수] 팻핑거 방어를 위한 수동 요격 UI 디커플링 팩트 교정 (타점 이탈 시 버튼 비활성화)
-# 🚨 MODIFIED: [0.0달러 환각 방어] 통신 장애 시 0.0달러 폴백 값이 수동 요격 버튼을 강제 활성화시키는 맹점 원천 차단
-# 🚨 NEW: [Case 31] AVWAP 1분봉 시차 패러독스(Time-Shield Decoupling) 락온 캐싱 팩트 동기화 완료.
-# 🚨 MODIFIED: [V78.00 팩트 교정] AVWAP 오프셋 연산 50% -> 45% 하향 락온 및 관제탑 렌더링 100% 동기화 완료.
 # 🚨 NEW: [Case 32 & 33 절대 규칙] 3단 지수 백오프 및 TPS 캡핑 방어망 전면 이식
+# 🚨 NEW: [Case 11 동적 오프셋] 프리장(40%) / 정규장(45%) 시각적 렌더링 팩트 교정 완료
+# 🚨 NEW: [Case 28 수동 요격 스위칭] 현재가 < T_H 제한 전면 해방 및 덫 장전 중 취소(Nuke) 버튼 동적 렌더링
 # ==========================================================
 import logging
 import datetime
@@ -38,7 +34,6 @@ class AvwapConsolePlugin:
      
         import pandas_market_calendars as mcal
         
-        # 🚨 MODIFIED: [Case 33] 3단 지수 백오프
         def _fetch_schedule():
             time.sleep(0.06)
             nyse = mcal.get_calendar('NYSE')
@@ -77,7 +72,7 @@ class AvwapConsolePlugin:
         elif status_code == "PRE":
             header_status = "🌅 <b>[ 프리장 선제 타격 모드 (04:00~09:29 스캔 중) ]</b>"
         else:
-            header_status = "🔥 <b>[ 정규장 실시간 추격 모드 (V77.08 지정가 덫 요격) ]</b>"
+            header_status = "🔥 <b>[ 정규장 실시간 추격 모드 (V79.00 지정가 덫 요격) ]</b>"
         
         active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
         avwap_tickers = [t for t in active_tickers if t == "SOXL"]
@@ -88,7 +83,6 @@ class AvwapConsolePlugin:
         active_avwap = avwap_tickers
         tracking_cache = app_data.get('sniper_tracking', {})
         
-        # 🚨 MODIFIED: [Case 33]
         cash_val = 0.0
         for attempt in range(3):
             try:
@@ -100,10 +94,9 @@ class AvwapConsolePlugin:
                 else: await asyncio.sleep(1.0 * (2 ** attempt))
         available_cash = float(cash_val or 0.0)
         
-        msg = f"🔫 <b>[ 차세대 AVWAP V78.30 관제탑 ]</b>\n{header_status}\n\n"
+        msg = f"🔫 <b>[ 차세대 AVWAP V79.00 관제탑 ]</b>\n{header_status}\n\n"
         keyboard = []
 
-        # 🚨 MODIFIED: [Case 33] 다중 동시 호출 래퍼
         async def _get_with_retry(func, *args):
             for attempt in range(3):
                 try:
@@ -128,6 +121,7 @@ class AvwapConsolePlugin:
                         tracking_cache[f"AVWAP_LIMIT_ORDER_PLACED_{t}"] = saved_state.get('limit_order_placed', False)
                         tracking_cache[f"AVWAP_PLACED_TARGET_TH_{t}"] = saved_state.get('placed_target_th', 0.0)
                         tracking_cache[f"AVWAP_TRAP_PLACED_TIME_{t}"] = saved_state.get('trap_placed_time', "")
+                        tracking_cache[f"AVWAP_BUY_ODNO_{t}"] = saved_state.get('buy_odno', "")
            
                         tracking_cache[f"AVWAP_PM_H_{t}"] = saved_state.get('PM_H', 0.0)
                         tracking_cache[f"AVWAP_PM_L_{t}"] = saved_state.get('PM_L', 0.0)
@@ -175,6 +169,7 @@ class AvwapConsolePlugin:
             limit_order_placed = tracking_cache.get(f"AVWAP_LIMIT_ORDER_PLACED_{t}", False)
             placed_target_th = tracking_cache.get(f"AVWAP_PLACED_TARGET_TH_{t}", 0.0)
             trap_placed_time = tracking_cache.get(f"AVWAP_TRAP_PLACED_TIME_{t}", "")
+            buy_odno = tracking_cache.get(f"AVWAP_BUY_ODNO_{t}", "")
             
             pm_h = tracking_cache.get(f"AVWAP_PM_H_{t}", 0.0)
             pm_l = tracking_cache.get(f"AVWAP_PM_L_{t}", 0.0)
@@ -194,6 +189,7 @@ class AvwapConsolePlugin:
                     "daily_bought_qty": tracking_cache.get(f"AVWAP_DAILY_BOUGHT_{t}", 0),
                     "daily_sold_qty": tracking_cache.get(f"AVWAP_DAILY_SOLD_{t}", 0),
                     "trap_odno": trap_odno,
+                    "buy_odno": buy_odno,
                     "PM_H": pm_h,
                     "PM_L": pm_l,
                     "T_H": t_h,
@@ -268,12 +264,17 @@ class AvwapConsolePlugin:
             reg_h = tracking_cache.get(f"AVWAP_REG_H_{t}", 0.0)
             reg_l = tracking_cache.get(f"AVWAP_REG_L_{t}", 0.0)
             
+            # 🚨 NEW: [Case 11] 동적 오프셋 UI 렌더링 스위치 반영
+            curr_time_str = now_est.time()
+            time_0930_str = datetime.time(9, 30)
+            offset_pct_str = "40%" if curr_time_str < time_0930_str else "45%"
+
             msg += f"🎯 <b>[ {t} (롱) 작전반 - {active_str} ]</b>\n"
             msg += f"▫️ 프리장 최고 (PM_H): <b>${pm_h:.2f}</b>\n"
             msg += f"▫️ 프리장 최저 (PM_L): <b>${pm_l:.2f}</b>\n"
             msg += f"▫️ 정규장 최고 (REG_H): <b>${reg_h:.2f}</b>\n"
             msg += f"▫️ 정규장 최저 (REG_L): <b>${reg_l:.2f}</b>\n"
-            msg += f"▫️ Amp5 오프셋 (45%): <b>${offset:.2f}</b>\n"
+            msg += f"▫️ 동적 오프셋 ({offset_pct_str}): <b>${offset:.2f}</b>\n"
             msg += f"▫️ 상승 돌파 목표 (T_H): <b>${t_h:.2f}</b>\n      (지정가 덫 장전선)\n"
             msg += f"▫️ 하락 지지 기준 (T_L): <b>${t_l:.2f}</b>\n      (단순 참조용)\n\n"
 
@@ -289,16 +290,17 @@ class AvwapConsolePlugin:
             msg += f"\n🚨 <b>[ 작전 수행 현황 ]</b>\n"
             msg += f"▫️ 현재상태: <b>{status_txt}</b>\n"
 
+            # 🚨 NEW: [Case 28] UI/UX 상태기계 동적 라우팅 완벽 결속
             if status_code in ["PRE", "REG"]:
                 if avwap_qty > 0:
                     keyboard.append([InlineKeyboardButton(f"🧯 {t} 암살자 수동 청산 (0주 락온)", callback_data=f"AVWAP_SET:SYNC_ZERO:{t}")])
+                elif limit_order_placed and buy_odno:
+                    keyboard.append([InlineKeyboardButton(f"🛑 [{t}] 수동 매수취소 (Nuke Trap)", callback_data=f"AVWAP_SET:MANUAL_CANCEL_REQ:{t}")])
                 else:
-                    if t_h > 0.0 and curr_p > 0.0 and curr_p < t_h:
-                        keyboard.append([InlineKeyboardButton(f"🔫 [{t}] 수동 강제 요격 (Manual Fire)", callback_data=f"AVWAP_SET:MANUAL_FIRE_REQ:{t}")])
-                    elif t_h > 0.0 and curr_p >= t_h:
-                        keyboard.append([InlineKeyboardButton(f"❌ [{t}] 수동 요격 불가 (타점 이탈)", callback_data="AVWAP_SET:REFRESH:NONE")])
+                    if t_h > 0.0:
+                        keyboard.append([InlineKeyboardButton(f"🔫 [{t}] 수동 강제 요격 (Limit T_H)", callback_data=f"AVWAP_SET:MANUAL_FIRE_REQ:{t}")])
                     else:
-                        keyboard.append([InlineKeyboardButton(f"❌ [{t}] 수동 요격 불가 (T_H 대기 또는 현재가 스캔 실패)", callback_data="AVWAP_SET:REFRESH:NONE")])
+                        keyboard.append([InlineKeyboardButton(f"❌ [{t}] 수동 요격 불가 (T_H 스캔 대기 중)", callback_data="AVWAP_SET:REFRESH:NONE")])
             else:
                 keyboard.append([InlineKeyboardButton(f"⛔ [{t}] 장마감 (수동 제어 불가)", callback_data="AVWAP_SET:REFRESH:NONE")])
 
