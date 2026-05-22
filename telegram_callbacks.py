@@ -6,6 +6,9 @@
 # 🚨 MODIFIED: [Case 16, 26] 전역 스코프 전진 배치로 NameError 런타임 붕괴 완벽 차단
 # 🚨 MODIFIED: [라우팅 누수 방어] 장마감(주말) 시 LOC/LIMIT 덫이 일반 주문으로 빠지는 KIS Reject 맹점 완벽 차단
 # 🚨 NEW: [Case 31] 수동 0주 락온 및 수동 요격 시 `trap_placed_time` 팩트 초기화 및 동기화
+# 🚨 MODIFIED: [결함 1 수술] AVWAP 익절 덫 타점 2.0% 하향 락온 (타점 역전 패러독스 소각 및 회전율 극대화)
+# 🚨 MODIFIED: [결함 2 수술 Case 02/08] 수동 장부 소각 시 KIS 실잔고 0주 강제 동기화 및 0주 팩트 다이렉트 덮어쓰기 락온
+# 🚨 MODIFIED: [결함 3 수술 Case 28] 수동 요격 승인 전 실시간 현재가 팩트 스캔 및 타점 이탈 팻핑거 팝업 생성 원천 차단
 # ==========================================================
 import logging
 import datetime
@@ -270,8 +273,41 @@ class TelegramCallbacks:
             
                 if getattr(self, 'queue_ledger', None):
                     await asyncio.to_thread(self.queue_ledger.clear_queue, ticker)
-            
-                await query.edit_message_text(f"✅ <b>[{ticker}] 삼위일체 소각(Nuke) 및 초기화 완료!</b>\n▫️ 본장부, 백업장부, 큐(Queue) 찌꺼기 데이터가 100% 영구 삭제되었습니다.\n▫️ 다음 매수 진입 시 0주 새출발 디커플링 타점 모드로 완벽히 재시작합니다.", parse_mode='HTML')
+                    # MODIFIED: [결함 2 수술 Case 02/08] KIS 실잔고(0주) 강제 동기화 락온
+                    await asyncio.to_thread(self.queue_ledger.sync_with_broker, ticker, 0, 0.0)
+
+                # MODIFIED: [결함 2 수술 Case 02/08] 당일 매매 잠금 즉각 해제 락온
+                await asyncio.to_thread(self.cfg.reset_lock_for_ticker, ticker)
+
+                # MODIFIED: [결함 2 수술 Case 02/08] 전일 종가 스캔 및 0주 팩트 스냅샷 원자적 오버라이드 락온
+                try:
+                    prev_c_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_previous_close, ticker), timeout=5.0)
+                    prev_c = float(prev_c_val or 0.0)
+                except Exception as e:
+                    logging.error(f"🚨 수동 소각 후 전일 종가 스캔 에러: {e}")
+                    prev_c = 0.0
+                
+                if prev_c > 0:
+                    try:
+                        async with self.tx_lock:
+                            cash_val, _ = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=10.0)
+                            cash = float(cash_val or 0.0)
+                            from scheduler_core import get_budget_allocation
+                            active_tickers_list = await asyncio.to_thread(self.cfg.get_active_tickers)
+                            _, alloc_cash_dict = await asyncio.to_thread(get_budget_allocation, cash, active_tickers_list, self.cfg)
+                            available_cash = alloc_cash_dict.get(ticker, 0.0)
+                            
+                            # 0주 팩트 스냅샷 원자적 덮어쓰기 집행 (V-REV/V14 라우터 공통 지원)
+                            await asyncio.to_thread(
+                                self.strategy.get_plan, 
+                                ticker, 0.0, 0.0, 0, prev_c, 
+                                ma_5day=0.0, market_type="REG", available_cash=available_cash, 
+                                is_simulation=True, is_snapshot_mode=True
+                            )
+                    except Exception as e:
+                        logging.error(f"🚨 0주 강제 스냅샷 오버라이드 에러: {e}")
+
+                await query.edit_message_text(f"✅ <b>[{ticker}] 삼위일체 소각(Nuke) 및 초기화 완료!</b>\n▫️ 본장부, 백업장부, 큐(Queue) 찌꺼기 데이터가 100% 영구 삭제되었습니다.\n▫️ KIS 실잔고 0주 동기화, 매매 잠금 해제 및 0주 새출발 디커플링 타점 스냅샷 원자적 덮어쓰기가 완벽히 집행되었습니다.", parse_mode='HTML')
        
             elif sub == "CANCEL":
                  await query.edit_message_text("❌ 닫았습니다.", parse_mode='HTML')
@@ -736,6 +772,20 @@ class TelegramCallbacks:
                     if t_h <= 0.0:
                         return await query.answer(f"❌ [{ticker}] 수동 요격 불가\n▫️ T_H(지정가 덫 기준선) 데이터가 존재하지 않습니다. 스캔 대기.", show_alert=True)
 
+                    # MODIFIED: [결함 3 수술 Case 28] 팝업 렌더링 전 실시간 현재가 팩트 스캔 및 타점 이탈 팻핑거 검증 강제
+                    try:
+                        curr_p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=5.0)
+                        curr_p = float(curr_p_val or 0.0)
+                    except Exception as e:
+                        logging.error(f"🚨 수동 요격 전 현재가 스캔 에러: {e}")
+                        curr_p = 0.0
+                        
+                    if curr_p <= 0.0:
+                        return await query.answer(f"❌ [{ticker}] 수동 요격 불가\n▫️ 실시간 현재가를 스캔할 수 없습니다.", show_alert=True)
+                        
+                    if curr_p >= t_h:
+                        return await query.answer(f"🛡️ [{ticker}] 수동 요격 차단 (타점 이탈)\n▫️ 현재가(${curr_p:.2f})가 T_H(${t_h:.2f}) 이상으로 팝업 렌더링을 차단합니다.", show_alert=True)
+
                     await query.answer("⚠️ 요격 확인 팝업 생성 중...", show_alert=False)
                     
                     msg = f"🚨 <b>[{ticker} 사이보그 엑시트 최종 승인 대기]</b>\n\n"
@@ -825,12 +875,14 @@ class TelegramCallbacks:
                             except: pass
 
                         if ccld_qty > 0:
-                            trap_price = round(t_h * 1.03, 2)
+                            # MODIFIED: [결함 1 수술] 수동 요격 시 익절 덫 타점 2.0% 하향 락온 적용
+                            trap_price = round(t_h * 1.02, 2)
                             trap_res = await asyncio.to_thread(self.broker.send_order, ticker, "SELL", ccld_qty, trap_price, "LIMIT")
                             trap_odno = trap_res.get('odno', '') if isinstance(trap_res, dict) else ''
 
                             if trap_res and trap_res.get('rt_cd') == '0' and trap_odno:
-                                trap_msg = f"▫️ +3.0% 수익 타점(<b>${trap_price:.2f}</b>)에 익절 덫을 즉시 자동 장전했습니다."
+                                # MODIFIED: [결함 1 수술] 텔레그램 메시지 텍스트 2.0% 팩트 교정 완료
+                                trap_msg = f"▫️ +2.0% 수익 타점(<b>${trap_price:.2f}</b>)에 익절 덫을 즉시 자동 장전했습니다."
                             else:
                                 trap_err = html.escape(trap_res.get('msg1', '오류')) if trap_res else '통신 장애'
                                 trap_msg = f"⚠️ <b>[익절 덫 장전 실패]</b> KIS 서버 거절: {trap_err}"
@@ -862,7 +914,7 @@ class TelegramCallbacks:
                                     "trap_odno": trap_odno,
                                     "limit_order_placed": True,
                                     "placed_target_th": t_h,
-                                    "trap_placed_time": tracking_cache[f"AVWAP_TRAP_PLACED_TIME_{ticker}"], # NEW
+                                    "trap_placed_time": tracking_cache[f"AVWAP_TRAP_PLACED_TIME_{ticker}"],
                                     "buy_odno": buy_odno
                                 })
                                 await asyncio.to_thread(self.strategy.v_avwap_plugin.save_state, ticker, now_est, state)
