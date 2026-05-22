@@ -5,6 +5,7 @@
 # 🚨 NEW: [Case 32 & 33 절대 규칙] 3단 지수 백오프 및 TPS 캡핑 방어망 전면 이식
 # 🚨 NEW: [Case 11 동적 오프셋] 프리장(40%) / 정규장(45%) 시각적 렌더링 팩트 교정 완료
 # 🚨 NEW: [Case 28 수동 요격 스위칭] 현재가 < T_H 제한 전면 해방 및 덫 장전 중 취소(Nuke) 버튼 동적 렌더링
+# 🚨 NEW: [V79.50 MA5 스위칭] MA5 앵커 팩트 스캔 엔진 합류 및 텔레그램 렌더링 시각적 디커플링 원천 차단
 # ==========================================================
 import logging
 import datetime
@@ -72,7 +73,7 @@ class AvwapConsolePlugin:
         elif status_code == "PRE":
             header_status = "🌅 <b>[ 프리장 선제 타격 모드 (04:00~09:29 스캔 중) ]</b>"
         else:
-            header_status = "🔥 <b>[ 정규장 실시간 추격 모드 (V79.00 지정가 덫 요격) ]</b>"
+            header_status = "🔥 <b>[ 정규장 실시간 추격 모드 (V79.50 지정가 덫 요격) ]</b>"
         
         active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
         avwap_tickers = [t for t in active_tickers if t == "SOXL"]
@@ -94,7 +95,7 @@ class AvwapConsolePlugin:
                 else: await asyncio.sleep(1.0 * (2 ** attempt))
         available_cash = float(cash_val or 0.0)
         
-        msg = f"🔫 <b>[ 차세대 AVWAP V79.00 관제탑 ]</b>\n{header_status}\n\n"
+        msg = f"🔫 <b>[ 차세대 AVWAP V79.50 관제탑 ]</b>\n{header_status}\n\n"
         keyboard = []
 
         async def _get_with_retry(func, *args):
@@ -139,21 +140,24 @@ class AvwapConsolePlugin:
             sortie_str = "단일 타격(1회)" if sortie_mode == "SINGLE" else "다중 출격(무한)"
             active_str = f"🟢 암살 가동 ({sortie_str})" if is_avwap_active else "⚪ 대기 (OFF)"
             
+            # 🚨 NEW: [V79.50 MA5 스위칭] MA5 데이터 비동기 병렬 스캔망 팩트 수혈
             try:
                 res_batch = await asyncio.gather(
                     _get_with_retry(self.broker.get_current_price, t),
                     _get_with_retry(self.broker.get_previous_close, t),
                     _get_with_retry(self.broker.get_amp_5d_data, t),
-                    _get_with_retry(self.broker.get_1min_candles_df, t)
+                    _get_with_retry(self.broker.get_1min_candles_df, t),
+                    _get_with_retry(self.broker.get_5day_ma, t)
                 )
            
                 curr_p = float(res_batch[0]) if res_batch[0] else 0.0
                 prev_c = float(res_batch[1]) if res_batch[1] else 0.0
                 amp5 = float(res_batch[2]) if res_batch[2] else 0.0
                 df_1m = res_batch[3]
+                ma_5day = float(res_batch[4]) if len(res_batch) > 4 and res_batch[4] else 0.0
                
             except Exception as e:
-                curr_p, prev_c, amp5, df_1m = 0.0, 0.0, 0.0, None
+                curr_p, prev_c, amp5, df_1m, ma_5day = 0.0, 0.0, 0.0, None, 0.0
 
             if df_1m is not None and not df_1m.empty and 'time_est' in df_1m.columns:
                 df_reg = df_1m[(df_1m['time_est'] >= '093000') & (df_1m['time_est'] <= '155959')]
@@ -213,6 +217,7 @@ class AvwapConsolePlugin:
                         is_simulation=True,
                         amp5=amp5,
                         prev_close=prev_c,
+                        ma_5day=ma_5day,
                         sortie_mode=sortie_mode
                     ),
                     timeout=10.0
@@ -263,23 +268,20 @@ class AvwapConsolePlugin:
 
             reg_h = tracking_cache.get(f"AVWAP_REG_H_{t}", 0.0)
             reg_l = tracking_cache.get(f"AVWAP_REG_L_{t}", 0.0)
-            
-            # 🚨 NEW: [Case 11] 동적 오프셋 UI 렌더링 스위치 반영
-            curr_time_str = now_est.time()
-            time_0930_str = datetime.time(9, 30)
-            offset_pct_str = "40%" if curr_time_str < time_0930_str else "45%"
 
+            # 🚨 NEW: [V79.50 MA5 스위칭] MA5 오프셋 렌더링 팩트 교정
             msg += f"🎯 <b>[ {t} (롱) 작전반 - {active_str} ]</b>\n"
             msg += f"▫️ 프리장 최고 (PM_H): <b>${pm_h:.2f}</b>\n"
             msg += f"▫️ 프리장 최저 (PM_L): <b>${pm_l:.2f}</b>\n"
             msg += f"▫️ 정규장 최고 (REG_H): <b>${reg_h:.2f}</b>\n"
             msg += f"▫️ 정규장 최저 (REG_L): <b>${reg_l:.2f}</b>\n"
-            msg += f"▫️ 동적 오프셋 ({offset_pct_str}): <b>${offset:.2f}</b>\n"
+            msg += f"▫️ 5일평균 앵커 오프셋 (45%): <b>${offset:.2f}</b>\n"
             msg += f"▫️ 상승 돌파 목표 (T_H): <b>${t_h:.2f}</b>\n      (지정가 덫 장전선)\n"
             msg += f"▫️ 하락 지지 기준 (T_L): <b>${t_l:.2f}</b>\n      (단순 참조용)\n\n"
 
             msg += f"📊 <b>[ 실시간 현재가 스프레드 ]</b>\n"
-            msg += f"▫️ 전일종가: <b>${prev_c:.2f}</b>\n      (Amp5 진폭: {amp5*100:.2f}%)\n"
+            msg += f"▫️ 전일종가: <b>${prev_c:.2f}</b> (Amp5: {amp5*100:.2f}%)\n"
+            msg += f"▫️ 5일평균가: <b>${ma_5day:.2f}</b>\n"
             msg += f"▫️ 현재가격: <b>${curr_p:.2f}</b>\n"
 
             if avwap_qty > 0:
@@ -290,7 +292,6 @@ class AvwapConsolePlugin:
             msg += f"\n🚨 <b>[ 작전 수행 현황 ]</b>\n"
             msg += f"▫️ 현재상태: <b>{status_txt}</b>\n"
 
-            # 🚨 NEW: [Case 28] UI/UX 상태기계 동적 라우팅 완벽 결속
             if status_code in ["PRE", "REG"]:
                 if avwap_qty > 0:
                     keyboard.append([InlineKeyboardButton(f"🧯 {t} 암살자 수동 청산 (0주 락온)", callback_data=f"AVWAP_SET:SYNC_ZERO:{t}")])

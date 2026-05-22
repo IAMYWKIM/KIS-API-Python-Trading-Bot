@@ -3,8 +3,8 @@
 # ==========================================================
 # 🚨 MODIFIED: [V78.00 팩트 교정] AVWAP 오프셋 연산 50% -> 45% 하향 락온 적용.
 # 🚨 NEW: [Case 32 & 33 절대 규칙] 3단 지수 백오프 및 TPS 캡핑 방어망 전면 이식
-# 🚨 NEW: [Case 11 동적 오프셋] 프리장(PRE) 40%, 정규장(REG) 45% 오프셋 자동 스위칭 엔진 탑재
 # 🚨 NEW: [Case 11 타임 슬라이싱 차단벽] 13:00 EST 도달 시 신규 진입 덫 장전을 원천 차단(SHUTDOWN)하는 절대 금지선(Time-Guillotine) 이식 완료
+# 🚨 MODIFIED: [V79.50 MA5 앵커 스위칭] 기존 시간 기반 동적 오프셋을 전면 폐기하고 MA5(5일 평균 종가) 베이스 앵커로 락온. 결측 시 전일종가(PrevClose)로 Safe Fallback.
 # ==========================================================
 import logging
 import datetime
@@ -20,7 +20,7 @@ import tempfile
 
 class VAvwapHybridPlugin:
     def __init__(self):
-        self.plugin_name = "AVWAP_V79.00_ULTIMATE_SORTIE"
+        self.plugin_name = "AVWAP_V79.50_MA5_ANCHOR"
         self.leverage = 3.0       
 
     def _get_logical_date_str(self, now_est):
@@ -208,8 +208,13 @@ class VAvwapHybridPlugin:
         exec_curr_p = exec_curr_p if exec_curr_p > 0 else kwargs.get('exec_curr_p', 0.0)
         avwap_avg_price = avwap_avg_price if avwap_avg_price > 0 else kwargs.get('avwap_avg_price', kwargs.get('avg_price', 0.0))
         avwap_alloc_cash = avwap_alloc_cash if avwap_alloc_cash > 0 else kwargs.get('alloc_cash', kwargs.get('avwap_alloc_cash', 0.0))
+        
         amp5 = float(kwargs.get('amp5', 0.0))
         prev_c = float(kwargs.get('prev_close', 0.0))
+        ma_5day = float(kwargs.get('ma_5day', 0.0))
+        
+        # 🚨 NEW: 5일 평균 종가 앵커 스위칭 (결측 시 prev_c 폴백)
+        anchor_price = ma_5day if ma_5day > 0 else prev_c
         
         curr_pm_h = 0.0
         curr_pm_l = 0.0
@@ -268,13 +273,8 @@ class VAvwapHybridPlugin:
                     curr_c = float(df_today.iloc[-1]['close'])
                     curr_l = float(df_today.iloc[-1]['low'])
                     
-                    # 🚨 NEW: 동적 오프셋 멀티플라이어 결정
-                    if curr_time < time_0930:
-                        offset_multiplier = 0.40  # 프리장 얕은 눌림목 (40%)
-                    else:
-                        offset_multiplier = 0.45  # 정규장 깊은 하방 방어 (45%)
-                        
-                    curr_offset = prev_c * amp5 * offset_multiplier
+                    # 🚨 MODIFIED: [MA5 앵커 스위칭] 타임라인 기반 스위칭 철거 및 MA5 앵커 오프셋 적용
+                    curr_offset = anchor_price * amp5 * 0.45
                     
                     curr_t_h = curr_pm_h - curr_offset
                     curr_t_l = curr_pm_l + curr_offset
@@ -313,8 +313,8 @@ class VAvwapHybridPlugin:
                 'trap_placed_time': trap_placed_time if t_time is None else t_time 
             }
 
-        # 🚨 결측치 유입 시 T_H 하이재킹 차단
-        if prev_c <= 0 or amp5 <= 0:
+        # 🚨 결측치 유입 시 T_H 하이재킹 차단 (Anchor Base 검증)
+        if anchor_price <= 0 or amp5 <= 0:
             return _build_res('WAIT', '진입_평가용_필수데이터_결측_대기')
 
         if avwap_qty > 0:

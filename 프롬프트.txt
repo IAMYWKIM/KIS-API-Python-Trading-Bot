@@ -41,7 +41,7 @@
 🔸 상위층(Upper) 탈출 : Sell_Upper = Upper_Price * 1.010
 🔹 자전거래 방어막 캡핑 : MinSell = MIN(Sell_L1, Sell_Upper). 매수 타점이 MinSell 이상이면 MAX(0.01, MinSell - 0.01)로 하향 조정.
 ⚔️ **암살자 aVWAP (다중 출격 최적화) 핵심 공식**
-🔹 동적 진폭 오프셋 (Dynamic Offset) : Offset = PrevClose * Amp_5d * Multiplier (프리장은 얕은 눌림목을 위해 40% 적용, 정규장은 휩소 방어를 위해 45% 적용 락온)
+🔹 앵커 타점 및 오프셋 (MA5 Base Offset) : Offset = MA5(5일 평균 종가) * Amp_5d * 0.45 (V자 반등장에서는 얕은 눌림목 타격, 폭락장에서는 심해 방어막으로 자동 가변 전개됨. 단, MA5 결측 시 PrevClose로 Safe Fallback 락온)
 🔹 매수 앵커 및 타점 : T_H = PM_H (프리장 고가) - Offset
 🔹 매도 타점 (익절가) : Target = Average Price * 1.02 (2.0% 타겟 익절)
 🛡️ **[ 33대 치명적 엣지 케이스 절대 방어망 ]**

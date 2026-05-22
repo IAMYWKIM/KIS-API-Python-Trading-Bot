@@ -9,6 +9,7 @@
 # 🚨 NEW: [Case 31] 1분봉 시차 패러독스(Latency Phantom Fill) 방어를 위한 캐시 수혈 및 다중출장 상태 초기화 배선 개통 완료.
 # 🚨 MODIFIED: [결함 1 수술] AVWAP 익절 덫 타점 2.0% 하향 락온 (타점 역전 패러독스 원천 소각 및 회전율 극대화)
 # 🚨 NEW: [Case 32 & 33 절대 규칙] 3단 지수 백오프 및 스케줄러 루프 TPS 캡핑 이식 완료
+# 🚨 MODIFIED: [V79.50] MA5 연산 비동기 병렬 스캔 및 get_decision 다이렉트 주입 배선 100% 개통
 # ==========================================================
 import logging
 import datetime
@@ -28,7 +29,6 @@ from scheduler_core import is_market_open
 
 async def scheduled_sniper_monitor(context):
     is_open = False
-    # 🚨 MODIFIED: [Case 33] 3단 지수 백오프 이식
     for attempt in range(3):
         try:
             is_open = await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=15.0)
@@ -59,7 +59,6 @@ async def scheduled_sniper_monitor(context):
         return nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
 
     schedule = None
-    # 🚨 MODIFIED: [Case 33] 3단 지수 백오프 이식
     for attempt in range(3):
         try:
             schedule = await asyncio.wait_for(asyncio.to_thread(_get_market_hours), timeout=15.0)
@@ -112,7 +111,6 @@ async def scheduled_sniper_monitor(context):
     async def _do_sniper():
         async with tx_lock:
             cash, holdings = 0.0, None
-            # 🚨 MODIFIED: [Case 33] 지수 백오프 이식
             for attempt in range(3):
                 try:
                     cash, holdings = await asyncio.wait_for(asyncio.to_thread(broker.get_account_balance), timeout=15.0)
@@ -131,7 +129,7 @@ async def scheduled_sniper_monitor(context):
             
             active_tickers = await asyncio.to_thread(cfg.get_active_tickers)
             for t in active_tickers:
-                await asyncio.sleep(0.06) # 🚨 NEW: [Case 32] 스캔 루프 TPS 캡핑
+                await asyncio.sleep(0.06) 
                 
                 version = await asyncio.to_thread(cfg.get_version, t)
 
@@ -193,7 +191,6 @@ async def scheduled_sniper_monitor(context):
                     target_base = base_map.get(t, t) 
                     ctx_data = tracking_cache.get(f"AVWAP_CTX_{t}")
                     if not ctx_data:
-                        # 🚨 MODIFIED: [Case 33] 3단 지수 백오프 이식
                         for attempt in range(3):
                             try:
                                 ctx_data = await asyncio.wait_for(asyncio.to_thread(strategy.v_avwap_plugin.fetch_macro_context, target_base), timeout=15.0)
@@ -241,9 +238,10 @@ async def scheduled_sniper_monitor(context):
                                 else: await asyncio.sleep(1.0 * (2 ** attempt))
   
                     base_day_open = tracking_cache.get(f"AVWAP_DAY_OPEN_{target_base}", 0.0)
-                    prev_c, day_high, day_low, amp5, base_day_high, base_day_low = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+                    prev_c, day_high, day_low, amp5, base_day_high, base_day_low, ma_5day = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
                     df_1min_t, df_1min_base = None, None
                
+                    # 🚨 MODIFIED: [V79.50 MA5 스위칭] MA5 데이터 비동기 병렬 스캔망 합류 및 파라미터 수혈 팩트 교정
                     for attempt in range(3):
                         try:
                             res_batch = await asyncio.wait_for(
@@ -252,6 +250,7 @@ async def scheduled_sniper_monitor(context):
                                     asyncio.to_thread(broker.get_amp_5d_data, t),
                                     asyncio.to_thread(broker.get_1min_candles_df, t),
                                     asyncio.to_thread(broker.get_1min_candles_df, target_base), 
+                                    asyncio.to_thread(broker.get_5day_ma, t),
                                     return_exceptions=True
                                 ), timeout=15.0
                             )
@@ -259,6 +258,7 @@ async def scheduled_sniper_monitor(context):
                             amp5 = float(res_batch[1]) if not isinstance(res_batch[1], Exception) and res_batch[1] else 0.0
                             df_1min_t = res_batch[2] if not isinstance(res_batch[2], Exception) else None
                             df_1min_base = res_batch[3] if not isinstance(res_batch[3], Exception) else None
+                            ma_5day = float(res_batch[4]) if len(res_batch) > 4 and not isinstance(res_batch[4], Exception) and res_batch[4] else 0.0
                   
                             if df_1min_t is not None and not df_1min_t.empty:
                                 df_t_copy = df_1min_t.copy()
@@ -312,7 +312,7 @@ async def scheduled_sniper_monitor(context):
                         exec_curr_p=exec_curr_p, base_day_open=base_day_open, avg_price=avwap_avg,
                         qty=avwap_qty, alloc_cash=avwap_free_cash, context_data=ctx_data,
                         df_1min_base=df_1min_base, df_1min_exec=df_1min_t, now_est=now_est, avwap_state=avwap_state_dict,
-                        regime_data=None, prev_close=prev_c, day_high=day_high, day_low=day_low, amp5=amp5,
+                        regime_data=None, prev_close=prev_c, ma_5day=ma_5day, day_high=day_high, day_low=day_low, amp5=amp5,
                         base_day_high=base_day_high, base_day_low=base_day_low,
                         is_simulation=False,
                         sortie_mode=sortie_mode
