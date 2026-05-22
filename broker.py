@@ -17,6 +17,7 @@
 # 🚨 MODIFIED: [V77.01 들여쓰기 붕괴 런타임 즉사 방어] get_execution_history 내 else: break 구문 IndentationError 팩트 교정 완료.
 # 🚨 MODIFIED: [V77.02 하극상 매수 영구 소각] _ceil_2 내부 파이썬 부동소수점 오차(IEEE 754) 1센트 팽창 버그 원천 차단.
 # 🚨 MODIFIED: [Case 03 준수] 동일 종목 유령 중복 응답 누적 합산 절대 금지 및 무시 처리 팩트 교정 완료.
+# 🚨 MODIFIED: [결함 2 수술] get_amp_5d_data 내 ZeroDivision 런타임 붕괴 방어용 replace(0, np.nan) 락온 팩트 결속
 # ==========================================================
 
 import requests
@@ -826,6 +827,9 @@ class KoreaInvestmentBroker:
             
             hist['Prev_Close'] = hist['Close'].shift(1)
             hist = hist.dropna(subset=['High', 'Low', 'Prev_Close']).copy()
+            
+            # MODIFIED: [결함 2 수술] 분모 ZeroDivision 런타임 붕괴 방어용 replace(0, np.nan) 락온
+            hist['Prev_Close'] = hist['Prev_Close'].replace(0, np.nan)
             
             hist['Amp'] = (hist['High'] - hist['Low']) / hist['Prev_Close']
             hist['Amp_5d'] = hist['Amp'].rolling(window=5).mean()

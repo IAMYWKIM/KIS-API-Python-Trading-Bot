@@ -9,6 +9,7 @@
 # 🚨 MODIFIED: [결함 1 수술] AVWAP 익절 덫 타점 2.0% 하향 락온 (타점 역전 패러독스 소각 및 회전율 극대화)
 # 🚨 MODIFIED: [결함 2 수술 Case 02/08] 수동 장부 소각 시 KIS 실잔고 0주 강제 동기화 및 0주 팩트 다이렉트 덮어쓰기 락온
 # 🚨 MODIFIED: [결함 3 수술 Case 28] 수동 요격 승인 전 실시간 현재가 팩트 스캔 및 타점 이탈 팻핑거 팝업 생성 원천 차단
+# 🚨 MODIFIED: [Case 31 팩트 수술] 수동 요격 시 1분봉 시차 패러독스 방어망(Time-Shield) 멱등성 동기화를 위해 초 단위 0 초기화 락온
 # ==========================================================
 import logging
 import datetime
@@ -896,8 +897,8 @@ class TelegramCallbacks:
                             tracking_cache[f"AVWAP_QTY_{ticker}"] = ccld_qty
                             tracking_cache[f"AVWAP_AVG_{ticker}"] = round(t_h, 4)
                             tracking_cache[f"AVWAP_TRAP_ODNO_{ticker}"] = trap_odno
-                            # NEW: [Case 31] 타임 패러독스 방어망 수동 장전 락온
-                            tracking_cache[f"AVWAP_TRAP_PLACED_TIME_{ticker}"] = now_est.strftime('%H%M%S')
+                            # MODIFIED: [Case 31 팩트 수술] 1분봉 시차 패러독스(Time-Shield) 멱등성 동기화를 위해 초 단위 0 초기화 락온
+                            tracking_cache[f"AVWAP_TRAP_PLACED_TIME_{ticker}"] = now_est.replace(second=0, microsecond=0).strftime('%H%M%S')
                             
                             daily_b = tracking_cache.get(f"AVWAP_DAILY_BOUGHT_{ticker}", 0) + ccld_qty
                             tracking_cache[f"AVWAP_DAILY_BOUGHT_{ticker}"] = daily_b
