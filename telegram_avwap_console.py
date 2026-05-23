@@ -1,11 +1,13 @@
 # ==========================================================
 # FILE: telegram_avwap_console.py
 # ==========================================================
-# 🚨 MODIFIED: [Case 14 절대 헌법 준수] 달력 API(mcal) 호출 시 10.0초 타임아웃 락온으로 이벤트 루프 교착 완벽 차단
-# 🚨 NEW: [Case 32 & 33 절대 규칙] 3단 지수 백오프 및 TPS 캡핑 방어망 전면 이식
-# 🚨 MODIFIED: [V79.50 절대 헌법] 과거 40/45% 변속 로직 텍스트를 영구 소각하고 MA5 45% 절대 락온 팩트 교정 완료
-# 🚨 NEW: [Case 28 수동 요격 스위칭] 현재가 < T_H 제한 전면 해방 및 덫 장전 중 취소(Nuke) 버튼 동적 렌더링
-# 🚨 NEW: [Case 26 & UI 교정] 모바일 화면 오버플로우 2줄 압축 및 html.escape 사일런트 데스 방어망 구축
+# 🚨 MODIFIED: [Insight 14] API String-Float 맹독성 포맷팅 쉴드. `float(str(...).replace(',', ''))` 강제 래핑 완료.
+# 🚨 MODIFIED: [Insight 15] 튜플/배열 변형(Array Mutation) 방어. cash_val_tuple 인덱스 에러 방지 isinstance 검증 락온.
+# 🚨 MODIFIED: [Insight 11] 궁극의 이터러블 Null-Coalescing 쉴드 이식. `or []` 단락 평가 강제 적용.
+# 🚨 MODIFIED: [Insight 06/07] JSON Null-Coalescing 맹독성 차단. `int(float(... or 0))` 단락 평가 강제 이식 완료.
+# 🚨 MODIFIED: [Insight 04 메모리 멱등성 사수] 전략 엔진으로부터 파기된 buy_odno 상태를 다이렉트로 전달받아 tracking_cache 완벽 동기화.
+# 🚨 MODIFIED: [Case 14 절대 헌법 준수] 달력 API(mcal) 호출 시 10.0초 타임아웃 락온으로 이벤트 루프 교착 완벽 차단.
+# 🚨 MODIFIED: [휴장일 멱등성 수술] 주말/휴장일 관제탑 조회 시 시뮬레이션 격발로 인한 09:30 기요틴 렌더링 오염 완벽 차단.
 # ==========================================================
 import logging
 import datetime
@@ -14,9 +16,10 @@ import math
 import asyncio
 import time
 import pandas as pd
+import pandas_market_calendars as mcal  
 import json
 import os
-import html  # NEW: [Case 26] HTML Parse Error 방어용 쉴드
+import html  
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 class AvwapConsolePlugin:
@@ -34,18 +37,14 @@ class AvwapConsolePlugin:
         time_0400 = datetime.time(4, 0)
         time_0930 = datetime.time(9, 30)
      
-        import pandas_market_calendars as mcal
-        
         def _fetch_schedule():
-            time.sleep(0.06) # 🚨 NEW: [Case 32] TPS 캡핑
+            time.sleep(0.06) 
             nyse = mcal.get_calendar('NYSE')
             return nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
             
         schedule = None
-        # 🚨 NEW: [Case 33] 3단 지수 백오프 이식
         for attempt in range(3):
             try:
-                # 🚨 MODIFIED: [Case 14] 달력 API 10초 타임아웃 락온
                 schedule = await asyncio.wait_for(asyncio.to_thread(_fetch_schedule), timeout=10.0)
                 break
             except Exception:
@@ -54,9 +53,13 @@ class AvwapConsolePlugin:
                 else: 
                     await asyncio.sleep(1.0 * (2 ** attempt))
 
+        is_holiday = False
         if schedule is None or schedule.empty:
-            if schedule is None and now_est.weekday() < 5: status_code = "REG"
-            else: status_code = "CLOSE"
+            if schedule is None and now_est.weekday() < 5: 
+                status_code = "REG"
+            else: 
+                status_code = "HOLIDAY"
+                is_holiday = True
         else:
             market_open = schedule.iloc[0]['market_open'].astimezone(est)
             market_close = schedule.iloc[0]['market_close'].astimezone(est)
@@ -72,14 +75,16 @@ class AvwapConsolePlugin:
             else:
                 status_code = "CLOSE"
 
-        if status_code in ["AFTER", "CLOSE"]:
+        if status_code == "HOLIDAY":
+            header_status = "💤 <b>[ 미국 증시 휴장일 / 관망 모드 ]</b>"
+        elif status_code in ["AFTER", "CLOSE"]:
             header_status = "🌙 <b>[ 애프터마켓 / 감시 종료 ]</b>"
         elif status_code == "PRE":
             header_status = "🌅 <b>[ 프리장 선제 타격 모드 (04:00~09:29 스캔 중) ]</b>"
         else:
             header_status = "🔥 <b>[ 정규장 실시간 추격 모드 (V79.50 지정가 덫 요격) ]</b>"
         
-        active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers)
+        active_tickers = await asyncio.to_thread(self.cfg.get_active_tickers) or []
         avwap_tickers = [t for t in active_tickers if t == "SOXL"]
        
         if not avwap_tickers:
@@ -92,14 +97,14 @@ class AvwapConsolePlugin:
         for attempt in range(3):
             try:
                 cash_val_tuple = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=10.0)
-                cash_val = cash_val_tuple[0]
+                cash_val = cash_val_tuple[0] if isinstance(cash_val_tuple, (list, tuple)) and len(cash_val_tuple) > 0 else 0.0
                 break
             except Exception:
                 if attempt == 2: 
                     cash_val = 0.0
                 else: 
                     await asyncio.sleep(1.0 * (2 ** attempt))
-        available_cash = float(cash_val or 0.0)
+        available_cash = float(str(cash_val or 0.0).replace(',', ''))
         
         msg = f"🔫 <b>[ 차세대 AVWAP V79.50 관제탑 ]</b>\n{header_status}\n\n"
         keyboard = []
@@ -107,7 +112,7 @@ class AvwapConsolePlugin:
         async def _get_with_retry(func, *args):
             for attempt in range(3):
                 try:
-                    await asyncio.sleep(0.06) # 🚨 NEW: [Case 32] TPS 캡핑
+                    await asyncio.sleep(0.06) 
                     return await asyncio.wait_for(asyncio.to_thread(func, *args), timeout=10.0)
                 except Exception:
                     if attempt == 2: return None
@@ -116,32 +121,31 @@ class AvwapConsolePlugin:
         for t in active_avwap:
             await asyncio.sleep(0.06)
             
-            # NEW: [Case 26] 텔레그램 렌더링용 안전 치환 문자열 분리 보존
-            ticker_clean = html.escape(t)
+            ticker_clean = html.escape(str(t)) 
             
             if not tracking_cache.get(f"AVWAP_INIT_{t}"):
                 try:
-                    saved_state = await asyncio.to_thread(self.strategy.v_avwap_plugin.load_state, t, now_est)
+                    saved_state = await asyncio.to_thread(self.strategy.v_avwap_plugin.load_state, t, now_est) or {}
                     if saved_state:
-                        tracking_cache[f"AVWAP_BOUGHT_{t}"] = saved_state.get('bought', False)
-                        tracking_cache[f"AVWAP_SHUTDOWN_{t}"] = saved_state.get('shutdown', False)
-                        tracking_cache[f"AVWAP_QTY_{t}"] = saved_state.get('qty', 0)
-                        tracking_cache[f"AVWAP_AVG_{t}"] = saved_state.get('avg_price', 0.0)
-                        tracking_cache[f"AVWAP_STRIKES_{t}"] = saved_state.get('strikes', 0)
-                        tracking_cache[f"AVWAP_DUMP_JITTER_{t}"] = saved_state.get('dump_jitter_sec', 0)
-                        tracking_cache[f"AVWAP_TRAP_ODNO_{t}"] = saved_state.get('trap_odno', "")
+                        tracking_cache[f"AVWAP_BOUGHT_{t}"] = bool(saved_state.get('bought'))
+                        tracking_cache[f"AVWAP_SHUTDOWN_{t}"] = bool(saved_state.get('shutdown'))
                         
-                        tracking_cache[f"AVWAP_LIMIT_ORDER_PLACED_{t}"] = saved_state.get('limit_order_placed', False)
-                        tracking_cache[f"AVWAP_PLACED_TARGET_TH_{t}"] = saved_state.get('placed_target_th', 0.0)
-                        tracking_cache[f"AVWAP_TRAP_PLACED_TIME_{t}"] = saved_state.get('trap_placed_time', "")
-                        tracking_cache[f"AVWAP_BUY_ODNO_{t}"] = saved_state.get('buy_odno', "")
+                        tracking_cache[f"AVWAP_QTY_{t}"] = int(float(str(saved_state.get('qty') or 0).replace(',', '')))
+                        tracking_cache[f"AVWAP_AVG_{t}"] = float(str(saved_state.get('avg_price') or 0.0).replace(',', ''))
+                        tracking_cache[f"AVWAP_STRIKES_{t}"] = int(float(str(saved_state.get('strikes') or 0).replace(',', '')))
+                        tracking_cache[f"AVWAP_DUMP_JITTER_{t}"] = int(float(str(saved_state.get('dump_jitter_sec') or 0).replace(',', '')))
+                        tracking_cache[f"AVWAP_TRAP_ODNO_{t}"] = str(saved_state.get('trap_odno') or "")
+                        
+                        tracking_cache[f"AVWAP_LIMIT_ORDER_PLACED_{t}"] = bool(saved_state.get('limit_order_placed'))
+                        tracking_cache[f"AVWAP_PLACED_TARGET_TH_{t}"] = float(str(saved_state.get('placed_target_th') or 0.0).replace(',', ''))
+                        tracking_cache[f"AVWAP_TRAP_PLACED_TIME_{t}"] = str(saved_state.get('trap_placed_time') or "")
+                        tracking_cache[f"AVWAP_BUY_ODNO_{t}"] = str(saved_state.get('buy_odno') or "")
            
-                        # 🚨 [Case 24] 관제탑 렌더링 무결성: 조기 퇴근하더라도 PM_H, T_H 팩트를 100% 표출
-                        tracking_cache[f"AVWAP_PM_H_{t}"] = saved_state.get('PM_H', 0.0)
-                        tracking_cache[f"AVWAP_PM_L_{t}"] = saved_state.get('PM_L', 0.0)
-                        tracking_cache[f"AVWAP_T_H_{t}"] = saved_state.get('T_H', 0.0)
-                        tracking_cache[f"AVWAP_T_L_{t}"] = saved_state.get('T_L', 0.0)
-                        tracking_cache[f"AVWAP_OFFSET_{t}"] = saved_state.get('offset', 0.0)
+                        tracking_cache[f"AVWAP_PM_H_{t}"] = float(str(saved_state.get('PM_H') or 0.0).replace(',', ''))
+                        tracking_cache[f"AVWAP_PM_L_{t}"] = float(str(saved_state.get('PM_L') or 0.0).replace(',', ''))
+                        tracking_cache[f"AVWAP_T_H_{t}"] = float(str(saved_state.get('T_H') or 0.0).replace(',', ''))
+                        tracking_cache[f"AVWAP_T_L_{t}"] = float(str(saved_state.get('T_L') or 0.0).replace(',', ''))
+                        tracking_cache[f"AVWAP_OFFSET_{t}"] = float(str(saved_state.get('offset') or 0.0).replace(',', ''))
                         
                     tracking_cache[f"AVWAP_INIT_{t}"] = True
                 except Exception as e:
@@ -149,12 +153,10 @@ class AvwapConsolePlugin:
 
             is_avwap_active = await asyncio.to_thread(getattr(self.cfg, 'get_avwap_hybrid_mode', lambda x: False), t)
             
-            # 🚨 MODIFIED: [Case 11] 다중 출격(Multi-Sortie) 모드 동적 렌더링 락온
             sortie_mode = await asyncio.to_thread(getattr(self.cfg, 'get_avwap_sortie_mode', lambda x: "SINGLE"), t)
             sortie_str = "단일 타격(1회)" if sortie_mode == "SINGLE" else "다중 출격(무한)"
             active_str = f"🟢 암살 가동 ({sortie_str})" if is_avwap_active else "⚪ 대기 (OFF)"
             
-            # 🚨 NEW: [V79.50 MA5 스위칭] MA5 데이터 비동기 병렬 스캔망 팩트 수혈
             try:
                 res_batch = await asyncio.gather(
                     _get_with_retry(self.broker.get_current_price, t),
@@ -164,11 +166,11 @@ class AvwapConsolePlugin:
                     _get_with_retry(self.broker.get_5day_ma, t)
                 )
            
-                curr_p = float(res_batch[0]) if res_batch[0] else 0.0
-                prev_c = float(res_batch[1]) if res_batch[1] else 0.0
-                amp5 = float(res_batch[2]) if res_batch[2] else 0.0
+                curr_p = float(str(res_batch[0] or 0.0).replace(',', '')) if res_batch[0] else 0.0
+                prev_c = float(str(res_batch[1] or 0.0).replace(',', '')) if res_batch[1] else 0.0
+                amp5 = float(str(res_batch[2] or 0.0).replace(',', '')) if res_batch[2] else 0.0
                 df_1m = res_batch[3]
-                ma_5day = float(res_batch[4]) if len(res_batch) > 4 and res_batch[4] else 0.0
+                ma_5day = float(str(res_batch[4] or 0.0).replace(',', '')) if len(res_batch) > 4 and res_batch[4] else 0.0
                
             except Exception as e:
                 curr_p, prev_c, amp5, df_1m, ma_5day = 0.0, 0.0, 0.0, None, 0.0
@@ -176,36 +178,36 @@ class AvwapConsolePlugin:
             if df_1m is not None and not df_1m.empty and 'time_est' in df_1m.columns:
                 df_reg = df_1m[(df_1m['time_est'] >= '093000') & (df_1m['time_est'] <= '155959')]
                 if not df_reg.empty:
-                    tracking_cache[f"AVWAP_REG_H_{t}"] = float(df_reg['high'].astype(float).max())
-                    tracking_cache[f"AVWAP_REG_L_{t}"] = float(df_reg['low'].astype(float).min())
+                    tracking_cache[f"AVWAP_REG_H_{t}"] = float(str(df_reg['high'].astype(float).max() or 0.0).replace(',', ''))
+                    tracking_cache[f"AVWAP_REG_L_{t}"] = float(str(df_reg['low'].astype(float).min() or 0.0).replace(',', ''))
 
-            avwap_qty = tracking_cache.get(f"AVWAP_QTY_{t}", 0)
-            avwap_avg = tracking_cache.get(f"AVWAP_AVG_{t}", 0.0)
-            is_shutdown = tracking_cache.get(f"AVWAP_SHUTDOWN_{t}", False)
-            trap_odno = tracking_cache.get(f"AVWAP_TRAP_ODNO_{t}", "")
+            avwap_qty = int(float(str(tracking_cache.get(f"AVWAP_QTY_{t}") or 0).replace(',', '')))
+            avwap_avg = float(str(tracking_cache.get(f"AVWAP_AVG_{t}") or 0.0).replace(',', ''))
+            is_shutdown = bool(tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"))
+            trap_odno = str(tracking_cache.get(f"AVWAP_TRAP_ODNO_{t}") or "")
             
-            limit_order_placed = tracking_cache.get(f"AVWAP_LIMIT_ORDER_PLACED_{t}", False)
-            placed_target_th = tracking_cache.get(f"AVWAP_PLACED_TARGET_TH_{t}", 0.0)
-            trap_placed_time = tracking_cache.get(f"AVWAP_TRAP_PLACED_TIME_{t}", "")
-            buy_odno = tracking_cache.get(f"AVWAP_BUY_ODNO_{t}", "")
+            limit_order_placed = bool(tracking_cache.get(f"AVWAP_LIMIT_ORDER_PLACED_{t}"))
+            placed_target_th = float(str(tracking_cache.get(f"AVWAP_PLACED_TARGET_TH_{t}") or 0.0).replace(',', ''))
+            trap_placed_time = str(tracking_cache.get(f"AVWAP_TRAP_PLACED_TIME_{t}") or "")
+            buy_odno = str(tracking_cache.get(f"AVWAP_BUY_ODNO_{t}") or "")
             
-            pm_h = tracking_cache.get(f"AVWAP_PM_H_{t}", 0.0)
-            pm_l = tracking_cache.get(f"AVWAP_PM_L_{t}", 0.0)
-            t_h = tracking_cache.get(f"AVWAP_T_H_{t}", 0.0)
-            t_l = tracking_cache.get(f"AVWAP_T_L_{t}", 0.0)
-            offset = tracking_cache.get(f"AVWAP_OFFSET_{t}", 0.0)
+            pm_h = float(str(tracking_cache.get(f"AVWAP_PM_H_{t}") or 0.0).replace(',', ''))
+            pm_l = float(str(tracking_cache.get(f"AVWAP_PM_L_{t}") or 0.0).replace(',', ''))
+            t_h = float(str(tracking_cache.get(f"AVWAP_T_H_{t}") or 0.0).replace(',', ''))
+            t_l = float(str(tracking_cache.get(f"AVWAP_T_L_{t}") or 0.0).replace(',', ''))
+            offset = float(str(tracking_cache.get(f"AVWAP_OFFSET_{t}") or 0.0).replace(',', ''))
             
             status_txt = "⚡ T_H 선제 지정가 덫 장전 대기 중"
             
             try:
                 avwap_state_dict = {
-                    "strikes": tracking_cache.get(f"AVWAP_STRIKES_{t}", 0),
+                    "strikes": int(float(str(tracking_cache.get(f"AVWAP_STRIKES_{t}") or 0).replace(',', ''))),
                     "shutdown": is_shutdown,
                     "qty": avwap_qty,
                     "avg_price": avwap_avg,
-                    "bought": tracking_cache.get(f"AVWAP_BOUGHT_{t}", False),
-                    "daily_bought_qty": tracking_cache.get(f"AVWAP_DAILY_BOUGHT_{t}", 0),
-                    "daily_sold_qty": tracking_cache.get(f"AVWAP_DAILY_SOLD_{t}", 0),
+                    "bought": bool(tracking_cache.get(f"AVWAP_BOUGHT_{t}")),
+                    "daily_bought_qty": int(float(str(tracking_cache.get(f"AVWAP_DAILY_BOUGHT_{t}") or 0).replace(',', ''))),
+                    "daily_sold_qty": int(float(str(tracking_cache.get(f"AVWAP_DAILY_SOLD_{t}") or 0).replace(',', ''))),
                     "trap_odno": trap_odno,
                     "buy_odno": buy_odno,
                     "PM_H": pm_h,
@@ -215,8 +217,8 @@ class AvwapConsolePlugin:
                     "offset": offset,
                     "limit_order_placed": limit_order_placed,
                     "placed_target_th": placed_target_th,
-                    "dump_jitter_sec": tracking_cache.get(f"AVWAP_DUMP_JITTER_{t}", 0),
-                    "trap_placed_time": tracking_cache.get(f"AVWAP_TRAP_PLACED_TIME_{t}", "")
+                    "dump_jitter_sec": int(float(str(tracking_cache.get(f"AVWAP_DUMP_JITTER_{t}") or 0).replace(',', ''))),
+                    "trap_placed_time": trap_placed_time
                 }
                 
                 decision = await asyncio.wait_for(
@@ -232,7 +234,8 @@ class AvwapConsolePlugin:
                         amp5=amp5,
                         prev_close=prev_c,
                         ma_5day=ma_5day,
-                        sortie_mode=sortie_mode
+                        sortie_mode=sortie_mode,
+                        is_holiday=is_holiday 
                     ),
                     timeout=10.0
                 )
@@ -241,19 +244,28 @@ class AvwapConsolePlugin:
                     action = decision.get('action')
                     reason = decision.get('reason', '')
                     
-                    pm_h = decision.get('PM_H', pm_h)
-                    pm_l = decision.get('PM_L', pm_l)
-                    t_h = decision.get('T_H', t_h)
-                    t_l = decision.get('T_L', t_l)
-                    offset = decision.get('offset', offset)
+                    pm_h = float(str(decision.get('PM_H') or pm_h).replace(',', ''))
+                    pm_l = float(str(decision.get('PM_L') or pm_l).replace(',', ''))
+                    t_h = float(str(decision.get('T_H') or t_h).replace(',', ''))
+                    t_l = float(str(decision.get('T_L') or t_l).replace(',', ''))
+                    offset = float(str(decision.get('offset') or offset).replace(',', ''))
+                    
+                    buy_odno = str(decision.get('buy_odno') or buy_odno)
+                    limit_order_placed = bool(decision.get('limit_order_placed', limit_order_placed))
+                    placed_target_th = float(str(decision.get('placed_target_th') or placed_target_th).replace(',', ''))
                     
                     tracking_cache[f"AVWAP_PM_H_{t}"] = pm_h
                     tracking_cache[f"AVWAP_PM_L_{t}"] = pm_l
                     tracking_cache[f"AVWAP_T_H_{t}"] = t_h
                     tracking_cache[f"AVWAP_T_L_{t}"] = t_l
                     tracking_cache[f"AVWAP_OFFSET_{t}"] = offset
+                    tracking_cache[f"AVWAP_BUY_ODNO_{t}"] = buy_odno
+                    tracking_cache[f"AVWAP_LIMIT_ORDER_PLACED_{t}"] = limit_order_placed
+                    tracking_cache[f"AVWAP_PLACED_TARGET_TH_{t}"] = placed_target_th
         
-                    if is_shutdown: 
+                    if is_holiday:
+                        status_txt = f"💤 미국 증시 휴장일 (관측 오프라인)"
+                    elif is_shutdown: 
                         status_txt = f"🛑 셧다운 격발 ({reason})" if reason and action == 'SHUTDOWN' else "🛑 당일 영구동결 (SHUTDOWN 퇴근)"
                     elif avwap_qty > 0:
                         if trap_odno:
@@ -280,17 +292,15 @@ class AvwapConsolePlugin:
             except Exception as e:
                 pass
 
-            reg_h = tracking_cache.get(f"AVWAP_REG_H_{t}", 0.0)
-            reg_l = tracking_cache.get(f"AVWAP_REG_L_{t}", 0.0)
+            reg_h = float(str(tracking_cache.get(f"AVWAP_REG_H_{t}") or 0.0).replace(',', ''))
+            reg_l = float(str(tracking_cache.get(f"AVWAP_REG_L_{t}") or 0.0).replace(',', ''))
 
-            # 🚨 MODIFIED: [UI/UX] 명세에 따른 모바일 화면 2줄 라인랩 방어 및 팩트 렌더링 강제 교정
             msg += f"🎯 <b>[ {ticker_clean} (롱) 작전반 - {active_str} ]</b>\n"
             msg += f"▫️ 프리장 최고 (PM_H): <b>${pm_h:.2f}</b>\n"
             msg += f"▫️ 프리장 최저 (PM_L): <b>${pm_l:.2f}</b>\n"
             msg += f"▫️ 정규장 최고 (REG_H): <b>${reg_h:.2f}</b>\n"
             msg += f"▫️ 정규장 최저 (REG_L): <b>${reg_l:.2f}</b>\n"
             
-            # 오프셋 2줄 분할 락온 (45% 하드코딩 텍스트 보존)
             msg += f"▫️ 5일평균 앵커 오프셋: <b>${offset:.2f}</b>\n"
             msg += f"      (45% 절대 락온)\n"
             
@@ -303,7 +313,6 @@ class AvwapConsolePlugin:
             msg += f"📊 <b>[ 실시간 현재가 스프레드 ]</b>\n"
             msg += f"▫️ 전일종가: <b>${prev_c:.2f}</b> (Amp5: {amp5*100:.2f}%)\n"
             
-            # 명칭 교정: 5일평균종가
             msg += f"▫️ 5일평균종가: <b>${ma_5day:.2f}</b>\n"
             msg += f"▫️ 현재가격: <b>${curr_p:.2f}</b>\n"
 
@@ -315,16 +324,15 @@ class AvwapConsolePlugin:
             msg += f"\n🚨 <b>[ 작전 수행 현황 ]</b>\n"
             msg += f"▫️ 현재상태: <b>{status_txt}</b>\n"
 
-            # 🚨 MODIFIED: [Case 28] 수동 요격 및 취소(Nuke) 버튼 동적 스위칭 (ticker_clean 보존)
-            if status_code in ["PRE", "REG"]:
+            if is_holiday:
+                keyboard.append([InlineKeyboardButton(f"💤 [{ticker_clean}] 증시 휴장일 (수동 제어 불가)", callback_data="AVWAP_SET:REFRESH:NONE")])
+            elif status_code in ["PRE", "REG"]:
                 if avwap_qty > 0:
                     keyboard.append([InlineKeyboardButton(f"🧯 {ticker_clean} 암살자 수동 청산 (0주 락온)", callback_data=f"AVWAP_SET:SYNC_ZERO:{t}")])
                 elif limit_order_placed and buy_odno:
-                    # 🚨 NEW: [Case 28] 덫 장전 중 취소(Nuke Trap) 버튼 동적 스위칭
                     keyboard.append([InlineKeyboardButton(f"🛑 [{ticker_clean}] 수동 매수취소 (Nuke Trap)", callback_data=f"AVWAP_SET:MANUAL_CANCEL_REQ:{t}")])
                 else:
                     if t_h > 0.0:
-                        # 🚨 NEW: [Case 28] 현재가 제한 해제 (순수 지정가 락온) 수동 요격 버튼 표출
                         keyboard.append([InlineKeyboardButton(f"🔫 [{ticker_clean}] 수동 강제 요격 (Limit T_H)", callback_data=f"AVWAP_SET:MANUAL_FIRE_REQ:{t}")])
                     else:
                         keyboard.append([InlineKeyboardButton(f"❌ [{ticker_clean}] 수동 요격 불가 (T_H 스캔 대기 중)", callback_data="AVWAP_SET:REFRESH:NONE")])
