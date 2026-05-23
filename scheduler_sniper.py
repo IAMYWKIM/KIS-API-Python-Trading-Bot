@@ -10,6 +10,7 @@
 # 🚨 MODIFIED: [결함 1 수술] AVWAP 익절 덫 타점 2.0% 하향 락온 (타점 역전 패러독스 원천 소각 및 회전율 극대화)
 # 🚨 NEW: [Case 32 & 33 절대 규칙] 3단 지수 백오프 및 스케줄러 루프 TPS 캡핑 이식 완료
 # 🚨 MODIFIED: [V79.50] MA5 연산 비동기 병렬 스캔 및 get_decision 다이렉트 주입 배선 100% 개통
+# 🚨 MODIFIED: [Case 14 절대 헌법 준수] is_market_open 및 _get_market_hours 등 달력 API 타임아웃 10.0초 락온 완료
 # ==========================================================
 import logging
 import datetime
@@ -31,7 +32,8 @@ async def scheduled_sniper_monitor(context):
     is_open = False
     for attempt in range(3):
         try:
-            is_open = await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=15.0)
+            # MODIFIED: [Case 14] 달력 API 타임아웃 10초 하드코딩 락온
+            is_open = await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=10.0)
             break
         except asyncio.TimeoutError:
             if attempt == 2:
@@ -61,7 +63,8 @@ async def scheduled_sniper_monitor(context):
     schedule = None
     for attempt in range(3):
         try:
-            schedule = await asyncio.wait_for(asyncio.to_thread(_get_market_hours), timeout=15.0)
+            # MODIFIED: [Case 14] 달력 API 타임아웃 10초 하드코딩 락온
+            schedule = await asyncio.wait_for(asyncio.to_thread(_get_market_hours), timeout=10.0)
             break
         except asyncio.TimeoutError:
             if attempt == 2: logging.error("⚠️ 장운영시간 달력 API 타임아웃. 평일 강제 시간 세팅.")
@@ -241,7 +244,6 @@ async def scheduled_sniper_monitor(context):
                     prev_c, day_high, day_low, amp5, base_day_high, base_day_low, ma_5day = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
                     df_1min_t, df_1min_base = None, None
                
-                    # 🚨 MODIFIED: [V79.50 MA5 스위칭] MA5 데이터 비동기 병렬 스캔망 합류 및 파라미터 수혈 팩트 교정
                     for attempt in range(3):
                         try:
                             res_batch = await asyncio.wait_for(

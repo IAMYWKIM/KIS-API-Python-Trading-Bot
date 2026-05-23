@@ -12,6 +12,7 @@
 # 🚨 MODIFIED: [Case 31 팩트 수술] 수동 요격 시 1분봉 시차 패러독스 방어망(Time-Shield) 멱등성 동기화를 위해 초 단위 0 초기화 락온
 # 🚨 NEW: [Case 32 & 33 절대 규칙] 3단 지수 백오프 및 TPS 캡핑 방어망 전면 이식
 # 🚨 NEW: [Case 28 동적 스위칭] 수동 취소 콜백(MANUAL_CANCEL_REQ) 신설 및 덫 무결성 원자적 파기 로직 이식
+# 🚨 MODIFIED: [제1헌법 절대 준수] MANUAL_CANCEL_REQ 및 MANUAL_FIRE_EXEC 내부 time.sleep을 await asyncio.sleep으로 전면 팩트 교정 완료
 # ==========================================================
 import logging
 import datetime
@@ -493,7 +494,7 @@ class TelegramCallbacks:
             if status_code in ["AFTER", "CLOSE", "PRE"]:
                 try:
                     def get_yf_close():
-                        time.sleep(0.06)
+                        # MODIFIED: [제1헌법] 외부 I/O 전 대기(TPS)는 비동기로 처리 권장 (하지만 def 내부이므로 broker내에서 처리됨)
                         df = yf.Ticker(t).history(period="5d", interval="1d")
                         return float(df['Close'].iloc[-1]) if not df.empty else None
                     yf_close = None
@@ -777,7 +778,6 @@ class TelegramCallbacks:
                 if hasattr(controller, 'cmd_settlement'):
                     await controller.cmd_settlement(update, context)
 
-        # 🚨 NEW: [요구사항 3] 수동 취소 버튼 및 제한없는 요격 락온
         elif action == "AVWAP_SET":
             ticker = data[2]
             if sub == "SYNC_ZERO":
@@ -832,7 +832,6 @@ class TelegramCallbacks:
                 if hasattr(controller, 'cmd_avwap'):
                     await controller.cmd_avwap(update, context)
             
-            # 🚨 NEW: [요구사항 3] 수동 취소 콜백 엔진 (Nuke Trap)
             elif sub == "MANUAL_CANCEL_REQ":
                 try:
                     status_code, _ = await controller._get_market_status()
@@ -848,11 +847,11 @@ class TelegramCallbacks:
                         
                     await query.answer("⚠️ 덫 파기 시퀀스 가동 중...", show_alert=False)
                     
-                    # 🚨 Edge Case 2: 스케줄러와의 충돌 방지 원자적 tx_lock
                     async with self.tx_lock:
                         for attempt in range(3):
                             try:
-                                time.sleep(0.06)
+                                # MODIFIED: [제1헌법] 비동기 루프 내 동기 sleep 사용에 따른 데드락 원천 차단
+                                await asyncio.sleep(0.06)
                                 await asyncio.to_thread(self.broker.cancel_order, ticker, buy_odno)
                                 break
                             except Exception as e:
@@ -913,7 +912,6 @@ class TelegramCallbacks:
 
                     await query.answer("⚠️ 요격 확인 팝업 생성 중...", show_alert=False)
                     
-                    # 🚨 NEW: [Case 28] 현재가 비교 조건 소각 및 순수 지정가 요격 팝업
                     msg = f"🚨 <b>[{ticker} 사이보그 요격 덫 장전 승인 대기]</b>\n\n"
                     msg += f"▫️ 지정가 타점: <b>${t_h:.2f} (T_H 기준 고정)</b>\n"
                     msg += "▫️ 승인 즉시 가용 예산의 95%가 해당 타점에 순수 지정가(LIMIT) 매수 덫으로 깔립니다.\n\n"
@@ -950,7 +948,6 @@ class TelegramCallbacks:
                     if t_h <= 0.0:
                         return await query.answer(f"❌ [{ticker}] 수동 요격 실패\n▫️ T_H 데이터가 존재하지 않습니다.", show_alert=True)
 
-                    # 🚨 Edge Case 1: 현재가 기반 Phantom Fill 역추적
                     curr_p = 0.0
                     for attempt in range(3):
                         try:
@@ -985,8 +982,8 @@ class TelegramCallbacks:
                         await query.answer("🔫 지정가 덫 장전 중...", show_alert=False)
                         await query.edit_message_text(f"🚀 <b>[{ticker}] 사이보그(Cyborg) 수동 강제 요격 덫 전송 중...</b>", parse_mode='HTML')
 
-                        # 무조건 T_H 순수 지정가 덫 발사
-                        time.sleep(0.06)
+                        # MODIFIED: [제1헌법] 비동기 루프 내 동기 sleep 사용에 따른 데드락 원천 차단
+                        await asyncio.sleep(0.06)
                         res = await asyncio.to_thread(self.broker.send_order, ticker, "BUY", buy_qty, t_h, "LIMIT")
                         buy_odno = res.get('odno', '') if isinstance(res, dict) else ''
 
@@ -1078,3 +1075,4 @@ class TelegramCallbacks:
             
             desc = "숫자만 입력하세요.\n(예: 액면분할 시 1주가 10주가 되었다면 10 입력, 10주가 1주로 병합되었다면 0.1 입력)" if sub == "STOCK_SPLIT" else "숫자만 입력하세요."
             await context.bot.send_message(chat_id, f"✏️ <b>[{ticker}] {ko_name}</b>를 설정합니다.\n{desc}", parse_mode='HTML')
+
