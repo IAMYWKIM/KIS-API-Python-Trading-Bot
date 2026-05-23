@@ -11,7 +11,6 @@ TARGET_FILES = [
     "broker.py",
     "config.py",
     "main.py",
-    "manual_ledger.py",
     "plugin_updater.py",
     "queue_ledger.py",
     "scheduler_core.py",
