@@ -7,7 +7,7 @@
 # 🚨 MODIFIED: [Case 16] 임시 파일 변수 스코프 전진 배치(Hoisting)로 UnboundLocalError 런타임 붕괴 완벽 차단
 # 🚨 MODIFIED: [Insight 14] String-Float 콤마 맹독성 및 NaN/Inf 런타임 붕괴 방어용 `_safe_float` 래핑 전면 이식
 # 🚨 MODIFIED: [Insight 06/07] JSON/Dict 결측치 붕괴를 막는 단락 평가(`or {}`, `or []`) 방어막 결속
-# 🚨 MODIFIED: [데드코드 소각] 정적 분석 결과 호출되지 않는 유령 함수(_floor) 영구 소각 완료.
+# 🚨 MODIFIED: [데드코드 소각] 정적 분석 결과 호출되지 않는 유령 함수 1종 영구 소각 완료.
 # ==========================================================
 import math
 import os
@@ -195,7 +195,7 @@ class V14Strategy:
                 process_status = "🎉대박익절"
                 if qty > 0:
                     core_orders.append({"side": "SELL", "price": target_price, "qty": int(qty), "type": "LIMIT", "desc": "🎯전량대박익절"})
-                core_orders, bonus_orders = self._apply_wash_trade_shield(core_orders, bonus_orders)        
+                core_orders, bonus_orders = self._apply_wash_trade_shield(core_orders, bonus_orders) 
                 orders = core_orders + bonus_orders
                 
                 plan_result = {"orders": orders, "core_orders": core_orders, "bonus_orders": bonus_orders, "total_q": qty, "avg_price": avg_price, "t_val": t_val, "one_portion": one_portion_amt, "process_status": process_status, "is_reverse": False, "star_price": star_price, "star_ratio": star_ratio, "real_cash_used": real_available_cash, "tracking_info": tr_info}

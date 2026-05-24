@@ -134,7 +134,7 @@ class KoreaInvestmentBroker:
             "custtype": "P"
         }
 
-    # 🚨 MODIFIED: [Case 32 & 33] 3단 지수 백오프 및 TPS 초 초과 방어 로직 주입
+    # 🚨 MODIFIED: [Case 32 & 33] 3단 지수 백오프 및 TPS 초 초 초과 방어 로직 주입
     def _api_request(self, method, url, headers, params=None, data=None):
         TOKEN_EXPIRY_KEYWORDS = frozenset([
             'expired', '인증', 'authorization', 'egt0001', 'egt0002', 'oauth', 

@@ -7,13 +7,17 @@
 # 🚨 MODIFIED: [Case 11] 다중 출격(Multi-Sortie) 모드 파라미터 수혈 배선 이식
 # 🚨 MODIFIED: [라우팅 누수 방어] V14 스나이퍼 감시 라우터 배선 개통 완료
 # 🚨 MODIFIED: [I/O 붕괴 방어] V_REV 라우팅 내 QueueLedger 동기 호출부 샌드박싱 강화
+# 🚨 MODIFIED: [Case 05] analyze_vwap_dominance 내 NaN/Inf 맹독성 붕괴 원천 차단 벡터화 쉴드 주입
 # 🚨 MODIFIED: [Insight 14] get_plan 진입점 및 capture_vrev_snapshot 내 _safe_float 절대 방어막 전면 이식
+# 🚨 MODIFIED: [ZeroDivision 팩트 수술] analyze_vwap_dominance 내 running_vwap 산출 시 누적 거래량 0에 의한 Inf 붕괴 방어막(np.where) 락온
 # 🚨 MODIFIED: [AttributeError 붕괴 방어] get_plan 내 ticker 파라미터 결측치(None) 유입 시 upper() 호출 즉사 버그 완벽 차단
+# 🚨 MODIFIED: [NaN 논리 오염 방어] analyze_vwap_dominance 내 존재하는 모든 가격 컬럼(open, high, low)을 dropna 대상에 동적 포함시켜 연산 오염 원천 봉쇄
 # 🚨 MODIFIED: [Cascading Failure 전면 차단] 모든 라우팅 메서드에 safe_ticker 락온을 주입하여 하위 플러그인 오염 전파 원천 봉쇄
+# 🚨 MODIFIED: [KeyError 원천 봉쇄] analyze_vwap_dominance 내 volume, close 컬럼 자체 누락 시 즉사하는 버그 방어용 단락 평가 주입
 # 🚨 MODIFIED: [유령 종목 I/O 차단] 빈 문자열 렌더링 시 하위 플러그인 I/O 호출을 차단하는 조기 종료(Early Return) 락온
 # 🚨 MODIFIED: [Config Null-Pointer 방어] get_plan 진입 시 cfg 인스턴스 결측으로 인한 연쇄 붕괴를 막는 절대 쉴드 락온
 # 🚨 MODIFIED: [음수 오염 방어] capture_vrev_snapshot 내 수수료 음수 오입력 시 수익률이 뻥튀기되는 논리적 결함 원천 봉쇄 (max 0.0 바운딩)
-# 🚨 MODIFIED: [데드코드 소각] 정적 분석 결과 호출되지 않는 유령 함수 4종 영구 소각 완료.
+# 🚨 MODIFIED: [데드코드 소각] 정적 분석 결과 호출되지 않는 유령 함수 1종 영구 소각 완료.
 # ==========================================================
 import logging
 import pandas as pd
@@ -195,10 +199,31 @@ class InfiniteStrategy:
             "captured_at": pd.Timestamp.now(tz=ZoneInfo('America/New_York'))
         }
 
-    def get_avwap_decision(self, base_ticker, exec_ticker, base_curr_p, exec_curr_p, base_day_open, avg_price, qty, alloc_cash, context_data, df_1min_base, now_est, avwap_state=None, regime_data=None, is_simulation=False, df_1min_exec=None, sortie_mode="SINGLE", **kwargs):
+    # 🚨 MODIFIED: [Cascading Failure 방어] 하위 플러그인에 safe_ticker 주입 강제
+    def load_avwap_state(self, ticker, now_est):
+        safe_ticker = str(ticker or "").strip().upper()
+        if not safe_ticker: return {}
+        
+        if hasattr(self.v_avwap_plugin, 'load_state'):
+            return self.v_avwap_plugin.load_state(safe_ticker, now_est)
+        return {}
+
+    def save_avwap_state(self, ticker, now_est, state_data):
+        safe_ticker = str(ticker or "").strip().upper()
+        if not safe_ticker: return
+        
+        if hasattr(self.v_avwap_plugin, 'save_state'):
+            self.v_avwap_plugin.save_state(safe_ticker, now_est, state_data)
+
+    def fetch_avwap_macro(self, base_ticker):
+        safe_base_ticker = str(base_ticker or "").strip().upper()
+        if not safe_base_ticker: return None
+        return self.v_avwap_plugin.fetch_macro_context(safe_base_ticker)
+
+    def get_avwap_decision(self, base_ticker=None, exec_ticker=None, base_curr_p=0.0, exec_curr_p=0.0, base_day_open=0.0, avg_price=0.0, qty=0, alloc_cash=0.0, context_data=None, df_1min_base=None, now_est=None, avwap_state=None, regime_data=None, is_simulation=False, df_1min_exec=None, sortie_mode="SINGLE", **kwargs):
         safe_base_ticker = str(base_ticker or "").strip().upper()
         safe_exec_ticker = str(exec_ticker or "").strip().upper()
-        
+         
         if not safe_base_ticker or not safe_exec_ticker: return {}
         
         # 🚨 MODIFIED: [Case 11] 다중 출격(Multi-Sortie) 모드 파라미터 수혈 배선

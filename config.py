@@ -10,7 +10,7 @@
 # MODIFIED: [ValueError 붕괴 방어] 텔레그램 chat_id.dat 오염 시 발생하는 정수 캐스팅 에러(ValueError) 원천 차단
 # MODIFIED: [TypeError 붕괴 방어] 외부 매개변수 결측치(None/str) 유입에 대비한 Iterable(`or []`) 및 객체(`isinstance`) 안전망 100% 결속
 # MODIFIED: [외부 오염 붕괴 방어] `version_history.py` 오염 시 `get_latest_version`에서 발생하는 TypeError 즉사 버그 원천 차단 (`isinstance(history, list)` 락온)
-# MODIFIED: [데드코드 소각] 정적 분석 결과 호출되지 않는 유령 함수 11종 영구 소각 완료.
+# 🚨 MODIFIED: [데드코드 소각] 정적 분석 결과 호출되지 않는 유령 함수 11종 영구 소각 완료.
 # ==========================================================
 
 import json
@@ -32,17 +32,6 @@ try:
     from version_history import VERSION_HISTORY
 except ImportError:
     VERSION_HISTORY = ["V14.x [-] 버전 기록 파일(version_history.py)을 찾을 수 없습니다."]
-
-VWAP_PROFILES = {
-    "SOXL": {
-        "15:27": 0.010835, "15:28": 0.010105, "15:29": 0.010360, "15:30": 0.010940, "15:31": 0.011123,
-        "15:32": 0.011697, "15:33": 0.012039, "15:34": 0.012681, "15:35": 0.013115, "15:36": 0.013911,
-        "15:37": 0.014932, "15:38": 0.015402, "15:39": 0.016528, "15:40": 0.017321, "15:41": 0.018455,
-        "15:42": 0.020241, "15:43": 0.021198, "15:44": 0.023076, "15:45": 0.024557, "15:46": 0.026961,
-        "15:47": 0.030867, "15:48": 0.033476, "15:49": 0.037601, "15:50": 0.041495, "15:51": 0.047717,
-        "15:52": 0.055668, "15:53": 0.066270, "15:54": 0.081758, "15:55": 0.109401, "15:56": 0.180271
-    }
-}
 
 class ConfigManager:
     def __init__(self):
@@ -207,11 +196,8 @@ class ConfigManager:
     def get_vrev_gap_switching_mode(self, ticker):
         return bool(self._load_json(self.FILES["VREV_GAP_SWITCH_CFG"], {}).get(ticker, False))
 
-    def set_vrev_gap_switching_mode(self, ticker, v):
-        with self._io_lock:
-            d = self._load_json(self.FILES["VREV_GAP_SWITCH_CFG"], {})
-            d[ticker] = bool(v)
-            self._save_json(self.FILES["VREV_GAP_SWITCH_CFG"], d)
+    def get_avwap_gap_threshold(self, ticker):
+        return self._safe_float(self._load_json(self.FILES["AVWAP_GAP_THRESH_CFG"], {}).get(ticker, -0.67))
 
     def get_last_split_date(self, ticker):
         return str(self._load_json(self.FILES["SPLIT_HISTORY"], {}).get(ticker, ""))
@@ -312,7 +298,7 @@ class ConfigManager:
                     
                  updated_ticker_recs.append(new_row)
                  
-            remaining.extend(updated_ticker_recs)
+             remaining.extend(updated_ticker_recs)
             self._save_json(self.FILES["LEDGER"], remaining)
 
     def calibrate_avg_price(self, ticker, actual_avg):
@@ -371,7 +357,7 @@ class ConfigManager:
                         if abs(self._safe_float(r.get('price', 0.0)) - actual_sell_price) >= 0.01:
                             r['price'] = actual_sell_price
                             changed_count += 1
-                             
+                              
             if changed_count > 0:
                 self._save_json(self.FILES["LEDGER"], ledger)
             
@@ -451,7 +437,7 @@ class ConfigManager:
                 if state.get("last_update_date") != today_est_str:
                     new_day = state.get("day_count", 0) + 1
                     self.set_reverse_state(ticker, True, new_day, state.get("exit_target", 0.0), today_est_str)
-                    return True
+                return True
         return False
 
     def calculate_v14_state(self, ticker):
@@ -574,7 +560,7 @@ class ConfigManager:
             self._save_json(self.FILES["HISTORY"], history)
              
             self.clear_ledger_for_ticker(ticker)
-            
+             
             return new_hist, added_seed
 
     def get_history(self):
@@ -626,7 +612,7 @@ class ConfigManager:
 
     def get_split_count(self, t): 
         return self._safe_float(self._load_json(self.FILES["SPLIT"], self.DEFAULT_SPLIT).get(t, 40.0))
-        
+         
     def get_target_profit(self, t): 
         return self._safe_float(self._load_json(self.FILES["PROFIT_CFG"], self.DEFAULT_TARGET).get(t, 10.0))
         
@@ -671,7 +657,7 @@ class ConfigManager:
         
     def set_manual_vwap_mode(self, ticker, v):
         with self._io_lock:
-            d = self._load_json(self.FILES["MANUAL_VWAP_CFG"], {})
+             d = self._load_json(self.FILES["MANUAL_VWAP_CFG"], {})
             d[ticker] = bool(v)
             self._save_json(self.FILES["MANUAL_VWAP_CFG"], d)
 
@@ -716,7 +702,7 @@ class ConfigManager:
         if v:
             try:
                 return int(v)
-            except ValueError:
+             except ValueError:
                 return None
         return None
         
