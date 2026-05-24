@@ -7,6 +7,7 @@
 # 🚨 MODIFIED: [Case 16] 임시 파일 변수 스코프 전진 배치(Hoisting)로 UnboundLocalError 런타임 붕괴 완벽 차단
 # 🚨 MODIFIED: [Insight 14] String-Float 콤마 맹독성 및 NaN/Inf 런타임 붕괴 방어용 `_safe_float` 래핑 전면 이식
 # 🚨 MODIFIED: [Insight 06/07] JSON/Dict 결측치 붕괴를 막는 단락 평가(`or {}`, `or []`) 방어막 결속
+# 🚨 MODIFIED: [Indentation 붕괴 수술] get_plan 내부 새출발(qty == 0) 블록 마지막의 unexpected indent 에러 완벽 교정
 # ==========================================================
 import math
 import os
@@ -186,7 +187,8 @@ class V14Strategy:
                 if q_base > 0:
                     bonus_orders.extend(sorted([{"side": "BUY", "price": math.floor((one_portion_amt / (q_base + n)) * 100) / 100.0, "qty": 1, "type": "LOC", "desc": f"🧲줍줍(+{n}주)"} for n in range(1, 6) if math.floor((one_portion_amt / (q_base + n)) * 100) / 100.0 > 0.01], key=lambda x: x['price'], reverse=True))
             
-            orders = core_orders + bonus_orders
+                # 🚨 MODIFIED: 들여쓰기 에러 완벽 팩트 교정 완료 (Unexpected Indent 제거)
+                orders = core_orders + bonus_orders
                 plan_result = {"orders": orders, "core_orders": core_orders, "bonus_orders": bonus_orders, "total_q": qty, "avg_price": avg_price, "t_val": t_val, "one_portion": one_portion_amt, "process_status": process_status, "is_reverse": False, "star_price": star_price, "star_ratio": star_ratio, "real_cash_used": real_available_cash, "tracking_info": tr_info}
                 if is_snapshot_mode: self.save_daily_snapshot(ticker, plan_result)
                 return plan_result
