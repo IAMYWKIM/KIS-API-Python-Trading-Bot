@@ -7,7 +7,6 @@
 # 🚨 MODIFIED: [Case 16] 임시 파일 변수 스코프 전진 배치(Hoisting)로 UnboundLocalError 런타임 붕괴 완벽 차단
 # 🚨 MODIFIED: [Insight 14] String-Float 콤마 맹독성 및 NaN/Inf 런타임 붕괴 방어용 `_safe_float` 래핑 전면 이식
 # 🚨 MODIFIED: [Insight 06/07] JSON/Dict 결측치 붕괴를 막는 단락 평가(`or {}`, `or []`) 방어막 결속
-# 🚨 MODIFIED: [데드코드 소각] 정적 분석 결과 호출되지 않는 유령 함수 1종 영구 소각 완료.
 # ==========================================================
 import math
 import os
@@ -31,6 +30,7 @@ class V14Strategy:
             return 0.0
 
     def _ceil(self, val): return math.ceil(self._safe_float(val) * 100) / 100.0
+    def _floor(self, val): return math.floor(self._safe_float(val) * 100) / 100.0
 
     def _get_logical_date_str(self):
         now_est = datetime.now(ZoneInfo('America/New_York'))
@@ -186,7 +186,7 @@ class V14Strategy:
                 if q_base > 0:
                     bonus_orders.extend(sorted([{"side": "BUY", "price": math.floor((one_portion_amt / (q_base + n)) * 100) / 100.0, "qty": 1, "type": "LOC", "desc": f"🧲줍줍(+{n}주)"} for n in range(1, 6) if math.floor((one_portion_amt / (q_base + n)) * 100) / 100.0 > 0.01], key=lambda x: x['price'], reverse=True))
             
-                orders = core_orders + bonus_orders
+            orders = core_orders + bonus_orders
                 plan_result = {"orders": orders, "core_orders": core_orders, "bonus_orders": bonus_orders, "total_q": qty, "avg_price": avg_price, "t_val": t_val, "one_portion": one_portion_amt, "process_status": process_status, "is_reverse": False, "star_price": star_price, "star_ratio": star_ratio, "real_cash_used": real_available_cash, "tracking_info": tr_info}
                 if is_snapshot_mode: self.save_daily_snapshot(ticker, plan_result)
                 return plan_result
@@ -195,7 +195,7 @@ class V14Strategy:
                 process_status = "🎉대박익절"
                 if qty > 0:
                     core_orders.append({"side": "SELL", "price": target_price, "qty": int(qty), "type": "LIMIT", "desc": "🎯전량대박익절"})
-                core_orders, bonus_orders = self._apply_wash_trade_shield(core_orders, bonus_orders) 
+                core_orders, bonus_orders = self._apply_wash_trade_shield(core_orders, bonus_orders)        
                 orders = core_orders + bonus_orders
                 
                 plan_result = {"orders": orders, "core_orders": core_orders, "bonus_orders": bonus_orders, "total_q": qty, "avg_price": avg_price, "t_val": t_val, "one_portion": one_portion_amt, "process_status": process_status, "is_reverse": False, "star_price": star_price, "star_ratio": star_ratio, "real_cash_used": real_available_cash, "tracking_info": tr_info}

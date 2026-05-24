@@ -145,7 +145,7 @@ class QueueLedger:
                     except OSError: pass
                 # 🚨 MODIFIED: [Case 33] 3단 지수 백오프 규격 팩트 교정
                 time.sleep(1.0 * (2 ** attempt))
-                
+                 
         logging.error(f"🚨 [QueueLedger] 장부 저장 최종 실패: {self.file_path} — 데이터 유실 위험!")
 
     # 🚨 MODIFIED: [멱등성 수술] V-REV 큐 장부 액면분할 정밀 소급 적용 및 _safe_float 쉴드 래핑
@@ -164,7 +164,7 @@ class QueueLedger:
                     lot["price"] = round(old_price / ratio, 4)
                     changed = True
             if changed:
-                data[ticker] = q
+                 data[ticker] = q
                 self._save_unsafe(data)
 
     def get_queue(self, ticker):
@@ -295,7 +295,7 @@ class QueueLedger:
                     })
             else:
                 diff = current_q_qty - actual_qty
-                
+                 
                 while q and diff > 0:
                     last_lot = q[-1]
                     lot_qty = int(self._safe_float(last_lot.get("qty")))

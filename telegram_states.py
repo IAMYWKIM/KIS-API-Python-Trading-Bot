@@ -31,7 +31,7 @@ class TelegramStates:
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE, controller):
         # 🚨 MODIFIED: [보안 팩트 교정] await 키워드 강제 락온으로 코루틴 경고 소각 및 관리자 인증망 수복
         if not await controller._is_admin(update):
-            return
+             return
             
         chat_id = update.effective_chat.id
         # 🚨 MODIFIED: 미디어(사진 등) 수신 시 text 속성이 None이 되어 발생하는 TypeError 단락 평가 방어
@@ -100,7 +100,7 @@ class TelegramStates:
                             else: await asyncio.sleep(1.0 * (2 ** attempt))
                             
                     if curr_p and curr_p > 0 and (price < curr_p * 0.7 or price > curr_p * 1.3):
-                        del controller.user_states[chat_id]
+                         del controller.user_states[chat_id]
                         return await update.effective_message.reply_text(f"🚨 <b>팻핑거 방어 가동:</b> 입력가(${price:.2f})가 현재가(${curr_p:.2f}) 대비 ±30%를 초과합니다. 다시 시도해주세요.", parse_mode='HTML')
                 except Exception:
                     pass
@@ -140,7 +140,7 @@ class TelegramStates:
                 
             elif state.startswith("CONF_SPLIT"):
                 if val < 1:
-                    return await update.effective_message.reply_text("❌ 오류: 분할 횟수는 1 이상이어야 합니다.")
+                     return await update.effective_message.reply_text("❌ 오류: 분할 횟수는 1 이상이어야 합니다.")
                     
                 ticker = parts[2]
                 safe_ticker = html.escape(str(ticker))

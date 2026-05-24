@@ -170,7 +170,7 @@ class TelegramSyncEngine:
                             k_dt = datetime.datetime.strptime(f"{ord_dt}{ord_tmd}", "%Y%m%d%H%M%S").replace(tzinfo=kst)
                             e_dt = k_dt.astimezone(est)
                             if e_dt.strftime('%Y-%m-%d') == target_ledger_str:
-                               filtered.append(ex)
+                                filtered.append(ex)
                         except Exception: pass
                     return filtered
 
@@ -437,7 +437,7 @@ class TelegramSyncEngine:
                                             derived_price = pure_manual_amt / pure_manual_q
                                             missing_price = round(derived_price, 4)
                                         else: missing_price = round(b_tot_amt / b_tot_q, 4)
-                                            
+                                        
                                 q_data_before.append({"date": now_est.strftime('%Y-%m-%d %H:%M:%S'), "qty": missing_qty, "price": missing_price, "exec_id": "MANUAL_SYNC"})
                                 vrev_ledger_qty = tot_q
                                 await asyncio.to_thread(self.queue_ledger.overwrite_queue, ticker, q_data_before)
@@ -447,18 +447,18 @@ class TelegramSyncEngine:
 
                             curr_p = 0.0
                             for attempt in range(3):
-                                try:
+                                 try:
                                     await asyncio.sleep(0.06)
                                     curr_p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=15.0)
                                     curr_p = self._safe_float(curr_p_val)
                                     break
-                                except Exception:
+                                 except Exception:
                                     if attempt == 2: curr_p = 0.0
                                     else: await asyncio.sleep(1.0 * (2**attempt))
-                            
+                             
                             clear_price = actual_clear_price if actual_clear_price > 0.0 else (curr_p if curr_p and curr_p > 0 else q_avg_price * 1.006)
                             snapshot = await asyncio.to_thread(self.strategy.capture_vrev_snapshot, ticker, clear_price, q_avg_price, vrev_ledger_qty)
-                            
+                             
                             if snapshot:
                                 realized_pnl = snapshot['realized_pnl']
                                 yield_pct = snapshot['realized_pnl_pct']
@@ -472,7 +472,7 @@ class TelegramSyncEngine:
                                 cap_dt_str = cap_dt if isinstance(cap_dt, str) else cap_dt.strftime('%Y-%m-%d')
                                 
                                 start_dt_str = str(q_data_before[0].get('date', ''))[:10] if q_data_before else cap_dt_str[:10]
-                                
+                                 
                                 hist_data = await asyncio.to_thread(self.cfg._load_json, self.cfg.FILES["HISTORY"], [])
                                 new_hist = {
                                     "id": int(time.time()), "ticker": ticker, "start_date": start_dt_str, "end_date": cap_dt_str[:10],
@@ -486,7 +486,7 @@ class TelegramSyncEngine:
                         except Exception as e:
                             logging.error(f"🚨 스냅샷 캡처 및 복리 정산 중 치명적 오류 감지: {e}\n{traceback.format_exc()}")
                             snapshot = None
-                            
+                             
                         await asyncio.to_thread(self.queue_ledger.sync_with_broker, ticker, 0)
                         
                         if _vrev_snap_ok:
@@ -513,7 +513,7 @@ class TelegramSyncEngine:
                             await context.bot.send_message(chat_id, f"⚠️ <b>[{html.escape(str(ticker))} V-REV 0주 강제 정산 완료]</b>\n▫️ 0주를 확인하여 큐를 안전하게 비웠으나 통신 지연으로 졸업 카드는 생략되었습니다.", parse_mode='HTML')
                             
                         return "SUCCESS"
-                     
+                      
                     if adjusted_actual_qty == vrev_ledger_qty: pass
                     else:
                         if adjusted_actual_qty > 0 and adjusted_actual_qty < vrev_ledger_qty:
@@ -555,7 +555,7 @@ class TelegramSyncEngine:
 
                             calibrated = await asyncio.to_thread(self.queue_ledger.sync_with_broker, ticker, adjusted_actual_qty, actual_avg)
                             if calibrated: await context.bot.send_message(chat_id, f"🔧 <b>[{html.escape(str(ticker))}] V-REV 큐(Queue) 비파괴 보정 완료!</b>\n▫️ 수동 매도 물량(<b>{gap_qty}주</b>)을 LIFO 큐에서 안전하게 차감했습니다.", parse_mode='HTML')
-                            
+                             
                         elif adjusted_actual_qty > 0 and adjusted_actual_qty > vrev_ledger_qty:
                             gap_qty = adjusted_actual_qty - vrev_ledger_qty
                             real_buy_price = actual_avg
@@ -566,7 +566,7 @@ class TelegramSyncEngine:
                                     b_tot_q = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in buy_execs)
                                     if b_tot_q > 0: real_buy_price = round(b_tot_amt / b_tot_q, 4)
                                         
-                                    if real_buy_price == actual_avg:
+                                if real_buy_price == actual_avg:
                                         search_start_dt = (now_kst - datetime.timedelta(days=4)).strftime('%Y%m%d')
                                         past_raw = await asyncio.to_thread(self.broker.get_execution_history, ticker, search_start_dt, query_end_dt)
                                         past_execs = filter_to_est(past_raw)
@@ -673,7 +673,7 @@ class TelegramSyncEngine:
                 
                 if rec.get('side') == 'BUY': total_buy += (int(self._safe_float(rec.get('qty'))) * self._safe_float(rec.get('price')))
                 elif rec.get('side') == 'SELL': total_sell += (int(self._safe_float(rec.get('qty'))) * self._safe_float(rec.get('price')))
-            
+             
             report = f"📜 <b>[ {html.escape(str(ticker))} 일자별 매매 (통합 변동분) (총 {len(agg_dict)}일) ]</b>\n\n<code>No. 일자   구분  평균단가  수량\n"
             report += "-"*30 + "\n"
             
@@ -692,7 +692,7 @@ class TelegramSyncEngine:
             
             split = await asyncio.to_thread(self.cfg.get_split_count, ticker)
             t_val, _ = await asyncio.to_thread(self.cfg.get_absolute_t_val, ticker, actual_qty, actual_avg)
-            
+             
             report += "📊 <b>[ 현재 진행 상황 요약 ]</b>\n"
             report += f"▪️ 현재 T값 : {t_val:.4f} T ({int(split)}분할)\n"
             report += f"▪️ 보유 수량 : {actual_qty} 주 (평단 ${actual_avg:,.2f})\n"

@@ -52,6 +52,7 @@ def is_market_open():
             time.sleep(0.06) # 🚨 NEW: [Case 32] KIS/API 동시 접속 스로틀링 방어용 TPS 캡핑
             est = ZoneInfo('America/New_York')
             today = datetime.datetime.now(est)
+         
             if today.weekday() >= 5: 
                 return False
                 
@@ -59,7 +60,7 @@ def is_market_open():
             schedule = nyse.schedule(start_date=today.date(), end_date=today.date())
             
             if not schedule.empty:
-                return True
+                 return True
             else:
                 logging.info("💤 [is_market_open] 달력 API 빈 데이터 반환. 금일은 미국 증시 휴장일입니다.")
                 return False
@@ -67,7 +68,7 @@ def is_market_open():
             if attempt == 2:
                 logging.error(f"⚠️ 달력 라이브러리 에러 발생. 스케줄 증발 방어를 위해 평일 강제 개장(Fail-Open) 처리합니다: {e}")
                 est = ZoneInfo('America/New_York')
-                return datetime.datetime.now(est).weekday() < 5
+                 return datetime.datetime.now(est).weekday() < 5
             time.sleep(1.0 * (2 ** attempt))
 
 def get_budget_allocation(cash, tickers, cfg):
@@ -117,11 +118,11 @@ def perform_self_cleaning():
             ("logs/bot_app_*.log", seven_days),          
             ("logs/bot_app.log.*", seven_days),          
             ("data/daily_snapshot_*.json", seven_days),  
-            ("data/vwap_state_*.json", seven_days),      
+             ("data/vwap_state_*.json", seven_days),      
             ("data/profit_*.png", seven_days),           
             ("data/profit_*.gif", seven_days),           
             ("data/*.bak_*", seven_days),                
-            ("data/tmp*", one_day),                      
+            ("data/tmp*", one_day),  
             ("logs/tmp*", one_day)
         ]
         
@@ -132,7 +133,7 @@ def perform_self_cleaning():
                     if os.stat(f).st_mtime < now - max_age:
                         os.remove(f)
                 except OSError:
-                    pass
+                     pass
                         
     except Exception as e:
         logging.error(f"🧹 자정(Self-Cleaning) 작업 중 시스템 오류 발생: {e}")
@@ -142,7 +143,7 @@ async def scheduled_self_cleaning(context):
         await asyncio.wait_for(asyncio.to_thread(perform_self_cleaning), timeout=60.0)
         logging.info("🧹 [시스템 자정 작업 완료] 7일 초과 낡은 로그/스냅샷 및 임시 파일 GC(소각) 완료")
     except Exception as e:
-        logging.error(f"🚨 [Self-Cleaning] 가비지 컬렉션(GC) 타임아웃 또는 런타임 예외: {e}")
+         logging.error(f"🚨 [Self-Cleaning] 가비지 컬렉션(GC) 타임아웃 또는 런타임 예외: {e}")
 
 async def scheduled_token_check(context):
     # 🚨 MODIFIED: [Insight 27] context.job.data 결측치 유입 시 TypeError 방어 락온
@@ -226,7 +227,7 @@ async def scheduled_force_reset(context):
             
             # 🚨 MODIFIED: [Insight 06/07] active_tickers가 None일 경우 대비
             active_tickers = (await asyncio.to_thread(cfg.get_active_tickers)) or []
-            
+             
             for t in active_tickers:
                 try:
                     await asyncio.sleep(0.06)
@@ -275,7 +276,7 @@ async def scheduled_force_reset(context):
                                 if math.isnan(exit_target) or math.isinf(exit_target): exit_target = 0.0
                             except Exception:
                                 exit_target = 0.0
-                            
+                             
                             if curr_ret >= exit_target:
                                 await asyncio.to_thread(cfg.set_reverse_state, t, True, 0, 0.0)
                                 
@@ -288,7 +289,7 @@ async def scheduled_force_reset(context):
                                             changed = True
                                     if changed:
                                         await asyncio.to_thread(cfg._save_json, cfg.FILES["LEDGER"], ledger_data)
-                                 
+                                        
                                 # 🚨 MODIFIED: [Case 26] 텔레그램 타전망 HTML 파서 붕괴 방지용 html.escape 강제 래핑
                                 safe_t = html.escape(str(t))
                                 msg_addons += f"\n🌤️ <b>[{safe_t}] 리버스 목표 달성({curr_ret:.2f}%)!</b> 격리 병동 졸업 완료!"
@@ -337,7 +338,7 @@ async def scheduled_auto_sync(context):
         lock_file = "data/sync_lock.json"
         
         try:
-            os.makedirs("data", exist_ok=True)
+             os.makedirs("data", exist_ok=True)
         except OSError:
             pass
 

@@ -6,11 +6,10 @@
 # 🚨 MODIFIED: [TypeError 방어] handle_message 라우터 진입 시 미디어(사진/스티커 등) 예외 처리를 위한 단락 평가 주입
 # 🚨 MODIFIED: [Case 32 절대 헌법] cmd_sync, cmd_record, cmd_mode, cmd_add_q 내 API 재시도 루프에 TPS 캡핑(0.06s) 전면 주입
 # 🚨 MODIFIED: [Case 08 & 14] cmd_log 내 os.path.exists 레이스 컨디션 유발 데드코드 소각 및 FileNotFoundError 예외 처리(EAFP)로 전환
-# 🚨 MODIFIED: [Insight 14] _safe_float 래퍼 메서드 전면 이식으로 NaN, Infinity 및 String-Float 콤마 맹독성 런타임 붕괴 완벽 차단
+# 🚨 MODIFIED: [Insight 14] _safe_float 래퍼 메서 전면 이식으로 NaN, Infinity 및 String-Float 콤마 맹독성 런타임 붕괴 완벽 차단
 # 🚨 MODIFIED: [Insight 06/07] cmd_sync 내 total_buy_needed 연산 시 딕셔너리 오염 방어(isinstance) 및 Float 쉴드 결속
 # 🚨 MODIFIED: [Insight 11] _is_admin 및 cmd_history 내 NoneType 유입 방어 및 정밀 형변환(Safe Casting) 락온
 # 🚨 MODIFIED: [Insight 12] cmd_add_q 장부 정렬 시 오염 객체(문자열/리스트)로 인한 AttributeError 원천 차단 (isinstance 람다 락온)
-# 🚨 REMOVED: [데드코드 소각] 사용되지 않는 setup_handlers 함수 영구 삭제
 # ==========================================================
 import logging
 import datetime
@@ -53,6 +52,7 @@ class TelegramController:
         self.states_handler = TelegramStates(self.cfg, self.broker, self.queue_ledger, self.sync_engine)
         self.callbacks_handler = TelegramCallbacks(self.cfg, self.broker, self.strategy, self.queue_ledger, self.sync_engine, self.view, self.tx_lock)
 
+    # 🚨 MODIFIED: [Insight 14] 컨트롤러 전역 NaN/Inf 방어용 Safe Float 래퍼
     def _safe_float(self, val):
         try:
             f_val = float(str(val or 0.0).replace(',', ''))
@@ -63,6 +63,7 @@ class TelegramController:
             return 0.0
 
     async def _is_admin(self, update: Update):
+        # 🚨 MODIFIED: [Insight 11] 관리자 ID 파싱 시 발생할 수 있는 NoneType 및 ValueError 붕괴 방어막 락온
         if self.admin_id is None:
             raw_id = await asyncio.to_thread(self.cfg.get_chat_id)
             self.admin_id = int(self._safe_float(raw_id)) if raw_id else None
@@ -124,6 +125,31 @@ class TelegramController:
         else:
             return "CLOSE", "⛔ 장마감"
 
+    def setup_handlers(self, application):
+        application.add_handler(CommandHandler("start", self.cmd_start))
+        application.add_handler(CommandHandler("sync", self.cmd_sync))
+        application.add_handler(CommandHandler("record", self.cmd_record))
+        application.add_handler(CommandHandler("history", self.cmd_history))
+        application.add_handler(CommandHandler("settlement", self.cmd_settlement))
+        application.add_handler(CommandHandler("seed", self.cmd_seed))
+        application.add_handler(CommandHandler("ticker", self.cmd_ticker))
+        application.add_handler(CommandHandler("mode", self.cmd_mode))
+        application.add_handler(CommandHandler("version", self.cmd_version))
+        
+        application.add_handler(CommandHandler("queue", self.cmd_queue))
+        application.add_handler(CommandHandler("add_q", self.cmd_add_q))
+        application.add_handler(CommandHandler("clear_q", self.cmd_clear_q))
+        
+        application.add_handler(CommandHandler("reset", self.cmd_reset))
+        application.add_handler(CommandHandler("update", self.cmd_update))
+    
+        application.add_handler(CommandHandler("avwap", self.cmd_avwap))
+        application.add_handler(CommandHandler("log", self.cmd_log))
+        application.add_handler(CommandHandler("error", self.cmd_log))
+        
+        application.add_handler(CallbackQueryHandler(self.handle_callback))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
+
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await self.callbacks_handler.handle_callback(update, context, self)
 
@@ -131,6 +157,7 @@ class TelegramController:
         if not await self._is_admin(update):
             return
             
+        # 🚨 MODIFIED: [TypeError 방어] 미디어 전송 시 text가 None이 되는 상황 단락 평가 보호
         msg_obj = update.effective_message
         text = msg_obj.text.strip() if msg_obj and msg_obj.text else ""
         chat_id = update.effective_chat.id
@@ -200,8 +227,9 @@ class TelegramController:
         try:
             log_path = f"logs/bot_app.log" 
             
+            # 🚨 MODIFIED: [Case 08] os.path.exists 소각 및 FileNotFoundError (EAFP) 패턴 강제 적용
             def _grep_tail_logs(path, limit=50):
-                try:
+                 try:
                     with open(path, 'r', encoding='utf-8') as f:
                         lines = f.readlines()
                     tail_lines = lines[-limit:]
@@ -275,7 +303,9 @@ class TelegramController:
                 curr_p = 0.0
                 for attempt in range(3):
                     try:
+                        # 🚨 MODIFIED: [Case 32] TPS 캡핑 주입
                         await asyncio.sleep(0.06)
+                        # 🚨 MODIFIED: [제5헌법 준수] 타임아웃 10.0초 락온
                         curr_p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=10.0)
                         curr_p = self._safe_float(curr_p_val)
                         break
@@ -293,9 +323,10 @@ class TelegramController:
                 self.queue_ledger = await asyncio.to_thread(QueueLedger)
                 
             q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
-            if not isinstance(q_data, list): q_data = [] 
+            if not isinstance(q_data, list): q_data = [] # 🚨 MODIFIED: [Insight 12] 리스트 결측치 방어
             
             q_data.append({"qty": qty, "price": price, "date": f"{date_str} 23:59:59", "type": "MANUAL_OVERRIDE"})
+            # 🚨 MODIFIED: [Insight 12] 장부 정렬 시 오염 객체(문자열/리스트 등)로 인한 AttributeError 원천 차단
             q_data.sort(key=lambda x: str(x.get('date', '')) if isinstance(x, dict) else '', reverse=True)
             
             await asyncio.to_thread(self.queue_ledger.overwrite_queue, ticker, q_data)
@@ -303,6 +334,7 @@ class TelegramController:
             if ticker not in self.sync_engine.sync_locks: self.sync_engine.sync_locks[ticker] = asyncio.Lock()
             if not self.sync_engine.sync_locks[ticker].locked(): await self.sync_engine.process_auto_sync(ticker, chat_id, context, silent_ledger=False)
             
+            # 🚨 MODIFIED: [Case 26] date_str HTML 태그 붕괴 방어막 주입
             date_str_safe = html.escape(str(date_str))
             await update.effective_message.reply_text(f"✅ <b>[{ticker}] 수동 지층 삽입 완료!</b>\n▫️ {date_str_safe} | {qty}주 | ${price:.2f}", parse_mode='HTML')
         except Exception as e:
@@ -346,6 +378,7 @@ class TelegramController:
             cash = 0.0
             for attempt in range(3):
                 try:
+                    # 🚨 MODIFIED: [Case 32] TPS 캡핑 주입
                     await asyncio.sleep(0.06)
                     res = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=15.0)
                     cash, holdings = res[0], res[1]
@@ -374,7 +407,7 @@ class TelegramController:
         if not app_data:
             try:
                 jobs = context.job_queue.jobs() if context.job_queue else []
-                app_data = jobs[0].data if jobs and jobs[0].data is not None else {}
+                 app_data = jobs[0].data if jobs and jobs[0].data is not None else {}
             except Exception:
                 app_data = {}
 
@@ -411,6 +444,7 @@ class TelegramController:
         async def _retry_call(func, *args, **kwargs):
             for attempt in range(3):
                 try:
+                    # 🚨 MODIFIED: [Case 32] TPS 캡핑 주입
                     await asyncio.sleep(0.06)
                     return await asyncio.wait_for(asyncio.to_thread(func, *args, **kwargs), timeout=15.0)
                 except Exception:
@@ -457,6 +491,7 @@ class TelegramController:
                 try:
                     def get_yf_close():
                         time.sleep(0.06)
+                        # 🚨 MODIFIED: [Case 33] yfinance 타임아웃 5초 강제 락온
                         df = yf.Ticker(t).history(period="5d", interval="1d", timeout=5.0)
                         if not df.empty and 'Close' in df.columns and len(df['Close']) > 0:
                             val = float(df['Close'].iloc[-1])
@@ -466,6 +501,7 @@ class TelegramController:
                     yf_close = None
                     for attempt in range(3):
                         try:
+                            # 🚨 MODIFIED: [Case 32] TPS 캡핑 주입
                             await asyncio.sleep(0.06)
                             yf_close = await asyncio.wait_for(asyncio.to_thread(get_yf_close), timeout=10.0)
                             break
@@ -668,7 +704,7 @@ class TelegramController:
                         
                         if hasattr(self.strategy, 'v_avwap_plugin'):
                             avwap_state_dict = {"strikes": tracking_cache.get(f"AVWAP_STRIKES_{t}", 0), "cooldown_active": tracking_cache.get(f"AVWAP_COOLDOWN_{t}", False)}
-                            
+                             
                             decision = await asyncio.wait_for(
                                 asyncio.to_thread(
                                     self.strategy.v_avwap_plugin.get_decision,
@@ -760,6 +796,7 @@ class TelegramController:
                 'has_snapshot': bool(cached_snap)
             })
             
+            # 🚨 MODIFIED: [Insight 06/07] 딕셔너리 오염 검증 및 Float 콤마 방어막 락온
             total_buy_needed += sum(
                 self._safe_float(o.get('price')) * self._safe_float(o.get('qty'))
                 for o in plan.get('orders', []) if isinstance(o, dict) and o.get('side') == 'BUY'
@@ -771,8 +808,9 @@ class TelegramController:
         try:
             def get_exchange_rate():
                 time.sleep(0.06)
+                # 🚨 MODIFIED: [Case 33] yfinance 타임아웃 5초 하드코딩 결속
                 df = yf.Ticker("KRW=X").history(period="1d", timeout=5.0)
-                return float(df['Close'].iloc[-1]) if not df.empty else 0.0
+                 return float(df['Close'].iloc[-1]) if not df.empty else 0.0
             exchange_rate = await _retry_call(get_exchange_rate)
         except Exception as e:
             logging.debug(f"⚠️ 야후 파이낸스 환율 스캔 에러: {e}")
@@ -803,6 +841,7 @@ class TelegramController:
                 holdings = None
                 for attempt in range(3):
                     try:
+                        # 🚨 MODIFIED: [Case 32] TPS 캡핑 주입
                         await asyncio.sleep(0.06)
                         _, holdings = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=15.0)
                         break
@@ -822,10 +861,12 @@ class TelegramController:
             await target_msg.reply_text("📭 <b>명예의 전당 (졸업 기록)이 비어있습니다.</b>", parse_mode='HTML')
             return
             
+        # 🚨 MODIFIED: [Insight 11] 과거 장부에 end_date가 누락된 경우 발생하는 TypeError 방어막(str casting & default fallback) 락온
         sorted_hist = sorted(history_data, key=lambda x: str(x.get('end_date') or '') if isinstance(x, dict) else '', reverse=True)
         msg = "🏆 <b>[ 명예의 전당 (과거 졸업 기록) ]</b>\n\n상세 내역을 조회할 기록을 선택하세요.\n"
         keyboard = []
         for h in sorted_hist[:15]: 
+            # 🚨 MODIFIED: [Insight 11] 과거 장부 오염 객체 필터링 락온
             if not isinstance(h, dict): continue
             t = h.get('ticker', 'UNK')
             p = self._safe_float(h.get('profit'))
@@ -851,6 +892,7 @@ class TelegramController:
             dynamic_pct_obj = None
             for attempt in range(3):
                 try:
+                    # 🚨 MODIFIED: [Case 32] TPS 캡핑 주입
                     await asyncio.sleep(0.06)
                     dynamic_pct_obj = await asyncio.wait_for(asyncio.to_thread(self.broker.get_dynamic_sniper_target, idx_ticker), timeout=10.0)
                     break

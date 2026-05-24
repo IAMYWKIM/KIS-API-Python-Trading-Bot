@@ -17,7 +17,6 @@
 # 🚨 MODIFIED: [유령 종목 I/O 차단] 빈 문자열 렌더링 시 하위 플러그인 I/O 호출을 차단하는 조기 종료(Early Return) 락온
 # 🚨 MODIFIED: [Config Null-Pointer 방어] get_plan 진입 시 cfg 인스턴스 결측으로 인한 연쇄 붕괴를 막는 절대 쉴드 락온
 # 🚨 MODIFIED: [음수 오염 방어] capture_vrev_snapshot 내 수수료 음수 오입력 시 수익률이 뻥튀기되는 논리적 결함 원천 봉쇄 (max 0.0 바운딩)
-# 🚨 MODIFIED: [데드코드 소각] 정적 분석 결과 호출되지 않는 유령 함수 1종 영구 소각 완료.
 # ==========================================================
 import logging
 import pandas as pd
@@ -46,6 +45,77 @@ class InfiniteStrategy:
             return f_val
         except Exception:
             return 0.0
+
+    def analyze_vwap_dominance(self, df):
+        if df is None or len(df) < 10:
+            return {"vwap_price": 0.0, "is_strong_up": False, "is_strong_down": False}
+            
+        try:
+            # 🚨 MODIFIED: [KeyError 원천 봉쇄] 필수 컬럼 부재 시 연산 불가 판단 조기 종료
+            if 'volume' not in df.columns or 'close' not in df.columns:
+                return {"vwap_price": 0.0, "is_strong_up": False, "is_strong_down": False}
+
+            if 'time_est' in df.columns:
+                df = df[(df['time_est'] >= '093000') & (df['time_est'] <= '155900')].copy()
+            
+            # 🚨 MODIFIED: [NaN 오염 방어] 종가/거래량뿐만 아니라 존재하는 모든 필수 가격 컬럼을 동적으로 필터링하여 수학적 거짓 판별 차단
+            required_cols = [c for c in ['open', 'high', 'low', 'close', 'volume'] if c in df.columns]
+            df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=required_cols)
+            
+            if df.empty or len(df) < 10:
+                return {"vwap_price": 0.0, "is_strong_up": False, "is_strong_down": False}
+
+            if 'high' in df.columns and 'low' in df.columns:
+                typical_price = (df['high'].astype(float) + df['low'].astype(float) + df['close'].astype(float)) / 3.0
+            else:
+                typical_price = df['close'].astype(float)
+            
+            vol_x_price = typical_price * df['volume'].astype(float)
+            total_vol = df['volume'].astype(float).sum()
+            
+            if total_vol == 0:
+                return {"vwap_price": 0.0, "is_strong_up": False, "is_strong_down": False}
+                 
+            vwap_price = vol_x_price.sum() / total_vol
+            
+            df_temp = pd.DataFrame()
+            df_temp['volume'] = df['volume'].astype(float)
+            df_temp['vol_x_price'] = vol_x_price
+            df_temp['cum_vol'] = df_temp['volume'].cumsum()
+            df_temp['cum_vol_price'] = df_temp['vol_x_price'].cumsum()
+            
+            # 🚨 MODIFIED: [ZeroDivision 수술] 거래량이 0인 캔들 누적으로 인한 분모 0 (Inf) 폭발 원천 차단
+            df_temp['running_vwap'] = np.where(df_temp['cum_vol'] > 0, df_temp['cum_vol_price'] / df_temp['cum_vol'], 0.0)
+            
+            idx_10pct = int(len(df_temp) * 0.1)
+            vwap_start = df_temp['running_vwap'].iloc[idx_10pct]
+            vwap_end = df_temp['running_vwap'].iloc[-1]
+            vwap_slope = vwap_end - vwap_start
+            
+            vol_above = df[df['close'].astype(float) > vwap_price]['volume'].astype(float).sum()
+            
+            vol_above_pct = vol_above / total_vol if total_vol > 0 else 0
+             
+            # 🚨 MODIFIED: [KeyError 붕괴 방어] open 컬럼 누락 시 즉사하는 버그 방어용 Safe Fallback
+            daily_open = df['open'].astype(float).iloc[0] if 'open' in df.columns else df['close'].astype(float).iloc[0]
+            daily_close = df['close'].astype(float).iloc[-1]
+            
+            is_up_day = daily_close > daily_open
+            is_down_day = daily_close < daily_open
+            
+            is_strong_up = is_up_day and (vwap_slope > 0) and (vol_above_pct > 0.60)
+            is_strong_down = is_down_day and (vwap_slope < 0) and ((1 - vol_above_pct) > 0.60)
+            
+            return {
+                 "vwap_price": round(vwap_price, 2),
+                "is_strong_up": bool(is_strong_up),
+                "is_strong_down": bool(is_strong_down),
+                "vol_above_pct": round(vol_above_pct, 4),
+                "vwap_slope": round(vwap_slope, 4)
+            }
+         except Exception as e:
+            logging.debug(f"⚠️ VWAP Dominance 분석 에러: {e}")
+            return {"vwap_price": 0.0, "is_strong_up": False, "is_strong_down": False}
 
     def get_plan(self, ticker, current_price, avg_price, qty, prev_close, ma_5day=0.0, market_type="REG", available_cash=0, is_simulation=False, vwap_status=None, is_snapshot_mode=False, regime_data=None):
         # 🚨 MODIFIED: [Config Null-Pointer 방어] 의존성 주입 실패 시 하위 연쇄 붕괴(AttributeError) 원천 차단
@@ -89,7 +159,7 @@ class InfiniteStrategy:
             version = "V14"
 
         try:
-            is_vwap_enabled = getattr(self.cfg, 'get_manual_vwap_mode', lambda x: False)(safe_ticker)
+             is_vwap_enabled = getattr(self.cfg, 'get_manual_vwap_mode', lambda x: False)(safe_ticker)
         except Exception:
             is_vwap_enabled = False
         
@@ -122,7 +192,7 @@ class InfiniteStrategy:
                 plan['bonus_orders'] = []
                 plan['is_reverse'] = True
                 plan['t_val'] = 0.0
-                plan['star_price'] = 0.0
+                 plan['star_price'] = 0.0
                 plan['one_portion'] = 0.0
             except Exception as e:
                 logging.error(f"🚨 V-REV 플랜 생성 실패 (런타임 예외): {e}")
@@ -157,7 +227,7 @@ class InfiniteStrategy:
 
         if version == "V14":
             if hasattr(self.v14_plugin, 'check_sniper_condition'):
-                return self.v14_plugin.check_sniper_condition(safe_ticker, cfg, broker, chat_id)
+                 return self.v14_plugin.check_sniper_condition(safe_ticker, cfg, broker, chat_id)
                 
         return {"action": "HOLD", "reason": "스나이퍼 감시 대기(또는 모듈 없음)", "limit_price": 0.0, "qty": 0}
 
@@ -185,7 +255,7 @@ class InfiniteStrategy:
         net_invested = raw_total_buy * (1.0 + fee_rate)
         net_revenue = raw_total_sell * (1.0 - fee_rate)
         
-        realized_pnl = net_revenue - net_invested
+         realized_pnl = net_revenue - net_invested
         # 🚨 MODIFIED: [ZeroDivision 방어] net_invested가 0보다 클 때만 수익률 산출
         realized_pnl_pct = (realized_pnl / net_invested) * 100 if net_invested > 0 else 0.0
     
@@ -193,7 +263,7 @@ class InfiniteStrategy:
             "ticker": safe_ticker,
             "clear_price": clear_price,
             "avg_price": avg_price,
-            "cleared_qty": qty,
+             "cleared_qty": qty,
             "realized_pnl": realized_pnl,
             "realized_pnl_pct": realized_pnl_pct,
             "captured_at": pd.Timestamp.now(tz=ZoneInfo('America/New_York'))
@@ -220,7 +290,7 @@ class InfiniteStrategy:
         if not safe_base_ticker: return None
         return self.v_avwap_plugin.fetch_macro_context(safe_base_ticker)
 
-    def get_avwap_decision(self, base_ticker=None, exec_ticker=None, base_curr_p=0.0, exec_curr_p=0.0, base_day_open=0.0, avg_price=0.0, qty=0, alloc_cash=0.0, context_data=None, df_1min_base=None, now_est=None, avwap_state=None, regime_data=None, is_simulation=False, df_1min_exec=None, sortie_mode="SINGLE", **kwargs):
+    def get_avwap_decision(self, base_ticker=None, exec_ticker=None, base_curr_p=0.0, exec_curr_p=0.0, base_day_open=0.0, avg_price=0.0, qty=0, alloc_cash=0.0, context_data=None, df_1min_base=None, df_1min_exec=None, now_est=None, avwap_state=None, regime_data=None, is_simulation=False, sortie_mode="SINGLE", **kwargs):
         safe_base_ticker = str(base_ticker or "").strip().upper()
         safe_exec_ticker = str(exec_ticker or "").strip().upper()
          
