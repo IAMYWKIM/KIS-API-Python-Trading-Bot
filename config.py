@@ -11,7 +11,10 @@
 # MODIFIED: [TypeError 붕괴 방어] 외부 매개변수 결측치(None/str) 유입에 대비한 Iterable(`or []`) 및 객체(`isinstance`) 안전망 100% 결속
 # MODIFIED: [외부 오염 붕괴 방어] `version_history.py` 오염 시 `get_latest_version`에서 발생하는 TypeError 즉사 버그 원천 차단 (`isinstance(history, list)` 락온)
 # MODIFIED: [데드코드 소각] 정적 분석 결과 호출되지 않는 유령 함수 11종 영구 소각 완료.
-# 🚨 MODIFIED: [IndentationError 교정] 파이썬 PEP-8 표준 규격에 맞춘 전역 들여쓰기(Alignment) 수술 완벽 적용 완료.
+# MODIFIED: [IndentationError 교정] 파이썬 PEP-8 표준 규격에 맞춘 전역 들여쓰기(Alignment) 수술 완벽 적용 완료.
+# 🚨 MODIFIED: [Insight 14 & 논리 오염 방어] get_fee, get_seed 등에 음수가 유입되어 수익률이 뻥튀기되는 현상을 막기 위한 max(0.0) 바운딩 강제 락온.
+# 🚨 MODIFIED: [ZeroDivision 원천 차단] get_split_count 반환값을 max(1.0)으로 바운딩하여 분모가 0이 되는 시스템 전역 붕괴 차단.
+# 🚨 MODIFIED: [ValueError 즉사 방어] get_chat_id 내 Float 문자열('1234.0') 파싱 시 발생하는 캐스팅 에러 방어용 _safe_float 이중 래핑 주입.
 # ==========================================================
 
 import json
@@ -582,21 +585,21 @@ class ConfigManager:
         return "V14.x"
 
     def get_seed(self, t): 
-        return self._safe_float(self._load_json(self.FILES["SEED_CFG"], self.DEFAULT_SEED).get(t, 6720.0))
+        return max(0.0, self._safe_float(self._load_json(self.FILES["SEED_CFG"], self.DEFAULT_SEED).get(t, 6720.0)))
         
     def set_seed(self, t, v): 
         with self._io_lock:
             d = self._load_json(self.FILES["SEED_CFG"], self.DEFAULT_SEED)
-            d[t] = self._safe_float(v)
+            d[t] = max(0.0, self._safe_float(v))
             self._save_json(self.FILES["SEED_CFG"], d)
 
     def get_compound_rate(self, t): 
-        return self._safe_float(self._load_json(self.FILES["COMPOUND_CFG"], self.DEFAULT_COMPOUND).get(t, 70.0))
+        return max(0.0, self._safe_float(self._load_json(self.FILES["COMPOUND_CFG"], self.DEFAULT_COMPOUND).get(t, 70.0)))
         
     def set_compound_rate(self, t, v):
         with self._io_lock:
             d = self._load_json(self.FILES["COMPOUND_CFG"], self.DEFAULT_COMPOUND)
-            d[t] = self._safe_float(v)
+            d[t] = max(0.0, self._safe_float(v))
             self._save_json(self.FILES["COMPOUND_CFG"], d)
 
     def get_version(self, t): 
@@ -612,18 +615,18 @@ class ConfigManager:
             self._save_json(self.FILES["VERSION_CFG"], d)
 
     def get_split_count(self, t): 
-        return self._safe_float(self._load_json(self.FILES["SPLIT"], self.DEFAULT_SPLIT).get(t, 40.0))
+        return max(1.0, self._safe_float(self._load_json(self.FILES["SPLIT"], self.DEFAULT_SPLIT).get(t, 40.0)))
          
     def get_target_profit(self, t): 
         return self._safe_float(self._load_json(self.FILES["PROFIT_CFG"], self.DEFAULT_TARGET).get(t, 10.0))
         
     def get_fee(self, t): 
-        return self._safe_float(self._load_json(self.FILES["FEE_CFG"], self.DEFAULT_FEE).get(t, 0.07))
+        return max(0.0, self._safe_float(self._load_json(self.FILES["FEE_CFG"], self.DEFAULT_FEE).get(t, 0.07)))
       
     def set_fee(self, t, v):
         with self._io_lock:
             d = self._load_json(self.FILES["FEE_CFG"], self.DEFAULT_FEE)
-            d[t] = self._safe_float(v)
+            d[t] = max(0.0, self._safe_float(v))
             self._save_json(self.FILES["FEE_CFG"], d)
 
     def get_upward_sniper_mode(self, ticker): 
@@ -702,8 +705,8 @@ class ConfigManager:
         v = self._load_file(self.FILES["CHAT_ID"])
         if v:
             try:
-                return int(v)
-            except ValueError:
+                return int(self._safe_float(v))
+            except Exception:
                 return None
         return None
         
