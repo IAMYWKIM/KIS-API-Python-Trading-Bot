@@ -7,6 +7,7 @@
 # 🚨 MODIFIED: [Case 26 절대 헌법 준수] 텔레그램 HTML 파서 붕괴 방어를 위한 html.escape 쉴드 전역 강제 주입
 # 🚨 MODIFIED: [Case 32 & 33 절대 규칙] 팻핑거 스캔 시 TPS 캡핑(0.06s) 및 3단 지수 백오프, 타임아웃(10s) 샌드위치 락온
 # 🚨 MODIFIED: [NoneType 붕괴 원천 봉쇄] update.message 다이렉트 참조 소각 및 update.effective_message 단락 평가 락온
+# 🚨 MODIFIED: [Insight 14] EDIT_Q 수동 입력 시 콤마(,) 유입으로 인한 ValueError 런타임 붕괴 원천 차단
 # ==========================================================
 
 import logging
@@ -75,8 +76,9 @@ class TelegramStates:
                     return await update.effective_message.reply_text("❌ 입력 형식 오류입니다. 띄어쓰기로 수량과 평단가를 입력해주세요. (수정 취소됨)")
                 
                 try:
-                    qty = int(input_parts[0])
-                    price = float(input_parts[1])
+                    # 🚨 MODIFIED: [Insight 14] 수동 입력 시 콤마(,) 유입으로 인한 ValueError 런타임 붕괴 원천 차단
+                    qty = int(float(str(input_parts[0]).replace(',', '')))
+                    price = float(str(input_parts[1]).replace(',', ''))
                 except ValueError:
                     del controller.user_states[chat_id]
                     return await update.effective_message.reply_text("❌ 수량/평단가는 숫자로 입력하세요. (수정 취소됨)")

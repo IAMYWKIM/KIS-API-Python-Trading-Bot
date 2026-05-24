@@ -7,6 +7,7 @@
 # 🚨 NEW: [Case 33 절대 규칙] 3단 지수 백오프 및 Fail-Safe 기반 휴장일 판별 로직 이식
 # 🚨 MODIFIED: [제1헌법 교정] 서브프로세스 교착 방어를 위한 30초 타임아웃 족쇄 및 os.makedirs 비동기 래핑 전면 결속
 # 🚨 NEW: [Case 32 절대 헌법] 달력 API 스캔 동기 함수 내 TPS 캡핑 샌드위치 강제 주입
+# 🚨 NEW: [좀비 프로세스 방어] 서브프로세스 TimeoutError 발생 시 .kill() 직후 await .wait()를 강제 호출하여 OS 자원 누수(Zombie) 원천 차단
 # ==========================================================
 import logging
 import asyncio
@@ -86,6 +87,7 @@ class SystemUpdater:
                 logging.info("🛡️ [Updater] 롤백 봇을 위한 안전띠(stable_backup) 결속 완료")
             except asyncio.TimeoutError:
                 proc.kill()
+                await proc.wait() # 🚨 NEW: 좀비 프로세스 누수 방어
                 logging.error("🚨 [Updater] 안전띠 결속 서브프로세스 통신 타임아웃 (30초 초과). 백업을 건너뜁니다.")
         except Exception as e:
             logging.error(f"🚨 [Updater] 안전띠 결속 중 에러 발생 (업데이트는 계속 진행): {e}")
@@ -109,6 +111,7 @@ class SystemUpdater:
                 _, fetch_err = await asyncio.wait_for(fetch_proc.communicate(), timeout=30.0)
             except asyncio.TimeoutError:
                 fetch_proc.kill()
+                await fetch_proc.wait() # 🚨 NEW: 좀비 프로세스 누수 방어
                 return False, "Git Fetch 통신 지연 타임아웃 (30초 초과)"
             
             if fetch_proc.returncode != 0:
@@ -126,6 +129,7 @@ class SystemUpdater:
                 _, reset_err = await asyncio.wait_for(reset_proc.communicate(), timeout=30.0)
             except asyncio.TimeoutError:
                 reset_proc.kill()
+                await reset_proc.wait() # 🚨 NEW: 좀비 프로세스 누수 방어
                 return False, "Git Reset 통신 지연 타임아웃 (30초 초과)"
             
             if reset_proc.returncode != 0:
