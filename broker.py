@@ -11,6 +11,7 @@
 # 🚨 MODIFIED: [Case 16 위반 교정] 원자적 쓰기 실패 시 임시 파일 고아화 및 OS 용량 고갈을 막기 위한 스코프 전진 배치(Hoisting).
 # 🚨 MODIFIED: [치명적 논리 결함 수술] 딕셔너리 언패킹 오버라이드로 인한 체결량 누락 맹점 완벽 교정.
 # 🚨 MODIFIED: [엣지 케이스 수술] yf 중복 인덱스 유입 시 pd.Series 반환으로 인한 JSON 직렬화 붕괴 방어.
+# 🚨 MODIFIED: [Indentation 붕괴 수술] get_1min_candles_df 내부 except 블록의 비표준 들여쓰기로 인한 컴파일 즉사 에러 완벽 교정.
 # ==========================================================
 
 import requests
@@ -132,7 +133,7 @@ class KoreaInvestmentBroker:
             "custtype": "P"
         }
 
-    # 🚨 MODIFIED: [Case 32 & 33] 3단 지수 백오프 및 TPS 초 초과 방어 로직 주입
+    # 🚨 MODIFIED: [Case 32 & 33] 3단 지수 백오프 및 TPS 초 초 초과 방어 로직 주입
     def _api_request(self, method, url, headers, params=None, data=None):
         TOKEN_EXPIRY_KEYWORDS = frozenset([
             'expired', '인증', 'authorization', 'egt0001', 'egt0002', 'oauth', 
@@ -593,14 +594,16 @@ class KoreaInvestmentBroker:
                         os.replace(tmp_path, cache_file)
                         tmp_path = None
                     except Exception as e:
-                         if fd is not None:
+                        # 🚨 MODIFIED: [Indentation 붕괴 수술] 들여쓰기 25칸->24칸 정밀 락온
+                        if fd is not None:
                             try: os.close(fd)
                             except OSError: pass
-                         if tmp_path and os.path.exists(tmp_path):
+                        if tmp_path and os.path.exists(tmp_path):
                             try: os.remove(tmp_path)
                             except OSError: pass
                         logging.debug(f"🚨 [{ticker}] 시계열 체력 팩트 캐싱 실패: {e}")
-                except Exception as e: logging.debug(f"🚨 [{ticker}] 체력 팩트 캐싱 연산 에러: {e}")
+                except Exception as e: 
+                    logging.debug(f"🚨 [{ticker}] 체력 팩트 캐싱 연산 에러: {e}")
                 return df[['open', 'high', 'low', 'close', 'volume', 'time_est']]
             except Exception:
                 if attempt == 2: return None
