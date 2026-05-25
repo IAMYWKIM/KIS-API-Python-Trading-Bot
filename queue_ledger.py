@@ -1,6 +1,7 @@
 # ==========================================================
 # FILE: queue_ledger.py
 # ==========================================================
+# 🚨 MODIFIED: [하위 지층 단가 상승 패러독스 원천 차단] 사용인님의 절대 룰셋 적용. 잔여 지층이 2개 이상일 때는 개별 평단가를 100% 보존하며, 오직 잔여 지층이 단 1개(len(q)==1) 남았을 때만 전체 투자금 기반 원가 차감(리앵커링)이 격발되도록 팩트 교정 완료.
 # 🚨 MODIFIED: [평단가 리앵커링] AVWAP KIS 원장 100% 디커플링 및 순수 로컬 기반 잔여 지층 원가 차감(Cost Basis Reduction) 로직 전면 결속 완료.
 # 🚨 MODIFIED: [Insight 14] 콤마(,) 및 NaN/Inf 맹독성 유입 시 ValueError 즉사 방어를 위한 `_safe_float` 쉴드 전면 내재화
 # 🚨 MODIFIED: [Case 33] 파일 I/O 에러 재시도 시 하드코딩된 대기(0.1s)를 3단 지수 백오프(Exponential Backoff)로 규격 통일
@@ -243,11 +244,11 @@ class QueueLedger:
                     
             remaining_qty = sum(int(self._safe_float(item.get('qty'))) for item in q)
             if remaining_qty > 0 and popped_total > 0:
-                # 🚨 MODIFIED: [리앵커링 락온] 회수한 현금을 차감하여 잔여 지층(악성 매물)의 단가를 일괄 하향 덮어쓰기
-                remaining_invested = vrev_total_invested - realized_cash
-                new_pure_price = round(max(0.01, remaining_invested / remaining_qty), 4)
-                for item in q:
-                    item["price"] = new_pure_price
+                # 🚨 MODIFIED: [단가 상승 패러독스 원천 차단] 잔여 지층이 2개 이상일 때는 절대로 평균을 내지 않고 개별 가격 보존. 단 1개일 때만 전체 투자금 앵커링 격발.
+                if len(q) == 1:
+                    remaining_invested = vrev_total_invested - realized_cash
+                    new_pure_price = round(max(0.01, remaining_invested / remaining_qty), 4)
+                    q[0]["price"] = new_pure_price
 
             if popped_total < original_target:
                 logging.error(f"🚨 [QueueLedger] pop_lots 미달: {ticker} — 요청 {original_target}주 중 {popped_total}주만 차감. 즉시 sync_with_broker 실행 권고.")
@@ -331,11 +332,11 @@ class QueueLedger:
                         
                 remaining_qty = actual_qty
                 if remaining_qty > 0 and popped_total > 0:
-                    # 🚨 MODIFIED: [리앵커링 락온] 회수한 현금을 차감하여 잔여 지층(악성 매물)의 단가를 일괄 하향 덮어쓰기
-                    remaining_invested = vrev_total_invested - realized_cash
-                    new_pure_price = round(max(0.01, remaining_invested / remaining_qty), 4)
-                    for item in q:
-                        item["price"] = new_pure_price
+                    # 🚨 MODIFIED: [단가 상승 패러독스 원천 차단] 잔여 지층이 2개 이상일 때는 절대로 평균을 내지 않고 개별 가격 보존. 단 1개일 때만 전체 투자금 앵커링 격발.
+                    if len(q) == 1:
+                        remaining_invested = vrev_total_invested - realized_cash
+                        new_pure_price = round(max(0.01, remaining_invested / remaining_qty), 4)
+                        q[0]["price"] = new_pure_price
                         
                 if diff > 0:
                     logging.warning(f"⚠️ [QueueLedger] sync_with_broker CALIB_SUB 미달: {ticker} 큐 물량이 브로커보다 {diff}주 부족합니다. 큐가 초기화되었습니다.")
