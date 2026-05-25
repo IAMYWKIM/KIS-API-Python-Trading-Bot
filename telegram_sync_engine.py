@@ -1,6 +1,9 @@
 # ==========================================================
 # FILE: telegram_sync_engine.py
 # ==========================================================
+# 🚨 MODIFIED: [UI 평단가 오염 차단] _display_ledger 내부에 QueueLedger 동적 로드 쉴드를 주입하여 봇 재시작 직후에도 KIS 평단가 노출을 100% 차단하고 순수 지층 평단가를 강제 렌더링하도록 락온.
+# 🚨 MODIFIED: [평단가 오염 원천 차단] V-REV 모드 진입 시 KIS 원장의 평단가(actual_avg)를 즉시 폐기하고 LIFO 큐 장부 기반의 '순수 지층 평단가'로 100% 강제 오버라이드.
+# 🚨 MODIFIED: [수동 매수 디커플링] V-REV 수동 매수 동기화 시 KIS 평단가 역산 로직을 소각하고 현재가(curr_p) 기반 안전 폴백 락온.
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 34대 엣지 케이스 완벽 결속 교차 검증 완료
 # 🚨 VERIFIED: [원샷 딥다이브] Async/IO 루프 무결성, 샌드박스 사일런트 페일리어 방어, Float 정밀도 수학 연산 붕괴 차단 교차 검증 완료
 # 🚨 MODIFIED: [KeyError 붕괴 방어] 졸업 스냅샷 기록 시 q_data_before[0]['date'] 직접 참조를 .get('date', '')로 안전 래핑
@@ -151,6 +154,13 @@ class TelegramSyncEngine:
                     
                     q_data_check = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) or []
                     vrev_ledger_qty_for_check = sum(int(self._safe_float(item.get("qty"))) for item in q_data_check if isinstance(item, dict))
+                    
+                    # 🚨 MODIFIED: [평단가 오염 원천 차단] V-REV 모드 시 KIS 원장 평단가를 즉시 폐기하고 LIFO 큐 장부의 순수 평단가로 100% 락온
+                    vrev_total_invested = sum(int(self._safe_float(item.get("qty"))) * self._safe_float(item.get("price")) for item in q_data_check if isinstance(item, dict))
+                    if vrev_ledger_qty_for_check > 0:
+                        actual_avg = round(vrev_total_invested / vrev_ledger_qty_for_check, 4)
+                    else:
+                        actual_avg = 0.0
                 
                 max_check_qty = max(ledger_qty_for_check, vrev_ledger_qty_for_check)
 
@@ -418,7 +428,7 @@ class TelegramSyncEngine:
                                 temp_invested = sum(self._safe_float(item.get("qty")) * self._safe_float(item.get("price")) for item in q_data_before if isinstance(item, dict))
                                 temp_avg = temp_invested / vrev_ledger_qty if vrev_ledger_qty > 0 else 0.0
                                 missing_price = temp_avg
-                             
+                                
                                 if buy_execs:
                                     b_tot_amt = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) * self._safe_float(ex.get('ft_ccld_unpr3')) for ex in buy_execs)
                                     b_tot_q = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in buy_execs)
@@ -447,18 +457,18 @@ class TelegramSyncEngine:
 
                             curr_p = 0.0
                             for attempt in range(3):
-                                 try:
+                                try:
                                     await asyncio.sleep(0.06)
                                     curr_p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=15.0)
                                     curr_p = self._safe_float(curr_p_val)
                                     break
-                                 except Exception:
+                                except Exception:
                                     if attempt == 2: curr_p = 0.0
                                     else: await asyncio.sleep(1.0 * (2**attempt))
-                             
+                              
                             clear_price = actual_clear_price if actual_clear_price > 0.0 else (curr_p if curr_p and curr_p > 0 else q_avg_price * 1.006)
                             snapshot = await asyncio.to_thread(self.strategy.capture_vrev_snapshot, ticker, clear_price, q_avg_price, vrev_ledger_qty)
-                             
+                            
                             if snapshot:
                                 realized_pnl = snapshot['realized_pnl']
                                 yield_pct = snapshot['realized_pnl_pct']
@@ -472,7 +482,7 @@ class TelegramSyncEngine:
                                 cap_dt_str = cap_dt if isinstance(cap_dt, str) else cap_dt.strftime('%Y-%m-%d')
                                 
                                 start_dt_str = str(q_data_before[0].get('date', ''))[:10] if q_data_before else cap_dt_str[:10]
-                                 
+                                  
                                 hist_data = await asyncio.to_thread(self.cfg._load_json, self.cfg.FILES["HISTORY"], [])
                                 new_hist = {
                                     "id": int(time.time()), "ticker": ticker, "start_date": start_dt_str, "end_date": cap_dt_str[:10],
@@ -486,7 +496,7 @@ class TelegramSyncEngine:
                         except Exception as e:
                             logging.error(f"🚨 스냅샷 캡처 및 복리 정산 중 치명적 오류 감지: {e}\n{traceback.format_exc()}")
                             snapshot = None
-                             
+                            
                         await asyncio.to_thread(self.queue_ledger.sync_with_broker, ticker, 0)
                         
                         if _vrev_snap_ok:
@@ -513,7 +523,7 @@ class TelegramSyncEngine:
                             await context.bot.send_message(chat_id, f"⚠️ <b>[{html.escape(str(ticker))} V-REV 0주 강제 정산 완료]</b>\n▫️ 0주를 확인하여 큐를 안전하게 비웠으나 통신 지연으로 졸업 카드는 생략되었습니다.", parse_mode='HTML')
                             
                         return "SUCCESS"
-                      
+                        
                     if adjusted_actual_qty == vrev_ledger_qty: pass
                     else:
                         if adjusted_actual_qty > 0 and adjusted_actual_qty < vrev_ledger_qty:
@@ -553,8 +563,17 @@ class TelegramSyncEngine:
                             except OSError: pass
                             except Exception: pass
 
-                            calibrated = await asyncio.to_thread(self.queue_ledger.sync_with_broker, ticker, adjusted_actual_qty, actual_avg)
-                            if calibrated: await context.bot.send_message(chat_id, f"🔧 <b>[{html.escape(str(ticker))}] V-REV 큐(Queue) 비파괴 보정 완료!</b>\n▫️ 수동 매도 물량(<b>{gap_qty}주</b>)을 LIFO 큐에서 안전하게 차감했습니다.", parse_mode='HTML')
+                            actual_clear_price_for_sync = 0.0
+                            if target_execs:
+                                sell_execs_sync = [ex for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01"]
+                                if sell_execs_sync:
+                                    t_amt = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) * self._safe_float(ex.get('ft_ccld_unpr3')) for ex in sell_execs_sync)
+                                    t_q = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in sell_execs_sync)
+                                    if t_q > 0: actual_clear_price_for_sync = round(t_amt / t_q, 4)
+                            
+                            calibrated = await asyncio.to_thread(self.queue_ledger.sync_with_broker, ticker, adjusted_actual_qty, 0.0, actual_clear_price_for_sync)
+                            
+                            if calibrated: await context.bot.send_message(chat_id, f"🔧 <b>[{html.escape(str(ticker))}] V-REV 큐(Queue) 비파괴 보정 및 리앵커링 완료!</b>\n▫️ 수동 매도 물량(<b>{gap_qty}주</b>)을 LIFO 큐에서 안전하게 차감하고, 수익금만큼 잔여 지층의 평단가를 일괄 차감했습니다.", parse_mode='HTML')
                              
                         elif adjusted_actual_qty > 0 and adjusted_actual_qty > vrev_ledger_qty:
                             gap_qty = adjusted_actual_qty - vrev_ledger_qty
@@ -578,12 +597,22 @@ class TelegramSyncEngine:
                                                 if b_tot_q > 0: real_buy_price = round(b_tot_amt / b_tot_q, 4)
                             except Exception: pass
 
-                            if real_buy_price == actual_avg:
-                                old_invested = sum(self._safe_float(item.get("qty")) * self._safe_float(item.get("price")) for item in q_data_before if isinstance(item, dict))
-                                new_invested = adjusted_actual_qty * actual_avg
-                                if new_invested > old_invested:
-                                    derived_price = (new_invested - old_invested) / gap_qty
-                                    real_buy_price = round(derived_price, 4) if derived_price > 0 else actual_avg
+                            # 🚨 MODIFIED: [평단가 오염 차단] KIS actual_avg 절대 참조 금지. 수동 매수 단가 불명 시 현재가(curr_p) 또는 기존 지층 평단가로 락온
+                            if real_buy_price == actual_avg or real_buy_price <= 0.0:
+                                curr_p = 0.0
+                                for attempt in range(3):
+                                    try:
+                                        await asyncio.sleep(0.06)
+                                        curr_p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=10.0)
+                                        curr_p = self._safe_float(curr_p_val)
+                                        break
+                                    except Exception:
+                                        if attempt == 2: curr_p = 0.0
+                                        else: await asyncio.sleep(1.0 * (2**attempt))
+                                
+                                q_data_temp = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
+                                last_price = self._safe_float(q_data_temp[-1].get('price')) if q_data_temp else 0.0
+                                real_buy_price = curr_p if curr_p > 0 else (last_price if last_price > 0 else 1.0)
                 
                             q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker)
                             q_data.append({"date": now_est.strftime('%Y-%m-%d %H:%M:%S'), "qty": gap_qty, "price": real_buy_price, "exec_id": f"MANUAL_BUY_{int(time.time())}"})
@@ -690,6 +719,23 @@ class TelegramSyncEngine:
             actual_qty = int(self._safe_float((safe_holdings.get(ticker) or {'qty': 0}).get('qty')))
             actual_avg = self._safe_float((safe_holdings.get(ticker) or {'avg': 0}).get('avg'))
             
+            v_mode = await asyncio.to_thread(self.cfg.get_version, ticker)
+            
+            # 🚨 MODIFIED: [UI 평단가 오염 차단] V-REV 모드일 경우 UI 표출 평단가 역시 KIS 원장을 무시하고 LIFO 큐 장부의 순수 평단가로 강제 오버라이드
+            if v_mode == "V_REV":
+                if not getattr(self, 'queue_ledger', None):
+                    from queue_ledger import QueueLedger
+                    self.queue_ledger = await asyncio.to_thread(QueueLedger)
+                
+                if getattr(self, 'queue_ledger', None):
+                    q_data_ui = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) or []
+                    vrev_inv_ui = sum(int(self._safe_float(item.get('qty'))) * self._safe_float(item.get('price')) for item in q_data_ui)
+                    vrev_q_ui = sum(int(self._safe_float(item.get('qty'))) for item in q_data_ui)
+                    if vrev_q_ui > 0:
+                        actual_avg = round(vrev_inv_ui / vrev_q_ui, 4)
+                    else:
+                        actual_avg = 0.0
+
             split = await asyncio.to_thread(self.cfg.get_split_count, ticker)
             t_val, _ = await asyncio.to_thread(self.cfg.get_absolute_t_val, ticker, actual_qty, actual_avg)
              

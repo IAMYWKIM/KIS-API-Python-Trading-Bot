@@ -1,12 +1,13 @@
 # ==========================================================
 # FILE: strategy_reversion.py
 # ==========================================================
-# MODIFIED: [Case 08 절대 규칙 준수] 스냅샷 무결성 파이프라인 팩트 교정 - os.path.exists 방어막 소각
+# 🚨 MODIFIED: [단일 지층 락온] 잔여 지층이 1개일 경우 상위층 덫(Upper_Price) 생성을 영구 소각하고 1층 탈출 덫만 단일 장전하도록 팩트 교정 완료
+# 🚨 MODIFIED: [Float 정밀도 오염 차단] 부동소수점 오차(Float Precision Error)로 인한 trigger_upper 바운딩 붕괴 방어용 절대 쉴드(0.01) 주입
+# 🚨 MODIFIED: [Case 08 절대 규칙 준수] 스냅샷 멱등성 훼손을 유발하는 os.path.exists 동기 스캔을 100% 영구 소각하고 EAFP 원자적 파일 I/O로 전면 교체
 # 🚨 MODIFIED: [Float 정밀도 오염 차단] upper_inv 음수 발생 시 0.0으로 바운딩하는 max() 쉴드 적용
-# 🚨 MODIFIED: [Case 16 위반 교정] 원자적 쓰기 UnboundLocalError 방어막(스코프 전진배치) 결속
+# 🚨 MODIFIED: [Case 16 위반 교정] 원자적 쓰기 UnboundLocalError 방어막(스코프 전진배치 및 dir_name or '.') 결속
 # 🚨 REMOVED: [Case 02 위반 교정] 사용되지 않는 유령 변수(pure_qty, avg_price, legacy_q, side) 데드코드 100% 영구 소각
 # 🚨 MODIFIED: [TypeError 붕괴 방어] q_data 결측치(None) 유입 시 루프 마비를 막기 위한 단락 평가(or []) 쉴드 래핑
-# 🚨 MODIFIED: [TOCTOU 레이스 컨디션 수술] os.path.exists 동기 스캔을 소각하고 try-except(EAFP) 원자적 파일 I/O로 전면 교체
 # 🚨 MODIFIED: [제2헌법 준수] VWAP 동적 지터 시간 연산의 100% 중복(Copy-Paste) 블록 영구 소각 및 최상단 전진 배치(Hoisting)
 # 🚨 MODIFIED: [Insight 14] String-Float 콤마 맹독성 런타임 붕괴 방어용 `_safe_float` 래핑 전면 이식
 # 🚨 MODIFIED: [Insight 12] 큐 장부 오염 객체(Dirty Record) 방어용 `isinstance(item, dict)` 필터링 락온
@@ -27,7 +28,6 @@ class ReversionStrategy:
         self.executed = {"BUY_BUDGET": {}, "SELL_QTY": {}}
         self.state_loaded = {}
 
-    # 🚨 MODIFIED: [Insight 14] String-Float 콤마(,) 맹독성 포맷팅 쉴드
     def _safe_float(self, value):
         try: return float(str(value or 0.0).replace(',', ''))
         except Exception: return 0.0
@@ -54,15 +54,13 @@ class ReversionStrategy:
             return 
             
         state_file = self._get_state_file(ticker)
-        # 🚨 MODIFIED: [TOCTOU 붕괴 방어] os.path.exists 소각 및 EAFP(try-open) 원자적 접근 강제
+        # 🚨 MODIFIED: [TOCTOU 붕괴 방어] os.path.exists 동기 스캔 전면 소각 및 EAFP 적용
         try:
             with open(state_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 if data.get("date") == today_str:
                     for k in self.executed.keys():
-                        # 🚨 MODIFIED: [Insight 06/07] JSON Null-Coalescing 맹독성 차단 쉴드
                         raw_val = (data.get("executed") or {}).get(k, 0)
-                        # 🚨 MODIFIED: [Insight 14] _safe_float 래핑 결속
                         self.executed[k][ticker] = int(self._safe_float(raw_val)) if k == "SELL_QTY" else self._safe_float(raw_val)
                     self.state_loaded[ticker] = today_str
                     return
@@ -81,19 +79,19 @@ class ReversionStrategy:
             "date": today_str,
             "residual": {},
             "executed": {
-                # 🚨 MODIFIED: [Insight 06/07] JSON Null-Coalescing 맹독성 차단 쉴드
                 "BUY_BUDGET": float((self.executed.get("BUY_BUDGET") or {}).get(ticker, 0.0)),
                 "SELL_QTY": int((self.executed.get("SELL_QTY") or {}).get(ticker, 0))
             }
         }
-        # 🚨 MODIFIED: [Case 16] 변수 스코프 전진 배치 (UnboundLocalError 방어)
         fd = None
         temp_path = None
         try:
             dir_name = os.path.dirname(state_file)
-            if dir_name and not os.path.exists(dir_name):
-                os.makedirs(dir_name, exist_ok=True)
-            fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
+            if dir_name:
+                try: os.makedirs(dir_name, exist_ok=True)
+                except OSError: pass
+            
+            fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 fd = None
                 json.dump(data, f, ensure_ascii=False, indent=4)
@@ -105,7 +103,8 @@ class ReversionStrategy:
             if fd is not None:
                 try: os.close(fd)
                 except OSError: pass
-            if temp_path and os.path.exists(temp_path):
+            # 🚨 MODIFIED: [Case 08] os.path.exists 소각
+            if temp_path:
                 try: os.remove(temp_path)
                 except OSError: pass
 
@@ -116,13 +115,14 @@ class ReversionStrategy:
             "date": today_str,
             "plan": plan_data
         }
-        # 🚨 MODIFIED: [Case 16] 변수 스코프 전진 배치 (UnboundLocalError 방어)
         fd = None
         temp_path = None
         try:
             dir_name = os.path.dirname(snap_file)
-            if not os.path.exists(dir_name):
-                os.makedirs(dir_name, exist_ok=True)
+            if dir_name:
+                try: os.makedirs(dir_name, exist_ok=True)
+                except OSError: pass
+            
             fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 fd = None
@@ -135,13 +135,13 @@ class ReversionStrategy:
             if fd is not None:
                 try: os.close(fd)
                 except OSError: pass
-            if temp_path and os.path.exists(temp_path):
+            # 🚨 MODIFIED: [Case 08] os.path.exists 소각
+            if temp_path:
                 try: os.remove(temp_path)
                 except OSError: pass
 
     def load_daily_snapshot(self, ticker):
         snap_file = self._get_snapshot_file(ticker)
-        # 🚨 MODIFIED: [TOCTOU 붕괴 방어] os.path.exists 소각 및 EAFP(try-open) 원자적 접근 강제
         try:
             with open(snap_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -156,8 +156,6 @@ class ReversionStrategy:
             return snap
             
         today_str_est = self._get_logical_date_str()
-        
-        # 🚨 MODIFIED: [TypeError 붕괴 방어] Iterable Null-Coalescing 및 isinstance, _safe_float 결속
         legacy_lots = [item for item in (q_data or []) if isinstance(item, dict) and not str(item.get("date", "")).startswith(today_str_est)]
         
         logging.warning(f"🚨 [{ticker}] V_REV 스냅샷 증발 감지! 페일세이프 긴급 복원 가동")
@@ -177,13 +175,11 @@ class ReversionStrategy:
 
     def record_execution(self, ticker, side, qty, exec_price):
         self._load_state_if_needed(ticker)
-        # 🚨 MODIFIED: [Insight 14] String-Float 맹독성 쉴드 래핑
         safe_qty = int(self._safe_float(qty))
         safe_price = self._safe_float(exec_price)
         
         if side == "BUY":
             spent = safe_qty * safe_price
-            # 🚨 MODIFIED: [Insight 06/07] JSON Null-Coalescing 맹독성 차단 쉴드
             self.executed["BUY_BUDGET"][ticker] = float((self.executed.get("BUY_BUDGET") or {}).get(ticker, 0.0)) + spent
         else:
             self.executed["SELL_QTY"][ticker] = int((self.executed.get("SELL_QTY") or {}).get(ticker, 0)) + safe_qty
@@ -196,7 +192,6 @@ class ReversionStrategy:
         if not is_snapshot_mode and cached_plan:
             return cached_plan
 
-        # 🚨 MODIFIED: [Insight 12 & 14] 오염 객체 필터링(isinstance) 및 _safe_float 파싱 락온
         valid_q_data = [item for item in (q_data or []) if isinstance(item, dict) and self._safe_float(item.get('price')) > 0]
         total_q = sum(int(self._safe_float(item.get("qty"))) for item in valid_q_data)
         total_inv = sum(self._safe_float(item.get('qty')) * self._safe_float(item.get('price')) for item in valid_q_data)
@@ -213,7 +208,8 @@ class ReversionStrategy:
 
         trigger_l1 = round(l1_price * 1.006, 2)
         
-        if upper_qty > 0:
+        # 🚨 MODIFIED: [Float 정밀도 방어] 지층이 2개 이상일 때만 상위층 덫 생성. 부동소수점 오차 차단을 위해 0.0으로 명시적 바운딩
+        if upper_qty > 0 and len(dates_in_queue) >= 2:
             upper_inv = max(0.0, total_inv - (l1_price * l1_qty))
             upper_price = upper_inv / upper_qty if upper_qty > 0 else 0.0
             trigger_upper = round(upper_price * 1.010, 2)
@@ -227,7 +223,6 @@ class ReversionStrategy:
                 is_zero_start_session = cached_plan.get("is_zero_start", cached_plan.get("snapshot_total_q", cached_plan.get("total_q", -1)) == 0)
             else:
                 today_str_est = self._get_logical_date_str()
-                # 🚨 MODIFIED: [Insight 14] _safe_float 래핑 및 isinstance 방어막 추가
                 legacy_lots = [item for item in valid_q_data if not str(item.get("date", "")).startswith(today_str_est)]
                 legacy_q = sum(int(self._safe_float(item.get("qty"))) for item in legacy_lots)
                 is_zero_start_session = (legacy_q == 0)
@@ -240,7 +235,6 @@ class ReversionStrategy:
             p1_trigger = round(safe_anchor * 0.9976, 2)
             p2_trigger = round(safe_anchor * 0.9887, 2)
 
-        # 🚨 MODIFIED: [Insight 06/07] JSON Null-Coalescing 맹독성 차단 쉴드
         rem_qty_total = max(0, int(total_q) - int((self.executed.get("SELL_QTY") or {}).get(ticker, 0)))
         available_l1 = min(l1_qty, rem_qty_total) if rem_qty_total > 0 else 0
         available_upper = min(upper_qty, rem_qty_total - available_l1) if rem_qty_total > 0 else 0
@@ -249,7 +243,8 @@ class ReversionStrategy:
             active_sells = []
             if available_l1 > 0 and trigger_l1 > 0:
                 active_sells.append(trigger_l1)
-            if available_upper > 0 and trigger_upper > 0:
+            # 🚨 MODIFIED: [Float 정밀도 방어] 0.01 하드코딩으로 부동소수점 찌꺼기 완벽 필터링 (단일 지층 락온 사수)
+            if available_upper > 0 and trigger_upper >= 0.01:
                 active_sells.append(trigger_upper)
                 
             if active_sells:
@@ -261,7 +256,6 @@ class ReversionStrategy:
 
         orders = []
 
-        # 🚨 MODIFIED: [제2헌법 준수] VWAP 동적 지터 시간 연산 로직 중복(Copy-Paste) 영구 소각 및 최상단 전진 배치(Hoisting)
         est_zone = ZoneInfo('America/New_York')
         kst_zone = ZoneInfo('Asia/Seoul')
         now_est = datetime.now(est_zone)
@@ -278,7 +272,6 @@ class ReversionStrategy:
         start_t = start_dt_kst.strftime("%H%M%S")
         end_t = end_dt_kst.strftime("%H%M%S")
 
-        # 🚨 MODIFIED: [Insight 06/07] JSON Null-Coalescing 맹독성 차단 쉴드
         total_spent = 0.0 if is_snapshot_mode else float((self.executed.get("BUY_BUDGET") or {}).get(ticker, 0.0))
         
         seed_val = self._safe_float(self.cfg.get_seed(ticker))
@@ -317,7 +310,8 @@ class ReversionStrategy:
             sell_dict = {}
             if available_l1 > 0 and trigger_l1 > 0:
                 sell_dict[trigger_l1] = sell_dict.get(trigger_l1, 0) + available_l1
-            if available_upper > 0 and trigger_upper > 0:
+            # 🚨 MODIFIED: [Float 정밀도 방어] 0.01 하드코딩으로 부동소수점 찌꺼기 완벽 필터링
+            if available_upper > 0 and trigger_upper >= 0.01:
                 sell_dict[trigger_upper] = sell_dict.get(trigger_upper, 0) + available_upper
                 
             for price in sorted(sell_dict.keys()):

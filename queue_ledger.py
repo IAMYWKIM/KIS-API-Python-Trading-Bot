@@ -1,8 +1,7 @@
 # ==========================================================
 # FILE: queue_ledger.py
 # ==========================================================
-# [queue_ledger.py]
-# ⚠️ 신규 역추세 엔진(V_REV) 전용 LIFO 로트(Lot) 장부 관리 모듈
+# 🚨 MODIFIED: [평단가 리앵커링] AVWAP KIS 원장 100% 디커플링 및 순수 로컬 기반 잔여 지층 원가 차감(Cost Basis Reduction) 로직 전면 결속 완료.
 # 🚨 MODIFIED: [Insight 14] 콤마(,) 및 NaN/Inf 맹독성 유입 시 ValueError 즉사 방어를 위한 `_safe_float` 쉴드 전면 내재화
 # 🚨 MODIFIED: [Case 33] 파일 I/O 에러 재시도 시 하드코딩된 대기(0.1s)를 3단 지수 백오프(Exponential Backoff)로 규격 통일
 # 🚨 MODIFIED: [Case 08] 백업 파일 복원 및 디렉토리 검증 시 레이스 컨디션을 유발하는 os.path.exists를 100% 소각하고 EAFP 패턴 락온
@@ -29,7 +28,6 @@ class QueueLedger:
         self._lock = threading.Lock()
         self._ensure_file()
 
-    # 🚨 NEW: [Insight 14] 수학 연산 붕괴 및 포맷팅 에러 원천 차단용 내부 쉴드 이식
     def _safe_float(self, value):
         try:
             val = float(str(value or 0.0).replace(',', ''))
@@ -41,7 +39,6 @@ class QueueLedger:
 
     def _ensure_file(self):
         try:
-            # 🚨 MODIFIED: 디렉토리가 빈 문자열일 경우 발생하는 에러 방어
             dir_name = os.path.dirname(self.file_path) or '.'
             os.makedirs(dir_name, exist_ok=True)
         except OSError:
@@ -81,22 +78,17 @@ class QueueLedger:
                 return {}
             except Exception as e:
                 last_exc = e
-                # 🚨 MODIFIED: [Case 33] 3단 지수 백오프 규격 팩트 교정
                 time.sleep(1.0 * (2 ** attempt))
         
         backup_path = self.file_path + ".bak"
-        # 🚨 MODIFIED: [자가 치유(Self-Healing) 결속] 백업 복원 성공 후 손상된 메인 파일을 덮어써서 무한 에러 로깅 원천 차단
         try:
             with open(backup_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 logging.warning(f"🚨 [QueueLedger] JSON 손상 감지. 백업 파일({backup_path}) 복원 완료. 손상된 메인 장부를 즉시 자가 치유합니다.")
-                
-                # 메인 파일 덮어쓰기 (자가 치유 격발)
                 try:
                     self._save_unsafe(data)
                 except Exception as heal_e:
                     logging.error(f"🚨 [QueueLedger] 자가 치유 I/O 통신 에러: {heal_e}")
-                    
                 return data
         except FileNotFoundError:
             pass
@@ -144,12 +136,10 @@ class QueueLedger:
                 if tmp_path:
                     try: os.remove(tmp_path)
                     except OSError: pass
-                # 🚨 MODIFIED: [Case 33] 3단 지수 백오프 규격 팩트 교정
                 time.sleep(1.0 * (2 ** attempt))
-                 
+                  
         logging.error(f"🚨 [QueueLedger] 장부 저장 최종 실패: {self.file_path} — 데이터 유실 위험!")
 
-    # 🚨 MODIFIED: [멱등성 수술] V-REV 큐 장부 액면분할 정밀 소급 적용 및 _safe_float 쉴드 래핑
     def apply_stock_split(self, ticker, ratio):
         if ratio <= 0: return
         with self._lock:
@@ -165,7 +155,6 @@ class QueueLedger:
                     lot["price"] = round(old_price / ratio, 4)
                     changed = True
             if changed:
-                # 🚨 MODIFIED: [Indentation 붕괴 수술] 17칸 -> 16칸 정밀 교정
                 data[ticker] = q
                 self._save_unsafe(data)
 
@@ -176,7 +165,6 @@ class QueueLedger:
             return [lot for lot in q if int(self._safe_float(lot.get("qty"))) > 0]
 
     def add_lot(self, ticker, qty, price, lot_type="NORMAL"):
-        # 🚨 MODIFIED: [Insight 14] String-Float 맹독성 쉴드 래핑
         qty = int(self._safe_float(qty))
         if qty <= 0: return
         
@@ -213,7 +201,7 @@ class QueueLedger:
             data[ticker] = q
             self._save_unsafe(data)
 
-    def pop_lots(self, ticker, target_qty):
+    def pop_lots(self, ticker, target_qty, sold_price=0.0):
         original_target = int(self._safe_float(target_qty))
         target_qty = original_target
         if target_qty <= 0: return 0
@@ -223,11 +211,19 @@ class QueueLedger:
             q = data.get(ticker, [])
             q = [lot for lot in q if int(self._safe_float(lot.get("qty"))) > 0] 
             
+            if not q: return 0
+            
+            # 🚨 MODIFIED: 순수 로컬 V-REV 큐 장부 기준 총 투입 금액 역산
+            vrev_total_invested = sum(int(self._safe_float(item.get('qty'))) * self._safe_float(item.get('price')) for item in q)
+            
             popped_total = 0
+            realized_cash = 0.0
 
             while q and target_qty > 0:
                 last_lot = q[-1]
                 lot_qty = int(self._safe_float(last_lot.get("qty")))
+                lot_price = self._safe_float(last_lot.get("price"))
+                cp = sold_price if sold_price > 0 else lot_price
                 
                 if lot_qty == 0:
                     q.pop()
@@ -237,20 +233,30 @@ class QueueLedger:
                     popped = q.pop()
                     popped_qty = int(self._safe_float(popped.get("qty")))
                     popped_total += popped_qty
+                    realized_cash += popped_qty * cp
                     target_qty -= popped_qty
                 else:
                     last_lot["qty"] = lot_qty - target_qty
                     popped_total += target_qty
+                    realized_cash += target_qty * cp
                     target_qty = 0
+                    
+            remaining_qty = sum(int(self._safe_float(item.get('qty'))) for item in q)
+            if remaining_qty > 0 and popped_total > 0:
+                # 🚨 MODIFIED: [리앵커링 락온] 회수한 현금을 차감하여 잔여 지층(악성 매물)의 단가를 일괄 하향 덮어쓰기
+                remaining_invested = vrev_total_invested - realized_cash
+                new_pure_price = round(max(0.01, remaining_invested / remaining_qty), 4)
+                for item in q:
+                    item["price"] = new_pure_price
 
             if popped_total < original_target:
-                logging.error(f"🚨 [QueueLedger] pop_lots 미달: {ticker} — 요청 {original_target}주 중 {popped_total}주만 차감. 브로커 매도 수량과 장부 불일치 가능성. 즉시 sync_with_broker 실행 권고.")
+                logging.error(f"🚨 [QueueLedger] pop_lots 미달: {ticker} — 요청 {original_target}주 중 {popped_total}주만 차감. 즉시 sync_with_broker 실행 권고.")
 
             data[ticker] = q
             self._save_unsafe(data)
             return popped_total
 
-    def sync_with_broker(self, ticker, actual_qty, actual_avg=0.0):
+    def sync_with_broker(self, ticker, actual_qty, actual_avg=0.0, clear_price=0.0):
         with self._lock:
             data = self._load_unsafe()
             q = data.get(ticker, [])
@@ -266,7 +272,6 @@ class QueueLedger:
 
             if current_q_qty < actual_qty:
                 diff = actual_qty - current_q_qty
-                
                 calib_price = self._safe_float(actual_avg)
                 
                 if calib_price <= 0.0:
@@ -297,10 +302,17 @@ class QueueLedger:
                     })
             else:
                 diff = current_q_qty - actual_qty
-                 
+                popped_total = 0
+                realized_cash = 0.0
+                
+                # 🚨 MODIFIED: 순수 로컬 V-REV 큐 장부 기준 총 투입 금액 역산
+                vrev_total_invested = sum(int(self._safe_float(item.get('qty'))) * self._safe_float(item.get('price')) for item in q)
+                
                 while q and diff > 0:
                     last_lot = q[-1]
                     lot_qty = int(self._safe_float(last_lot.get("qty")))
+                    lot_price = self._safe_float(last_lot.get("price"))
+                    cp = clear_price if clear_price > 0 else lot_price
                     
                     if lot_qty == 0:
                         q.pop()
@@ -309,9 +321,21 @@ class QueueLedger:
                     if lot_qty <= diff:
                         q.pop()
                         diff -= lot_qty 
+                        popped_total += lot_qty
+                        realized_cash += lot_qty * cp
                     else:
                         last_lot["qty"] = lot_qty - diff
+                        popped_total += diff
+                        realized_cash += diff * cp
                         diff = 0
+                        
+                remaining_qty = actual_qty
+                if remaining_qty > 0 and popped_total > 0:
+                    # 🚨 MODIFIED: [리앵커링 락온] 회수한 현금을 차감하여 잔여 지층(악성 매물)의 단가를 일괄 하향 덮어쓰기
+                    remaining_invested = vrev_total_invested - realized_cash
+                    new_pure_price = round(max(0.01, remaining_invested / remaining_qty), 4)
+                    for item in q:
+                        item["price"] = new_pure_price
                         
                 if diff > 0:
                     logging.warning(f"⚠️ [QueueLedger] sync_with_broker CALIB_SUB 미달: {ticker} 큐 물량이 브로커보다 {diff}주 부족합니다. 큐가 초기화되었습니다.")
