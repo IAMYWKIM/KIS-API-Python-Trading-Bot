@@ -1,7 +1,8 @@
 # ==========================================================
 # FILE: queue_ledger.py
 # ==========================================================
-# 🚨 MODIFIED: [하위 지층 단가 상승 패러독스 원천 차단] 사용인님의 절대 룰셋 적용. 잔여 지층이 2개 이상일 때는 개별 평단가를 100% 보존하며, 오직 잔여 지층이 단 1개(len(q)==1) 남았을 때만 전체 투자금 기반 원가 차감(리앵커링)이 격발되도록 팩트 교정 완료.
+# 🚨 MODIFIED: [수수료 트랩 원천 차단] 1층 매도 총액(Gross)에서 왕복 수수료 및 슬리피지 버퍼(0.6%)를 선차감한 '순수 회수금(Net Cash)'만을 원가 차감에 반영하여 전체 사이클 마진 붕괴 패러독스 방어.
+# 🚨 MODIFIED: [하위 지층 단가 상승 패러독스 원천 차단] 잔여 지층이 2개 이상일 때는 개별 평단가를 100% 보존하며, 오직 잔여 지층이 단 1개(len(q)==1) 남았을 때만 전체 투자금 기반 원가 차감(리앵커링)이 격발되도록 팩트 교정 완료.
 # 🚨 MODIFIED: [평단가 리앵커링] AVWAP KIS 원장 100% 디커플링 및 순수 로컬 기반 잔여 지층 원가 차감(Cost Basis Reduction) 로직 전면 결속 완료.
 # 🚨 MODIFIED: [Insight 14] 콤마(,) 및 NaN/Inf 맹독성 유입 시 ValueError 즉사 방어를 위한 `_safe_float` 쉴드 전면 내재화
 # 🚨 MODIFIED: [Case 33] 파일 I/O 에러 재시도 시 하드코딩된 대기(0.1s)를 3단 지수 백오프(Exponential Backoff)로 규격 통일
@@ -214,7 +215,6 @@ class QueueLedger:
             
             if not q: return 0
             
-            # 🚨 MODIFIED: 순수 로컬 V-REV 큐 장부 기준 총 투입 금액 역산
             vrev_total_invested = sum(int(self._safe_float(item.get('qty'))) * self._safe_float(item.get('price')) for item in q)
             
             popped_total = 0
@@ -244,9 +244,10 @@ class QueueLedger:
                     
             remaining_qty = sum(int(self._safe_float(item.get('qty'))) for item in q)
             if remaining_qty > 0 and popped_total > 0:
-                # 🚨 MODIFIED: [단가 상승 패러독스 원천 차단] 잔여 지층이 2개 이상일 때는 절대로 평균을 내지 않고 개별 가격 보존. 단 1개일 때만 전체 투자금 앵커링 격발.
+                # 🚨 MODIFIED: [단일 지층 Net Cash 차감] 0.6% 수수료/슬리피지 버퍼를 선차감하여 잔여 자본금(Capital Base) 과소 계상 차단
                 if len(q) == 1:
-                    remaining_invested = vrev_total_invested - realized_cash
+                    net_realized_cash = realized_cash * 0.994  # 0.6% 차감
+                    remaining_invested = vrev_total_invested - net_realized_cash
                     new_pure_price = round(max(0.01, remaining_invested / remaining_qty), 4)
                     q[0]["price"] = new_pure_price
 
@@ -306,7 +307,6 @@ class QueueLedger:
                 popped_total = 0
                 realized_cash = 0.0
                 
-                # 🚨 MODIFIED: 순수 로컬 V-REV 큐 장부 기준 총 투입 금액 역산
                 vrev_total_invested = sum(int(self._safe_float(item.get('qty'))) * self._safe_float(item.get('price')) for item in q)
                 
                 while q and diff > 0:
@@ -332,9 +332,10 @@ class QueueLedger:
                         
                 remaining_qty = actual_qty
                 if remaining_qty > 0 and popped_total > 0:
-                    # 🚨 MODIFIED: [단가 상승 패러독스 원천 차단] 잔여 지층이 2개 이상일 때는 절대로 평균을 내지 않고 개별 가격 보존. 단 1개일 때만 전체 투자금 앵커링 격발.
+                    # 🚨 MODIFIED: [단일 지층 Net Cash 차감] 0.6% 수수료/슬리피지 버퍼를 선차감하여 잔여 자본금(Capital Base) 과소 계상 차단
                     if len(q) == 1:
-                        remaining_invested = vrev_total_invested - realized_cash
+                        net_realized_cash = realized_cash * 0.994  # 0.6% 차감
+                        remaining_invested = vrev_total_invested - net_realized_cash
                         new_pure_price = round(max(0.01, remaining_invested / remaining_qty), 4)
                         q[0]["price"] = new_pure_price
                         
