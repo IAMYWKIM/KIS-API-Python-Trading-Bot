@@ -9,6 +9,9 @@ folder_path = '.'
 # NEW: [코어 아키텍처 화이트리스트 락온] 노이즈 차단을 위해 병합 대상 .py 파일을 명시적으로 하드코딩
 TARGET_FILES = [
     "broker.py",
+    "kis_api_client.py",
+    "market_data_provider.py",
+    "kis_order_engine.py",
     "config.py",
     "main.py",
     "plugin_updater.py",
