@@ -48,8 +48,11 @@ class KisOrderEngine(MarketDataProvider):
                 time.sleep(0.06)
                 
                 params_hold = {"CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "OVRS_EXCG_CD": excg, "TR_CRCY_CD": "USD", "CTX_AREA_FK200": fk200, "CTX_AREA_NK200": nk200}
-          
                 headers = self._get_header("TTTS3012R")
+                
+                # 🚨 MODIFIED: [페이징 팩트 수술] 다음 페이지 요청 시 "tr_cont": "N" 강제 주입
+                if fk200 or nk200: headers["tr_cont"] = "N"
+                
                 url = f"{self.base_url}/uapi/overseas-stock/v1/trading/inquire-balance"
                 res_hold, resp_json = self._api_request("GET", url, headers, params=params_hold)
     
@@ -102,7 +105,12 @@ class KisOrderEngine(MarketDataProvider):
         for attempt in range(10):
             time.sleep(0.06) # 🚨 [Case 32] 루프 내부 TPS 캡핑
             params = {"CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "OVRS_EXCG_CD": excg_cd, "SORT_SQN": "DS", "CTX_AREA_FK200": fk200, "CTX_AREA_NK200": nk200}
-            res, resp_json = self._api_request("GET", f"{self.base_url}/uapi/overseas-stock/v1/trading/inquire-nccs", self._get_header("TTTS3018R"), params=params)
+            headers = self._get_header("TTTS3018R")
+            
+            # 🚨 MODIFIED: [페이징 팩트 수술] 다음 페이지 요청 시 "tr_cont": "N" 강제 주입
+            if fk200 or nk200: headers["tr_cont"] = "N"
+            
+            res, resp_json = self._api_request("GET", f"{self.base_url}/uapi/overseas-stock/v1/trading/inquire-nccs", headers, params=params)
     
             if res and resp_json.get('rt_cd') == '0':
                 # 🚨 MODIFIED: [Iterable 붕괴 방어] None 유입 시 []로 단락 평가
@@ -141,8 +149,12 @@ class KisOrderEngine(MarketDataProvider):
                 "CTX_AREA_FK200": fk200,
                 "CTX_AREA_NK200": nk200
             }
+            headers = self._get_header("TTTT3039R")
             
-            res, resp_json = self._api_request("GET", f"{self.base_url}/uapi/overseas-stock/v1/trading/order-resv-list", self._get_header("TTTT3039R"), params=params)
+            # 🚨 MODIFIED: [페이징 팩트 수술] 다음 페이지 요청 시 "tr_cont": "N" 강제 주입
+            if fk200 or nk200: headers["tr_cont"] = "N"
+            
+            res, resp_json = self._api_request("GET", f"{self.base_url}/uapi/overseas-stock/v1/trading/order-resv-list", headers, params=params)
             
             if res and resp_json.get('rt_cd') == '0':
                 # 🚨 MODIFIED: [Iterable 붕괴 방어] None 유입 시 []로 단락 평가
@@ -359,7 +371,12 @@ class KisOrderEngine(MarketDataProvider):
             time.sleep(0.06)
             # 🚨 MODIFIED: 갱신된 연속 조회 토큰(fk200, nk200)을 params에 정밀 주입하여 유령 루프 붕괴 차단
             params = {"CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "PDNO": ticker, "ORD_STRT_DT": start_date, "ORD_END_DT": end_date, "SLL_BUY_DVSN": "00", "CCLD_NCCS_DVSN": "00", "OVRS_EXCG_CD": excg_cd, "SORT_SQN": "DS", "CTX_AREA_FK200": fk200, "CTX_AREA_NK200": nk200}
-            res, resp_json = self._api_request("GET", f"{self.base_url}/uapi/overseas-stock/v1/trading/inquire-ccnl", self._get_header("TTTS3035R"), params=params)
+            headers = self._get_header("TTTS3035R")
+            
+            # 🚨 MODIFIED: [페이징 팩트 수술] 다음 페이지 요청 시 "tr_cont": "N" 강제 주입
+            if fk200 or nk200: headers["tr_cont"] = "N"
+            
+            res, resp_json = self._api_request("GET", f"{self.base_url}/uapi/overseas-stock/v1/trading/inquire-ccnl", headers, params=params)
  
             if res and resp_json.get('rt_cd') == '0':
                 # 🚨 MODIFIED: [Iterable 붕괴 방어] None 유입 시 []로 단락 평가
