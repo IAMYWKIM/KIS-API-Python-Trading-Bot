@@ -9,12 +9,12 @@
 # 🚨 MODIFIED: [Cascade Failure 방어 궁극 수술] _do_init 및 _do_vwap의 다중 종목 순회 루프 내부에 개별 `try-except` 샌드박스를 주입하여 단일 종목 에러가 전체 섀도우 엔진을 파괴하는 연쇄 붕괴 원천 차단
 # 🚨 MODIFIED: [Insight 27 런타임 즉사 방어] context.job.data가 None이거나 비정상 객체(List/Tuple)로 유입 시 발생하는 AttributeError(.setdefault 붕괴)를 원천 차단하기 위해 isinstance 딕셔너리 강제 폴백 쉴드 락온
 # 🚨 NEW: [Case 20] KIS 알고리즘 VWAP 위임 전면 소각 및 로컬 1분 슬라이싱 자체 VWAP 엔진(15:27~15:56 EST) 100% 팩트 이식 완료
-# 🚨 NEW: [자전거래 100% 차단] 막판 3분(15:54~15:56 EST) 덤핑(Dumping) 구간 진입 시 가중치 무시 전량 강제 타격 락온
+# 🚨 MODIFIED: [가격 오염 영구 소각] 수량을 억지로 채우기 위해 타점(Price)을 양보하던 덤핑 로직(±3% 슬리피지 허용) 전면 폐기. 장 마감까지 100% 순수 타점(Strict Limit) 절대 사수 및 미체결 관망 락온
 # 🚨 MODIFIED: [Gap Hijack 무결성 동기화] 갭 이탈 감지 시 KIS 덫 취소뿐만 아니라 로컬 슬라이싱 상태 파일(vrev_slice_state)에도 hijacked 플래그를 원자적으로 새겨 섀도우 롤 오버라이드 멱등성 사수
 # 🚨 MODIFIED: [Edge Case 1 & 2 궁극 방어] 유령 체결(Phantom Fill) 및 TOCTOU 레이스 컨디션 차단: 미체결 스캔 로직 전면 소각 후 무조건 취소(Freeze) 선행 및 KIS 실원장(Execution History) 단일 소스 교차 검증 100% 락온
-# 🚨 MODIFIED: [Edge Case 3 방어] 호가 진공(Liquidity Vacuum) 파괴 방어를 위해 덤핑 구간에서도 ±3% 슬리피지 하드 바운딩 락온
 # 🚨 MODIFIED: [Type-Safety 아머 결속] active_tickers가 딕셔너리로 오염되어 유입될 경우 발생하는 이터러블 붕괴 원천 차단 및 종목명 str.upper() 강제 캐스팅
 # 🚨 MODIFIED: [Ghost Trap & Double Spending 원천 차단] 덫 취소 실패 시 KIS 미체결 대기열을 교차 스캔하여 주문이 살아있을 경우 신규 슬라이싱을 강제 중단(Skip)하여 이중 지출(과매수) 완벽 방어
+# 🚨 MODIFIED: [Type-Safety 궁극 락온] base_map, alloc_cash_dict, holdings 등 핵심 딕셔너리 객체 결측 및 타입 오염 시 발생하는 Ghost Loop 붕괴 원천 차단 (isinstance 강제 폴백 적용)
 # ==========================================================
 import logging
 import datetime
@@ -145,8 +145,13 @@ async def scheduled_vwap_init_and_cancel(context):
         return
     
     chat_id = context.job.chat_id
-    vwap_cache = job_data.setdefault('vwap_cache', {})
     
+    # 🚨 MODIFIED: Type-Safety 딕셔너리 할당
+    vwap_cache = job_data.get('vwap_cache')
+    if not isinstance(vwap_cache, dict):
+        vwap_cache = {}
+        job_data['vwap_cache'] = vwap_cache
+        
     today_str = now_est.strftime('%Y%m%d')
     if vwap_cache.get('date') != today_str:
         vwap_cache.clear()
@@ -260,9 +265,16 @@ async def scheduled_vwap_trade(context):
         return
 
     chat_id = context.job.chat_id
-    base_map = job_data.get('base_map', {'SOXL': 'SOXX', 'TQQQ': 'QQQ'})
     
-    vwap_cache = job_data.setdefault('vwap_cache', {})
+    # 🚨 MODIFIED: [Type-Safety 아머] base_map 딕셔너리 오염 원천 차단
+    base_map = job_data.get('base_map')
+    if not isinstance(base_map, dict): base_map = {'SOXL': 'SOXX', 'TQQQ': 'QQQ'}
+    
+    vwap_cache = job_data.get('vwap_cache')
+    if not isinstance(vwap_cache, dict):
+        vwap_cache = {}
+        job_data['vwap_cache'] = vwap_cache
+        
     today_str = now_est.strftime('%Y%m%d')
     today_hyphen = now_est.strftime('%Y-%m-%d')
     
@@ -279,6 +291,7 @@ async def scheduled_vwap_trade(context):
                     cash_tuple = await asyncio.wait_for(asyncio.to_thread(broker.get_account_balance), timeout=15.0)
                     cash = _safe_float(cash_tuple[0]) if isinstance(cash_tuple, (list, tuple)) and len(cash_tuple) > 0 else 0.0
                     holdings = cash_tuple[1] if isinstance(cash_tuple, (list, tuple)) and len(cash_tuple) > 1 else {}
+                    if not isinstance(holdings, dict): holdings = {}
                     break
                 except Exception:
                     if attempt == 2: pass
@@ -294,7 +307,9 @@ async def scheduled_vwap_trade(context):
             allocated_cash = {}
             try:
                 alloc_res = await asyncio.wait_for(asyncio.to_thread(get_budget_allocation, cash, active_tickers, cfg), timeout=10.0)
-                allocated_cash = alloc_res[1] if isinstance(alloc_res, (list, tuple)) and len(alloc_res) > 1 else {}
+                alloc_cash_dict = alloc_res[1] if isinstance(alloc_res, (list, tuple)) and len(alloc_res) > 1 else {}
+                # 🚨 MODIFIED: [Type-Safety] 딕셔너리 오염 방어
+                allocated_cash = alloc_cash_dict if isinstance(alloc_cash_dict, dict) else {}
             except Exception as e:
                 logging.error(f"🚨 예산 할당 연산 에러 (안전 폴백 맵핑): {e}")
             
@@ -537,6 +552,8 @@ async def scheduled_vwap_trade(context):
                                 continue 
                                 
                             orders = slice_state.get('orders', [])
+                            # 🚨 MODIFIED: [Type-Safety 아머] JSON 오염으로 orders가 리스트가 아닌 객체로 캐스팅 시 발생하는 붕괴 차단
+                            if not isinstance(orders, list): orders = []
                             if not orders: continue
                             
                             is_dumping = (datetime.time(15, 54) <= curr_time_obj <= datetime.time(15, 56, 59))
@@ -582,7 +599,7 @@ async def scheduled_vwap_trade(context):
                                             c_res = await asyncio.wait_for(asyncio.to_thread(broker.cancel_order, t, last_odno), timeout=10.0)
                                             if isinstance(c_res, dict) and str(c_res.get('rt_cd', '')) == '0':
                                                 cancel_successful = True
-                                            await asyncio.sleep(0.5) 
+                                            await asyncio.sleep(0.5) # 체결 및 원장 반영 상태 확정 대기
                                             break
                                         except Exception:
                                             if attempt == 2: logging.debug(f"🚨 [{t}] 슬라이스 취소 응답 지연/거절 (이미 체결되었거나 취소됨: odno={last_odno})")
