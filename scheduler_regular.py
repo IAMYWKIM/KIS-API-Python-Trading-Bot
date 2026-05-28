@@ -2,6 +2,8 @@
 # FILE: scheduler_regular.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 34대 엣지 케이스 완벽 결속 교차 검증 완료
+# 🚨 MODIFIED: [State Mismatch 붕괴 방어] 1분 슬라이싱 섀도우 엔진(scheduler_vwap)과의 파일명 및 JSON 데이터 구조(Dict) 100% 팩트 일치화 수술 완료
+# 🚨 MODIFIED: [Jitter 타임라인 역전 붕괴 수술] 15:27 슬라이싱 엔진 가동 전 무조건 파일 I/O 인계를 마치도록 V-REV 본진 지터 상한을 180초에서 45초로 진공 압축 락온
 # 🚨 MODIFIED: [V-REV 자체 VWAP 1분 슬라이싱 엔진 이식] 기존 KIS 증권사 알고리즘 위임(ALGO_ORD_TMD_DVSN_CD) 로직을 시스템 전역에서 영구 소각하고, 로컬 스케줄러 기반 자체 슬라이싱 엔진으로 인계하는 원자적 쓰기 파이프라인 100% 팩트 락온.
 # 🚨 REMOVED: [Case 20, 제2헌법 준수] KIS 알고리즘 위임 소각에 따라 불필요해진 동적 지터 시간 연산 데드코드(dyn_start_t, dyn_end_t) 100% 영구 삭제.
 # 🚨 MODIFIED: [제1헌법 준수] send_order 및 send_reservation_order 외부 통신에 누락되었던 wait_for(timeout=15.0) 타임아웃 족쇄 100% 전면 결속
@@ -43,28 +45,34 @@ def _safe_float(val):
 
 # 🚨 NEW: 자체 1분 슬라이싱 엔진 인계를 위한 로컬 상태 원자적 쓰기 헬퍼 (TOCTOU 붕괴 방어 및 EAFP 락온)
 def _save_slice_state_sync(ticker, date_str, slice_info):
-    state_file = f"data/vwap_slice_state_{ticker}_{date_str}.json"
+    # 🚨 MODIFIED: [State Mismatch 붕괴 방어] 섀도우 엔진(scheduler_vwap)과 동일한 파일명으로 100% 락온
+    state_file = f"data/vrev_slice_state_{ticker}.json"
     dir_name = os.path.dirname(state_file) or '.'
     try: os.makedirs(dir_name, exist_ok=True)
     except OSError: pass
 
-    data = []
+    # 🚨 MODIFIED: [State Mismatch 붕괴 방어] 딕셔너리 구조로 래핑 및 초기화 락온
+    data = {"date": date_str, "hijacked": False, "orders": []}
     try:
         with open(state_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            if not isinstance(data, list): data = []
+            loaded_data = json.load(f)
+            # 당일자 파일인 경우에만 기존 데이터 로드 (과거 파일이면 초기화된 data 유지)
+            if isinstance(loaded_data, dict) and loaded_data.get('date') == date_str:
+                data = loaded_data
+                if not isinstance(data.get('orders'), list):
+                    data['orders'] = []
     except (OSError, json.JSONDecodeError):
         pass
     
     # 🚨 멱등성 보장 (이미 장전된 슬라이스는 덮어쓰지 않음)
     exists = False
-    for item in data:
+    for item in data['orders']:
         if isinstance(item, dict) and item.get('desc') == slice_info['desc'] and item.get('side') == slice_info['side']:
             exists = True
             break
     
     if not exists:
-        data.append(slice_info)
+        data['orders'].append(slice_info)
         
     fd = None
     tmp_path = None
@@ -118,6 +126,7 @@ async def scheduled_early_regular_trade(context):
         logging.warning("⚠️ [early_trade] tx_lock 미초기화. 이번 사이클 스킵.")
         return
 
+    # 프리장 선제 타격(V14)은 17:05 KST(04:05 EST)이므로 지터 최대 180초 유지
     jitter_seconds = random.randint(0, 180)
     try:
         await context.bot.send_message(
@@ -458,7 +467,8 @@ async def scheduled_regular_trade_delayed(context):
     if tx_lock is None:
         return
     
-    jitter_seconds = random.randint(0, 180)
+    # 🚨 MODIFIED: [Jitter 타임라인 역전 붕괴 수술] 15:27 슬라이싱 엔진 가동 전 무조건 파일 I/O 인계를 마치도록 지터 상한을 180초에서 45초로 진공 압축 락온
+    jitter_seconds = random.randint(0, 45)
 
     try:
         await context.bot.send_message(
@@ -629,7 +639,7 @@ async def scheduled_regular_trade_delayed(context):
                             all_success_map[t] = False
                             loop_fully_successful = False
                             loop_fail_reason = f"[{t}] 2차 보너스 거절: {err_msg}"
-                            
+                        
                         status_icon = '✅' if is_success else f'❌({err_msg})'
                         msgs[t] += f"└ 2차 보너스: {o_desc} {o_qty}주 (${o_price}): {status_icon}\n"
                         await asyncio.sleep(0.2) 
