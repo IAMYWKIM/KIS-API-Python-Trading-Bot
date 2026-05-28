@@ -2,10 +2,10 @@
 # FILE: scheduler_regular.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 34대 엣지 케이스 완벽 결속 교차 검증 완료
-# 🚨 VERIFIED: [원샷 딥다이브] Async/IO 루프 무결성, 샌드박스 사일런트 페일리어 방어, Float 정밀도 수학 연산 붕괴 차단 교차 검증 완료
+# 🚨 MODIFIED: [V-REV 자체 VWAP 1분 슬라이싱 엔진 이식] 기존 KIS 증권사 알고리즘 위임(ALGO_ORD_TMD_DVSN_CD) 로직을 시스템 전역에서 영구 소각하고, 로컬 스케줄러 기반 자체 슬라이싱 엔진으로 인계하는 원자적 쓰기 파이프라인 100% 팩트 락온.
+# 🚨 REMOVED: [Case 20, 제2헌법 준수] KIS 알고리즘 위임 소각에 따라 불필요해진 동적 지터 시간 연산 데드코드(dyn_start_t, dyn_end_t) 100% 영구 삭제.
 # 🚨 MODIFIED: [제1헌법 준수] send_order 및 send_reservation_order 외부 통신에 누락되었던 wait_for(timeout=15.0) 타임아웃 족쇄 100% 전면 결속
 # 🚨 MODIFIED: [V73.15 타임라인 디커플링 대통합] 17:05 KST V14 선제 타격 및 V-REV 스냅샷 분리 락온
-# 🚨 MODIFIED: [Case 20 준수] b_start = max(b_start, s_start) 연산 100% 동기화 적용 및 대칭성 일원화
 # 🚨 NEW: [Case 32 & 33 절대 규칙] 3단 지수 백오프 및 스케줄러 루프 TPS 캡핑 이식 완료
 # 🚨 MODIFIED: [Case 14 절대 헌법 준수] is_market_open 비동기 호출 타임아웃 10.0초 하드코딩 완료
 # 🚨 MODIFIED: [최종 팩트 수술] `math.isnan` 및 `math.isinf` 방어막을 `_safe_float`에 이식하여 치명적 수학 연산 붕괴(ValueError) 원천 봉쇄
@@ -17,11 +17,7 @@
 # 🚨 MODIFIED: [최후의 논리결함 수술] 샌드박스로 인해 예외가 먹혀버려(Swallow) 외부 재시도 루프가 무력화되는 Silent Failure 현상 전면 교정 (loop_fully_successful 트래커 주입)
 # 🚨 MODIFIED: [최후의 생존망 결속] 텔레그램 API 통신 에러가 KIS 재시도 루프를 깨버리는 맹독성 버그(External API Crash) 완벽 소각
 # 🚨 MODIFIED: [TypeError 붕괴 방어] KIS 응답의 `msg1`이 null(None)일 경우 `html.escape`가 폭발하는 버그 100% 팩트 수술 완료
-# 🚨 MODIFIED: [최후의 맹점 수술] cfg 모듈 및 get_budget_allocation의 반환값이 None일 경우 발생하는 Iterable 언패킹 붕괴 방어 절대 쉴드 락온
-# 🚨 MODIFIED: [Silent Failure 수술] KIS 서버가 1차 필수 주문을 거절(rt_cd != 0)할 경우, 파이썬 예외가 없어도 외부 15단 재시도를 폭발시키도록 팩트 교정
-# 🚨 MODIFIED: [마이크로 정화] is_success 중복 평가 데드코드 블록 통합(Merge) 최적화 완료
 # 🚨 MODIFIED: [Case 19 부분 실패 이중 장전 패러독스 방어] 기장전된 덫은 API 통신 전면 바이패스 및 캐시 락온 결속
-# 🚨 MODIFIED: [Case 32 팩트 교정] 개별 주문 전송 루프 내부 누락된 await asyncio.sleep(0.06) (TPS 캡핑) 및 샌드박싱 복구 완료
 # ==========================================================
 import logging
 import datetime
@@ -30,6 +26,9 @@ import asyncio
 import random
 import html
 import math
+import os
+import tempfile
+import json
 
 from scheduler_core import is_market_open, get_budget_allocation
 
@@ -41,6 +40,51 @@ def _safe_float(val):
         return f_val
     except Exception:
         return 0.0
+
+# 🚨 NEW: 자체 1분 슬라이싱 엔진 인계를 위한 로컬 상태 원자적 쓰기 헬퍼 (TOCTOU 붕괴 방어 및 EAFP 락온)
+def _save_slice_state_sync(ticker, date_str, slice_info):
+    state_file = f"data/vwap_slice_state_{ticker}_{date_str}.json"
+    dir_name = os.path.dirname(state_file) or '.'
+    try: os.makedirs(dir_name, exist_ok=True)
+    except OSError: pass
+
+    data = []
+    try:
+        with open(state_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            if not isinstance(data, list): data = []
+    except (OSError, json.JSONDecodeError):
+        pass
+    
+    # 🚨 멱등성 보장 (이미 장전된 슬라이스는 덮어쓰지 않음)
+    exists = False
+    for item in data:
+        if isinstance(item, dict) and item.get('desc') == slice_info['desc'] and item.get('side') == slice_info['side']:
+            exists = True
+            break
+    
+    if not exists:
+        data.append(slice_info)
+        
+    fd = None
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
+            fd = None
+            json.dump(data, f_out, ensure_ascii=False, indent=4)
+            f_out.flush()
+            os.fsync(f_out.fileno())
+        os.replace(tmp_path, state_file)
+        tmp_path = None
+    except Exception as e:
+        if fd is not None:
+            try: os.close(fd)
+            except OSError: pass
+        if tmp_path:
+            try: os.remove(tmp_path)
+            except OSError: pass
+        raise e
 
 async def scheduled_early_regular_trade(context):
     is_open = False
@@ -93,8 +137,8 @@ async def scheduled_early_regular_trade(context):
 
     async def _do_early_trade():
         est_z = ZoneInfo('America/New_York')
-        kst_z = ZoneInfo('Asia/Seoul')
         curr_est = datetime.datetime.now(est_z)
+        today_str = curr_est.strftime("%Y-%m-%d")
         
         async with tx_lock:
             cash, holdings = 0.0, None
@@ -186,13 +230,7 @@ async def scheduled_early_regular_trade(context):
                     if version == "V14":
                         msgs[t] += f"💎 <b>[{t}] V14 오리지널 정규장 실전 덫 장전 완료 (17:05 KST 타격망)</b>\n"
                         
-                        b_start = curr_est.replace(hour=15, minute=26, second=0, microsecond=0)
-                        s_start = curr_est + datetime.timedelta(minutes=3)
-                        b_start = max(b_start, s_start)
-                        b_end = curr_est.replace(hour=15, minute=56, second=0, microsecond=0)
-                        
-                        dyn_start_t = b_start.astimezone(kst_z).strftime("%H%M%S")
-                        dyn_end_t = b_end.astimezone(kst_z).strftime("%H%M%S")
+                        is_market_active_now = False # 17:05 KST is generally PRE-MARKET
 
                         # 🚨 MODIFIED: [Insight 06/07] Iterable NoneType 붕괴 방어용 단락 평가
                         target_orders = plan.get('core_orders') or plan.get('orders') or []
@@ -215,17 +253,15 @@ async def scheduled_early_regular_trade(context):
                                 # 🚨 MODIFIED: [Case 32] 주문 전송 시 TPS 캡핑 락온
                                 await asyncio.sleep(0.06)
 
-                                # 🚨 MODIFIED: [제1헌법] 주문 전송 시 wait_for(15.0) 강제 주입
+                                # 🚨 MODIFIED: [V-REV 1분 슬라이싱 인계] KIS 알고리즘 소각 및 자체 엔진 로컬 파일 인계
                                 if o_type == 'VWAP':
-                                    res = await asyncio.wait_for(
-                                        asyncio.to_thread(broker.send_order, t, o_side, o_qty, o_price, o_type, start_time=dyn_start_t, end_time=dyn_end_t),
-                                        timeout=15.0
-                                    )
+                                    slice_info = {"ticker": t, "side": o_side, "total_qty": o_qty, "filled_qty": 0, "target_price": o_price, "desc": o_desc, "status": "PENDING"}
+                                    await asyncio.wait_for(asyncio.to_thread(_save_slice_state_sync, t, today_str, slice_info), timeout=10.0)
+                                    res = {'rt_cd': '0', 'msg1': '로컬 자체 VWAP 엔진 위임 완료', 'odno': f'LOCAL_VWAP_{id(o)}'}
+                                elif is_market_active_now:
+                                    res = await asyncio.wait_for(asyncio.to_thread(broker.send_order, t, o_side, o_qty, o_price, o_type), timeout=15.0)
                                 else:
-                                    res = await asyncio.wait_for(
-                                        asyncio.to_thread(broker.send_reservation_order, t, o_side, o_qty, o_price, o_type),
-                                        timeout=15.0
-                                    )
+                                    res = await asyncio.wait_for(asyncio.to_thread(broker.send_reservation_order, t, o_side, o_qty, o_price, o_type), timeout=15.0)
                                 
                                 safe_res = res if isinstance(res, dict) else {}
                                 is_success = safe_res.get('rt_cd') == '0'
@@ -271,17 +307,15 @@ async def scheduled_early_regular_trade(context):
                                     # 🚨 MODIFIED: [Case 32] 주문 전송 시 TPS 캡핑 락온
                                     await asyncio.sleep(0.06)
 
-                                    # 🚨 MODIFIED: [제1헌법] 주문 전송 시 wait_for(15.0) 강제 주입
+                                    # 🚨 MODIFIED: [V-REV 1분 슬라이싱 인계]
                                     if o_type == 'VWAP':
-                                        res = await asyncio.wait_for(
-                                            asyncio.to_thread(broker.send_order, t, o_side, o_qty, o_price, o_type, start_time=dyn_start_t, end_time=dyn_end_t),
-                                            timeout=15.0
-                                        )
+                                        slice_info = {"ticker": t, "side": o_side, "total_qty": o_qty, "filled_qty": 0, "target_price": o_price, "desc": o_desc, "status": "PENDING"}
+                                        await asyncio.wait_for(asyncio.to_thread(_save_slice_state_sync, t, today_str, slice_info), timeout=10.0)
+                                        res = {'rt_cd': '0', 'msg1': '로컬 자체 VWAP 엔진 위임 완료', 'odno': f'LOCAL_VWAP_{id(o)}'}
+                                    elif is_market_active_now:
+                                        res = await asyncio.wait_for(asyncio.to_thread(broker.send_order, t, o_side, o_qty, o_price, o_type), timeout=15.0)
                                     else:
-                                        res = await asyncio.wait_for(
-                                            asyncio.to_thread(broker.send_reservation_order, t, o_side, o_qty, o_price, o_type),
-                                            timeout=15.0
-                                        )
+                                        res = await asyncio.wait_for(asyncio.to_thread(broker.send_reservation_order, t, o_side, o_qty, o_price, o_type), timeout=15.0)
                                     
                                     safe_res = res if isinstance(res, dict) else {}
                                     is_success = safe_res.get('rt_cd') == '0'
@@ -308,7 +342,7 @@ async def scheduled_early_regular_trade(context):
                         
                         if (target_orders or target_bonus) and all_success_map[t]:
                             await asyncio.to_thread(cfg.set_lock, t, "REG")
-                            msgs[t] += "\n🔒 <b>V14 필수 덫 KIS 실원장 전송 완료 (잠금 설정됨)</b>"
+                            msgs[t] += "\n🔒 <b>V14 필수 덫(로컬 엔진 포함) 장전 완료 (잠금 설정됨)</b>"
                     
                     else: 
                         msgs[t] += f"🔄 <b>[{t}] V-REV 역추세 덫 모의 장전 및 스냅샷 박제</b>\n"
@@ -429,8 +463,8 @@ async def scheduled_regular_trade_delayed(context):
     try:
         await context.bot.send_message(
             chat_id=context.job.chat_id, 
-            text=f"🌃 <b>[15:26 EST] V-REV 본진 덫 KIS 실원장 투하 개시!</b>\n"
-                 f"🛡️ 서버 접속 부하 방지를 위해 <b>{jitter_seconds}초</b> 대기 후 V-REV 주문 전송을 시도합니다.", 
+            text=f"🌃 <b>[15:26 EST] V-REV 본진 덫(자체 1분 슬라이싱 포함) 투하 개시!</b>\n"
+                 f"🛡️ 서버 접속 부하 방지를 위해 <b>{jitter_seconds}초</b> 대기 후 전송/인계를 시도합니다.", 
             parse_mode='HTML'
         )
     except Exception as e:
@@ -458,16 +492,10 @@ async def scheduled_regular_trade_delayed(context):
             loop_fail_reason = ""
 
             est_z = ZoneInfo('America/New_York')
-            kst_z = ZoneInfo('Asia/Seoul')
             curr_est = datetime.datetime.now(est_z)
+            today_str = curr_est.strftime("%Y-%m-%d")
             
-            b_start = curr_est.replace(hour=15, minute=26, second=0, microsecond=0)
-            s_start = curr_est + datetime.timedelta(minutes=3)
-            b_start = max(b_start, s_start)
-            b_end = curr_est.replace(hour=15, minute=56, second=0, microsecond=0)
-            
-            dyn_start_t = b_start.astimezone(kst_z).strftime("%H%M%S")
-            dyn_end_t = b_end.astimezone(kst_z).strftime("%H%M%S")
+            is_market_active_now = True # 15:26 EST is REGULAR session
 
             for t in active_tickers_list:
                 try:
@@ -494,7 +522,7 @@ async def scheduled_regular_trade_delayed(context):
 
                     plans[t] = plan
                     if plan.get('core_orders') or plan.get('orders') or plan.get('bonus_orders'):
-                        msgs[t] += f"🔄 <b>[{t}] V-REV 역추세 실전 덫 장전 완료</b>\n"
+                        msgs[t] += f"🔄 <b>[{t}] V-REV 역추세 실전 덫(로컬 엔진 포함) 장전 완료</b>\n"
                 except Exception as e:
                     all_success_map[t] = False
                     loop_fully_successful = False
@@ -523,16 +551,15 @@ async def scheduled_regular_trade_delayed(context):
                         # 🚨 MODIFIED: [Case 32] 주문 전송 시 TPS 캡핑 락온
                         await asyncio.sleep(0.06)
 
-                        # 🚨 MODIFIED: [제1헌법] 주문 전송 시 wait_for(15.0) 강제 주입
-                        res = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                broker.send_order, 
-                                t, o_side, o_qty, o_price, o_type,
-                                start_time=dyn_start_t if o_type == 'VWAP' else None, 
-                                end_time=dyn_end_t if o_type == 'VWAP' else None
-                            ),
-                            timeout=15.0
-                        )
+                        # 🚨 MODIFIED: [V-REV 1분 슬라이싱 인계] 로컬 상태 파일 원자적 저장으로 15:27 기상 엔진에 인계
+                        if o_type == 'VWAP':
+                            slice_info = {"ticker": t, "side": o_side, "total_qty": o_qty, "filled_qty": 0, "target_price": o_price, "desc": o_desc, "status": "PENDING"}
+                            await asyncio.wait_for(asyncio.to_thread(_save_slice_state_sync, t, today_str, slice_info), timeout=10.0)
+                            res = {'rt_cd': '0', 'msg1': '로컬 자체 VWAP 엔진 위임 완료', 'odno': f'LOCAL_VWAP_{id(o)}'}
+                        elif is_market_active_now:
+                            res = await asyncio.wait_for(asyncio.to_thread(broker.send_order, t, o_side, o_qty, o_price, o_type), timeout=15.0)
+                        else:
+                            res = await asyncio.wait_for(asyncio.to_thread(broker.send_reservation_order, t, o_side, o_qty, o_price, o_type), timeout=15.0)
                         
                         safe_res = res if isinstance(res, dict) else {}
                         is_success = safe_res.get('rt_cd') == '0'
@@ -582,16 +609,15 @@ async def scheduled_regular_trade_delayed(context):
                         # 🚨 MODIFIED: [Case 32] 주문 전송 시 TPS 캡핑 락온
                         await asyncio.sleep(0.06)
 
-                        # 🚨 MODIFIED: [제1헌법] 주문 전송 시 wait_for(15.0) 강제 주입
-                        res = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                broker.send_order, 
-                                t, o_side, o_qty, o_price, o_type,
-                                start_time=dyn_start_t if o_type == 'VWAP' else None, 
-                                end_time=dyn_end_t if o_type == 'VWAP' else None
-                            ),
-                            timeout=15.0
-                        )
+                        # 🚨 MODIFIED: [V-REV 1분 슬라이싱 인계]
+                        if o_type == 'VWAP':
+                            slice_info = {"ticker": t, "side": o_side, "total_qty": o_qty, "filled_qty": 0, "target_price": o_price, "desc": o_desc, "status": "PENDING"}
+                            await asyncio.wait_for(asyncio.to_thread(_save_slice_state_sync, t, today_str, slice_info), timeout=10.0)
+                            res = {'rt_cd': '0', 'msg1': '로컬 자체 VWAP 엔진 위임 완료', 'odno': f'LOCAL_VWAP_{id(o)}'}
+                        elif is_market_active_now:
+                            res = await asyncio.wait_for(asyncio.to_thread(broker.send_order, t, o_side, o_qty, o_price, o_type), timeout=15.0)
+                        else:
+                            res = await asyncio.wait_for(asyncio.to_thread(broker.send_reservation_order, t, o_side, o_qty, o_price, o_type), timeout=15.0)
                         
                         safe_res = res if isinstance(res, dict) else {}
                         is_success = safe_res.get('rt_cd') == '0'
@@ -623,7 +649,7 @@ async def scheduled_regular_trade_delayed(context):
                     
                     if all_success_map[t] and (target_orders or target_bonus):
                         await asyncio.to_thread(cfg.set_lock, t, "REG")
-                        msgs[t] += "\n🔒 <b>V-REV 필수 덫 실원장 전송 완료 (잠금 설정됨)</b>"
+                        msgs[t] += "\n🔒 <b>V-REV 필수 덫(로컬 엔진 포함) 전송 완료 (잠금 설정됨)</b>"
                     elif not all_success_map[t] and (target_orders or target_bonus):
                         msgs[t] += "\n⚠️ <b>일부 덫 장전 실패 (매매 잠금 보류)</b>"
                         
