@@ -7,10 +7,14 @@
 # 🚨 MODIFIED: [Case 32 & 33 절대 규칙 수술] Gap Hijack 격발 시 수행되는 덫 조회(get_reservation_orders, get_unfilled_orders_detail), 취소(cancel_order), 및 최종 매수(send_order) API 호출 전역에 3단 지수 백오프와 TPS 캡핑(0.06s) 100% 샌드위치 락온
 # 🚨 MODIFIED: [Insight 12/15 튜플 언패킹 붕괴 차단] get_budget_allocation 반환값 결측치(None) 유입 시 발생하는 튜플 언패킹(ValueError/TypeError) 즉사 버그를 isinstance 인덱싱으로 원천 봉쇄
 # 🚨 MODIFIED: [Cascade Failure 방어 궁극 수술] _do_init 및 _do_vwap의 다중 종목 순회 루프 내부에 개별 `try-except` 샌드박스를 주입하여 단일 종목 에러가 전체 섀도우 엔진을 파괴하는 연쇄 붕괴 원천 차단
-# 🚨 MODIFIED: [Insight 27 런타임 즉사 방어] context.job.data가 None으로 유입 시 발생하는 AttributeError 붕괴를 원천 차단하기 위해 단락 평가(or {}) 기반의 안전 참조 쉴드 최상단 전면 락온
+# 🚨 MODIFIED: [Insight 27 런타임 즉사 방어] context.job.data가 None이거나 비정상 객체(List/Tuple)로 유입 시 발생하는 AttributeError(.setdefault 붕괴)를 원천 차단하기 위해 isinstance 딕셔너리 강제 폴백 쉴드 락온
 # 🚨 NEW: [Case 20] KIS 알고리즘 VWAP 위임 전면 소각 및 로컬 1분 슬라이싱 자체 VWAP 엔진(15:27~15:56 EST) 100% 팩트 이식 완료
 # 🚨 NEW: [자전거래 100% 차단] 막판 3분(15:54~15:56 EST) 덤핑(Dumping) 구간 진입 시 가중치 무시 전량 강제 타격 락온
 # 🚨 MODIFIED: [Gap Hijack 무결성 동기화] 갭 이탈 감지 시 KIS 덫 취소뿐만 아니라 로컬 슬라이싱 상태 파일(vrev_slice_state)에도 hijacked 플래그를 원자적으로 새겨 섀도우 롤 오버라이드 멱등성 사수
+# 🚨 MODIFIED: [Edge Case 1 & 2 궁극 방어] 유령 체결(Phantom Fill) 및 TOCTOU 레이스 컨디션 차단: 미체결 스캔 로직 전면 소각 후 무조건 취소(Freeze) 선행 및 KIS 실원장(Execution History) 단일 소스 교차 검증 100% 락온
+# 🚨 MODIFIED: [Edge Case 3 방어] 호가 진공(Liquidity Vacuum) 파괴 방어를 위해 덤핑 구간에서도 ±3% 슬리피지 하드 바운딩 락온
+# 🚨 MODIFIED: [Type-Safety 아머 결속] active_tickers가 딕셔너리로 오염되어 유입될 경우 발생하는 이터러블 붕괴 원천 차단 및 종목명 str.upper() 강제 캐스팅
+# 🚨 MODIFIED: [Ghost Trap & Double Spending 원천 차단] 덫 취소 실패 시 KIS 미체결 대기열을 교차 스캔하여 주문이 살아있을 경우 신규 슬라이싱을 강제 중단(Skip)하여 이중 지출(과매수) 완벽 방어
 # ==========================================================
 import logging
 import datetime
@@ -77,7 +81,10 @@ def _atomic_write_json_sync(filepath, data):
         raise e
 
 async def scheduled_vwap_init_and_cancel(context):
-    job_data = getattr(context.job, 'data', None) or {}
+    # 🚨 MODIFIED: [Insight 27] context.job.data가 None이거나 List/Tuple로 오염되었을 때 발생하는 AttributeError(.setdefault) 붕괴 방어용 isinstance 강제 검증 락온
+    raw_job_data = getattr(context.job, 'data', None)
+    job_data = raw_job_data if isinstance(raw_job_data, dict) else {}
+    
     tx_lock = job_data.get('tx_lock')
     cfg = job_data.get('cfg')
     broker = job_data.get('broker')
@@ -148,7 +155,15 @@ async def scheduled_vwap_init_and_cancel(context):
     async def _do_init():
         async with tx_lock:
             active_tickers = (await asyncio.to_thread(cfg.get_active_tickers)) or []
-            for t in active_tickers:
+            # 🚨 MODIFIED: [Type-Safety] JSON 오염으로 리스트가 아닌 객체(Dict, String 등) 반환 시 이터러블 붕괴 원천 차단
+            if isinstance(active_tickers, str): active_tickers = [active_tickers]
+            elif not isinstance(active_tickers, list): active_tickers = []
+            
+            for raw_t in active_tickers:
+                # 🚨 MODIFIED: [Type-Safety] 정수형 종목 등 오염 데이터 방어를 위한 강제 캐스팅
+                t = str(raw_t).strip().upper()
+                if not t: continue
+                
                 try:
                     await asyncio.sleep(0.06)
                     
@@ -179,7 +194,10 @@ async def scheduled_vwap_init_and_cancel(context):
 
 
 async def scheduled_vwap_trade(context):
-    job_data = getattr(context.job, 'data', None) or {}
+    # 🚨 MODIFIED: [Insight 27] context.job.data가 None이거나 List/Tuple로 오염되었을 때 발생하는 AttributeError(.setdefault) 붕괴 방어용 isinstance 강제 검증 락온
+    raw_job_data = getattr(context.job, 'data', None)
+    job_data = raw_job_data if isinstance(raw_job_data, dict) else {}
+    
     tx_lock = job_data.get('tx_lock')
     cfg = job_data.get('cfg')
     broker = job_data.get('broker')
@@ -269,6 +287,9 @@ async def scheduled_vwap_trade(context):
             if holdings is None: return
             
             active_tickers = (await asyncio.to_thread(cfg.get_active_tickers)) or []
+            # 🚨 MODIFIED: [Type-Safety] JSON 오염으로 리스트가 아닌 객체(Dict, String 등) 반환 시 이터러블 붕괴 원천 차단
+            if isinstance(active_tickers, str): active_tickers = [active_tickers]
+            elif not isinstance(active_tickers, list): active_tickers = []
             
             allocated_cash = {}
             try:
@@ -283,7 +304,11 @@ async def scheduled_vwap_trade(context):
             buy_qty = 0
             nuked_count = 0
             
-            for t in active_tickers:
+            for raw_t in active_tickers:
+                # 🚨 MODIFIED: [Type-Safety] 정수형 종목 등 오염 데이터 방어를 위한 강제 캐스팅
+                t = str(raw_t).strip().upper()
+                if not t: continue
+                
                 try:
                     await asyncio.sleep(0.06)
                     
@@ -300,7 +325,7 @@ async def scheduled_vwap_trade(context):
                         if version == "V_REV":
                             if vwap_cache.get(f"REV_{t}_gap_hijack_fired"):
                                 continue
-                              
+                               
                             base_tkr = base_map.get(t, 'SOXX')
                             
                             for attempt in range(3):
@@ -326,7 +351,7 @@ async def scheduled_vwap_trade(context):
                                             df_b['tp'] = (df_b['high'].astype(float) + df_b['low'].astype(float) + df_b['close'].astype(float)) / 3.0
                                             df_b['vol'] = df_b['volume'].astype(float)
                                             df_b['vol_tp'] = df_b['tp'] * df_b['vol']
-                                           
+                                            
                                             c_vol = df_b['vol'].sum()
                                             base_vwap = df_b['vol_tp'].sum() / c_vol if c_vol > 0 else base_curr_p
                  
@@ -349,7 +374,7 @@ async def scheduled_vwap_trade(context):
                                                         except Exception as e:
                                                             if r_attempt == 2: logging.error(f"🚨 [{t}] 예약 덫 조회 에러: {e}")
                                                             else: await asyncio.sleep(1.0 * (2 ** r_attempt))
-                                                 
+                                                  
                                                     safe_resv_orders = resv_orders if isinstance(resv_orders, list) else []
                                                     for req in safe_resv_orders:
                                                         if not isinstance(req, dict): continue
@@ -409,12 +434,12 @@ async def scheduled_vwap_trade(context):
                                                     logging.error(f"🚨 [{t}] 로컬 슬라이스 무효화 처리 에러: {e}")
 
                                                 await asyncio.sleep(2.0)
-                                                
+                                        
                                                 seed = await asyncio.to_thread(cfg.get_seed, t)
                                                 daily_limit = _safe_float(seed) * 0.15
                                                 alloc_cash = _safe_float(allocated_cash.get(t, 0.0))
                                                 safe_alloc_cash = min(alloc_cash, daily_limit) if daily_limit > 0 else alloc_cash
-                                             
+                                                
                                                 total_spent = 0.0
                                                 if hasattr(strategy, 'v_rev_plugin'):
                                                     spent_dict = strategy.v_rev_plugin.executed.get("BUY_BUDGET")
@@ -442,7 +467,7 @@ async def scheduled_vwap_trade(context):
                                                     except Exception:
                                                         if retry_curr == 2: curr_p = 0.0
                                                         else: await asyncio.sleep(1.0 * (2 ** retry_curr))
-                                          
+                                           
                                                 exec_price = ask_price if ask_price > 0 else curr_p
                                                 buy_qty = int(math.floor(rem_budget / exec_price)) if exec_price > 0 else 0
                                                
@@ -459,7 +484,7 @@ async def scheduled_vwap_trade(context):
                                                                 res = None
                                                             else:
                                                                 await asyncio.sleep(1.0 * (2 ** s_attempt))
-                                                    
+                                                   
                                                     safe_res = res if isinstance(res, dict) else {}
                                                     odno = str(safe_res.get('odno') or '')
         
@@ -503,11 +528,11 @@ async def scheduled_vwap_trade(context):
                         curr_time_obj = now_est.time()
                         time_start = datetime.time(15, 27)
                         time_end = datetime.time(15, 56, 59)
-                        
+                         
                         if time_start <= curr_time_obj <= time_end:
                             # 🚨 MODIFIED: [제1헌법] 비동기 파일 I/O 래핑
                             slice_state = await asyncio.to_thread(_read_json_sync, slice_file)
-                            
+                             
                             if slice_state.get('date') != today_hyphen or slice_state.get('hijacked'):
                                 continue 
                                 
@@ -515,7 +540,7 @@ async def scheduled_vwap_trade(context):
                             if not orders: continue
                             
                             is_dumping = (datetime.time(15, 54) <= curr_time_obj <= datetime.time(15, 56, 59))
-                            
+                             
                             curr_hm = now_est.strftime("%H:%M")
                             try:
                                 vwap_profile = await asyncio.to_thread(cfg.get_vwap_profile, t)
@@ -523,7 +548,7 @@ async def scheduled_vwap_trade(context):
                             except Exception: vwap_profile = {}
                             
                             cum_weight = _safe_float(vwap_profile.get(curr_hm, 0.0))
-                            
+                             
                             if is_dumping:
                                 cum_weight = 1.0
                             elif cum_weight == 0.0:
@@ -549,34 +574,56 @@ async def scheduled_vwap_trade(context):
                                     
                                 ccld_qty_this_tick = 0
                                 if last_odno:
-                                    unfilled = []
+                                    # 🚨 MODIFIED: [Ghost Trap & Double Spending 방어] 무조건 취소 선행 후 살아있는지 이중 검증 락온
+                                    cancel_successful = False
                                     for attempt in range(3):
                                         try:
                                             await asyncio.sleep(0.06)
-                                            unfilled = await asyncio.wait_for(asyncio.to_thread(broker.get_unfilled_orders_detail, t), timeout=10.0)
+                                            c_res = await asyncio.wait_for(asyncio.to_thread(broker.cancel_order, t, last_odno), timeout=10.0)
+                                            if isinstance(c_res, dict) and str(c_res.get('rt_cd', '')) == '0':
+                                                cancel_successful = True
+                                            await asyncio.sleep(0.5) 
                                             break
                                         except Exception:
-                                            if attempt == 2: unfilled = []
+                                            if attempt == 2: logging.debug(f"🚨 [{t}] 슬라이스 취소 응답 지연/거절 (이미 체결되었거나 취소됨: odno={last_odno})")
                                             else: await asyncio.sleep(1.0 * (2 ** attempt))
                                             
-                                    safe_unfilled = unfilled if isinstance(unfilled, list) else []
-                                    my_order = next((x for x in safe_unfilled if isinstance(x, dict) and str(x.get('odno', '')) == last_odno), None)
-                                    
-                                    if my_order:
-                                        ccld_qty_this_tick = int(_safe_float(my_order.get('tot_ccld_qty')))
-                                        rem_qty = last_sent_qty - ccld_qty_this_tick
-                                        if rem_qty > 0:
-                                            for attempt in range(3):
-                                                try:
-                                                    await asyncio.sleep(0.06)
-                                                    await asyncio.wait_for(asyncio.to_thread(broker.cancel_order, t, last_odno), timeout=10.0)
-                                                    await asyncio.sleep(0.3)
-                                                    break
-                                                except Exception:
-                                                    if attempt == 2: logging.error(f"🚨 [{t}] 슬라이스 취소 통신 에러 (odno={last_odno})")
-                                                    else: await asyncio.sleep(1.0 * (2 ** attempt))
-                                    else:
-                                        ccld_qty_this_tick = last_sent_qty
+                                    # 🚨 MODIFIED: [Ghost Trap 차단] 취소 실패 시 미체결 대기열 스캔. 여전히 시장에 남아있다면 과매수 방지를 위해 이번 틱 스킵
+                                    is_still_open = False
+                                    if not cancel_successful:
+                                        for u_attempt in range(3):
+                                            try:
+                                                await asyncio.sleep(0.06)
+                                                unf = await asyncio.wait_for(asyncio.to_thread(broker.get_unfilled_orders_detail, t), timeout=10.0)
+                                                safe_unf = unf if isinstance(unf, list) else []
+                                                if any(isinstance(x, dict) and str(x.get('odno', '')) == last_odno for x in safe_unf):
+                                                    is_still_open = True
+                                                break
+                                            except Exception:
+                                                if u_attempt == 2:
+                                                    # Fail-safe: 미체결 조회마저 실패 시, 안전을 위해 잔존하는 것으로 간주하여 이중 지출 원천 봉쇄
+                                                    is_still_open = True
+                                                else: await asyncio.sleep(1.0 * (2 ** u_attempt))
+                                                
+                                    if is_still_open:
+                                        logging.warning(f"🚨 [{t}] 취소 실패 및 미체결 잔존 확인 (Double Spending 방어). 다음 1분봉으로 슬라이싱을 이연합니다.")
+                                        continue
+                                            
+                                    # 🚨 MODIFIED: [Edge Case 1 & 2] KIS 실원장 단일 소스 교차 검증 락온
+                                    try:
+                                        await asyncio.sleep(0.06)
+                                        _tdy = now_est.strftime('%Y%m%d')
+                                        _execs = await asyncio.wait_for(asyncio.to_thread(broker.get_execution_history, t, _tdy, _tdy), timeout=10.0)
+                                        _safe_execs = _execs if isinstance(_execs, list) else []
+                                        _filled_rec = next((ex for ex in _safe_execs if isinstance(ex, dict) and str(ex.get('odno', '')) == last_odno), None)
+                                        
+                                        if _filled_rec:
+                                            ccld_qty_this_tick = int(_safe_float(_filled_rec.get('ft_ccld_qty')))
+                                        else:
+                                            ccld_qty_this_tick = 0
+                                    except Exception as e:
+                                        logging.error(f"🚨 [{t}] 자체 슬라이싱 체결 원장 교차 검증 에러: {e}")
+                                        ccld_qty_this_tick = 0
                                         
                                     filled_qty += ccld_qty_this_tick
                                     o['filled_qty'] = filled_qty
@@ -616,11 +663,19 @@ async def scheduled_vwap_trade(context):
                                         except Exception:
                                             if attempt == 2: exec_price = 0.0
                                             else: await asyncio.sleep(1.0 * (2 ** attempt))
-                                            
-                                if side == "BUY" and target_price > 0 and not is_dumping:
-                                    exec_price = min(exec_price, target_price)
-                                elif side == "SELL" and target_price > 0 and not is_dumping:
-                                    exec_price = max(exec_price, target_price)
+                                         
+                                if side == "BUY" and target_price > 0:
+                                    if not is_dumping:
+                                        exec_price = min(exec_price, target_price)
+                                    else:
+                                        # 🚨 MODIFIED: [Edge Case 3] 덤핑 구간 1호가 호가 공백 파괴 방어 (최대 3% 슬리피지 허용 바운딩 락온)
+                                        exec_price = min(exec_price, target_price * 1.03)
+                                elif side == "SELL" and target_price > 0:
+                                    if not is_dumping:
+                                        exec_price = max(exec_price, target_price)
+                                    else:
+                                        # 🚨 MODIFIED: [Edge Case 3] 덤핑 구간 1호가 호가 공백 파괴 방어 (최대 3% 슬리피지 허용 바운딩 락온)
+                                        exec_price = max(exec_price, target_price * 0.97)
                                         
                                 if exec_price > 0:
                                     res = None
