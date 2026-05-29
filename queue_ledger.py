@@ -1,6 +1,8 @@
 # ==========================================================
 # FILE: queue_ledger.py
 # ==========================================================
+# 🚨 MODIFIED: [딥-레스큐 V84.00 리빌딩] 장부 1층 대통합(Queue Unification) 헬퍼 메서드 신규 락온
+# 🚨 MODIFIED: [unify_to_single_layer 이식] 암살자 올인 매수 체결 시, 과거의 모든 악성 지층을 100% 소각하고 '총 수량'과 '하향 확정된 KIS 평단가'를 가진 단일 1층(L1)으로 전면 병합 오버라이드.
 # 🚨 MODIFIED: [수수료 트랩 원천 차단] 1층 매도 총액(Gross)에서 왕복 수수료 및 슬리피지 버퍼(0.6%)를 선차감한 '순수 회수금(Net Cash)'만을 원가 차감에 반영하여 전체 사이클 마진 붕괴 패러독스 방어.
 # 🚨 MODIFIED: [하위 지층 단가 상승 패러독스 원천 차단] 잔여 지층이 2개 이상일 때는 개별 평단가를 100% 보존하며, 오직 잔여 지층이 단 1개(len(q)==1) 남았을 때만 전체 투자금 기반 원가 차감(리앵커링)이 격발되도록 팩트 교정 완료.
 # 🚨 MODIFIED: [평단가 리앵커링] AVWAP KIS 원장 100% 디커플링 및 순수 로컬 기반 잔여 지층 원가 차감(Cost Basis Reduction) 로직 전면 결속 완료.
@@ -8,10 +10,7 @@
 # 🚨 MODIFIED: [Case 33] 파일 I/O 에러 재시도 시 하드코딩된 대기(0.1s)를 3단 지수 백오프(Exponential Backoff)로 규격 통일
 # 🚨 MODIFIED: [Case 08] 백업 파일 복원 및 디렉토리 검증 시 레이스 컨디션을 유발하는 os.path.exists를 100% 소각하고 EAFP 패턴 락온
 # 🚨 VERIFIED: [Case 16] 원자적 쓰기(Atomic Write) 실패 시 임시 파일 스코프 고아화 방어 100% 사수 완료
-# 🚨 VERIFIED: [디렉토리 파싱 붕괴 방어] _ensure_file 내 os.path.dirname 반환값이 빈 문자열일 때 발생하는 os.makedirs 에러를 `or '.'` 단락 평가로 원천 차단
 # 🚨 VERIFIED: [제4헌법 절대 사수] 메인 장부뿐만 아니라 백업 파일(.bak) 생성 시에도 임시 파일(.bak.tmp)을 거치는 원자적 복사(Atomic Copy)를 강제하여 OS 커널 패닉 시 백업본 오염 원천 차단
-# 🚨 VERIFIED: [무한 디스크 I/O 패러독스 방어] 메인 파일 손상 후 백업에서 복원 시, 손상된 메인 장부를 즉각 덮어쓰는 자가 치유(Self-Healing) 로직 결속 완료
-# 🚨 MODIFIED: [Indentation 붕괴 수술] apply_stock_split 내부 if changed: 하위 블록의 비표준 들여쓰기(17칸)를 16칸으로 100% 정밀 교정하여 컴파일 즉사 에러 소각
 # ==========================================================
 import os
 import json
@@ -139,7 +138,7 @@ class QueueLedger:
                     try: os.remove(tmp_path)
                     except OSError: pass
                 time.sleep(1.0 * (2 ** attempt))
-                  
+                   
         logging.error(f"🚨 [QueueLedger] 장부 저장 최종 실패: {self.file_path} — 데이터 유실 위험!")
 
     def apply_stock_split(self, ticker, ratio):
@@ -165,6 +164,32 @@ class QueueLedger:
             data = self._load_unsafe()
             q = data.get(ticker, [])
             return [lot for lot in q if int(self._safe_float(lot.get("qty"))) > 0]
+
+    # 🚨 NEW: [딥-레스큐 V84.00] 장부 1층 대통합 헬퍼 메서드
+    def unify_to_single_layer(self, ticker, total_qty, new_avg_price):
+        """ 
+        암살자 딥-매수 체결 시, 해당 종목의 모든 악성 지층을 소각하고
+        단 하나의 L1 지층(총 수량 + 하향 확정 KIS 평단가)으로 전면 병합합니다.
+        """
+        qty_int = int(self._safe_float(total_qty))
+        price_f = round(self._safe_float(new_avg_price), 4)
+        
+        if qty_int <= 0 or price_f <= 0.0:
+            logging.error(f"🚨 [QueueLedger] unify_to_single_layer 중단: 수량({qty_int}) 또는 단가({price_f}) 오류.")
+            return
+
+        with self._lock:
+            data = self._load_unsafe()
+            # 기존 장부 내역을 100% 덮어쓰고 단일 로트로 병합
+            unified_lot = {
+                "qty": qty_int,
+                "price": price_f,
+                "date": datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S"),
+                "type": "DEEP_RESCUE_UNIFIED"
+            }
+            data[ticker] = [unified_lot]
+            self._save_unsafe(data)
+            logging.info(f"🧱 [QueueLedger] {ticker} 장부 1층 대통합(Queue Unification) 완료: {qty_int}주 @ ${price_f:.2f}")
 
     def add_lot(self, ticker, qty, price, lot_type="NORMAL"):
         qty = int(self._safe_float(qty))
@@ -199,7 +224,7 @@ class QueueLedger:
                     "date": datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S"),
                     "type": lot_type
                 })
-                
+               
             data[ticker] = q
             self._save_unsafe(data)
 
@@ -275,7 +300,7 @@ class QueueLedger:
             if current_q_qty < actual_qty:
                 diff = actual_qty - current_q_qty
                 calib_price = self._safe_float(actual_avg)
-                
+               
                 if calib_price <= 0.0:
                     calib_price = self._safe_float(q[-1].get("price")) if q else 0.0
                 
@@ -329,7 +354,7 @@ class QueueLedger:
                         popped_total += diff
                         realized_cash += diff * cp
                         diff = 0
-                        
+             
                 remaining_qty = actual_qty
                 if remaining_qty > 0 and popped_total > 0:
                     # 🚨 MODIFIED: [단일 지층 Net Cash 차감] 0.6% 수수료/슬리피지 버퍼를 선차감하여 잔여 자본금(Capital Base) 과소 계상 차단
@@ -339,8 +364,8 @@ class QueueLedger:
                         new_pure_price = round(max(0.01, remaining_invested / remaining_qty), 4)
                         q[0]["price"] = new_pure_price
                         
-                if diff > 0:
-                    logging.warning(f"⚠️ [QueueLedger] sync_with_broker CALIB_SUB 미달: {ticker} 큐 물량이 브로커보다 {diff}주 부족합니다. 큐가 초기화되었습니다.")
+            if diff > 0:
+                logging.warning(f"⚠️ [QueueLedger] sync_with_broker CALIB_SUB 미달: {ticker} 큐 물량이 브로커보다 {diff}주 부족합니다. 큐가 초기화되었습니다.")
 
             data[ticker] = q
             self._save_unsafe(data)

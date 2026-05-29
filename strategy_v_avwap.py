@@ -1,23 +1,22 @@
 # ==========================================================
 # FILE: strategy_v_avwap.py
 # ==========================================================
-# 🚨 VERIFIED: [최종 무결점 검증 완료] 5대 절대 헌법 및 34대 엣지 케이스 교차 검증 패스 (Zero-Defect)
+# 🚨 MODIFIED: [딥-레스큐 아키텍처 V84.00 전면 리빌딩]
+# 🚨 MODIFIED: [사후 하락장 절대 판별 락온] main_actual_avg(본진 평단가) > Open(시가) 일 때만 100% 자율 개방.
+# 🚨 MODIFIED: [시가 앵커링 덫 산출] PM_H, 가변 오프셋 등 데드코드 전면 소각. 오직 `Open - (Open * Amp5 * 0.45)` 고정 타점(T_H) 도출.
+# 🚨 MODIFIED: [100% 자율 격발] 시가 확정 및 하락장 판별 즉시 T_H 타점에 100% 잉여 현금 지정가 매수(PLACE_TRAP) 즉각 반환.
+# 🚨 MODIFIED: [Fire & Forget 락온] 암살자 체결 물량(avwap_qty > 0) 존재 시 더 이상 개입하지 않고 즉시 'HOLD(퇴근)' 반환. 타임스탑 시장가 덤핑 영구 소각.
+# 🚨 MODIFIED: [상태 다이어트] 다중 출격(sortie_mode), PM_H, PM_L, T_L, offset, dump_jitter_sec 등 불필요한 레거시 파라미터 100% 진공 압축.
 # 🚨 MODIFIED: [Case 08 절대 헌법 준수] 스냅샷 멱등성 훼손 방어를 위해 os.path.exists 레이스 컨디션 유발 코드를 100% 소각하고 EAFP(try-except)로 락온
 # 🚨 MODIFIED: [Case 16 위반 교정] 원자적 쓰기(Atomic Write) 실패 시 스코프 붕괴를 막기 위한 임시 파일 식별자 전진 배치(Hoisting)
-# 🚨 MODIFIED: [Insight 06/07/11] 파라미터 Null-Coalescing 맹독성 방어 : get_decision 진입부 파라미터에 None 유입 시 발생하는 TypeError를 막기 위해 _safe_float 강제 캐스팅 선행 락온
-# 🚨 MODIFIED: [무한 덫 장전 패러독스 수술 (Eager Save 소각)] KIS 서버의 승인(체결 번호 발급)을 받기 전, 예측만으로 로컬 장부에 limit_order_placed = True를 선제 기록하는 코드(Eager Save)를 전면 영구 소각. 상태 저장은 오직 scheduler_sniper.py에서 통신이 성공했을 때만 수행하도록 통제권을 100% 이관.
-# 🚨 MODIFIED: [Indentation 붕괴 수술] 예산 부족 시 반환되는 WAIT 메시지가 정상 대기 상황에서도 잘못 반환되던 들여쓰기(Unexpected Indent) 맹점 정밀 교정.
-# 🚨 MODIFIED: [YF MultiIndex 붕괴 방어] yfinance 최신 업데이트로 인해 반환되는 데이터프레임이 MultiIndex 구조를 가질 경우 발생하는 KeyError 즉사 버그를 완벽히 방어하는 `_flatten_columns` 코어 래퍼 전단 이식 락온.
-# 🚨 MODIFIED: [디스크 I/O 레이스 컨디션 샌드박싱] save_state 내 os.makedirs를 메인 트랜잭션 밖으로 전진 배치(Hoisting)하고 개별 EAFP 샌드박스를 씌워, OS 권한 충돌 등 무해한 폴더 생성 에러가 장부 기록 전체를 마비시키는 과잉 방어(Abort) 100% 원천 차단.
-# 🚨 MODIFIED: [Float 정밀도 붕괴 궁극 소각] np.nan_to_num 혼용 코드를 전면 소각하고 콤마/Inf/NaN을 통합 방어하는 self._safe_float 코어 래퍼로 100% 일괄 교체하여 퀀트 수학 엔진의 절대 무결성 락온.
-# 🚨 MODIFIED: [익절 감시망 붕괴 패러독스 원천 소각] 진입(Entry)을 위한 보조 지표(amp5, anchor_price) API 통신이 실패하더라도, 기보유 물량(avwap_qty > 0)에 대한 +2.0% 익절 및 15:20 덤핑 감시망은 절대 멈추지 않도록 해당 엑시트(Exit) 로직을 최상단으로 전진 배치(Hoisting)하여 수익 실현 무결성 100% 락온.
-# 💎 FINALIZED: [Zero-Defect] 3차 교차 검증 통과 완료. 더 이상의 메모리 누수나 상태 전이 패러독스 없음. 절대 무결성 락온.
+# 🚨 MODIFIED: [Insight 14] NaN/Inf 및 콤마(,) 맹독성 데이터를 0.0으로 깎아내는 `_safe_float` 코어 래퍼 100% 결속.
+# 🚨 MODIFIED: [YF MultiIndex 붕괴 방어] `_flatten_columns` 전단 이식으로 pandas KeyError 즉사 버그 완벽 차단.
+# 🚨 MODIFIED: [ZeroDivision 궁극 방어] T_H 타점이 극단적 변동성에 의해 0.0 이하로 산출될 경우 발생하는 연산 마비를 막기 위한 수학적 쉴드 락온.
 # ==========================================================
 import logging
 import datetime
 from zoneinfo import ZoneInfo
 import math
-import random
 import time 
 import yfinance as yf
 import pandas as pd
@@ -28,10 +27,9 @@ import tempfile
 
 class VAvwapHybridPlugin:
     def __init__(self):
-        self.plugin_name = "AVWAP_V79.50_MA5_ANCHOR"
-        self.leverage = 3.0       
+        self.plugin_name = "DEEP_RESCUE_V84.00_AUTONOMOUS"
 
-    # 🚨 NEW: [수학 연산 붕괴 방어] NaN, Infinity 및 String-Comma 맹독성 데이터 정밀 필터링
+    # 🚨 [Case 05, Insight 14] NaN, Infinity 및 String-Comma 맹독성 데이터 정밀 필터링 락온
     def _safe_float(self, value):
         try:
             val = float(str(value or 0.0).replace(',', ''))
@@ -41,7 +39,7 @@ class VAvwapHybridPlugin:
         except Exception:
             return 0.0
 
-    # 🚨 NEW: [YF MultiIndex 붕괴 방어] DataFrame 멀티인덱스 동적 평탄화 (KeyError 원천 차단)
+    # 🚨 [YF MultiIndex 붕괴 방어] DataFrame 멀티인덱스 동적 평탄화 (KeyError 원천 차단)
     def _flatten_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         if isinstance(df.columns, pd.MultiIndex):
             if 'Ticker' in df.columns.names:
@@ -68,7 +66,7 @@ class VAvwapHybridPlugin:
         today_str = self._get_logical_date_str(now_est)
         data = {}
 
-        # 🚨 MODIFIED: [Case 08] os.path.exists 소각 및 EAFP 원자적 접근 강제
+        # 🚨 [Case 08] os.path.exists 소각 및 EAFP 원자적 접근 강제
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -81,47 +79,27 @@ class VAvwapHybridPlugin:
             data = {}
 
         if data.get('date') != today_str:
-            # 🚨 MODIFIED: [Insight 14] _safe_float 래핑으로 수학 붕괴 방어
             qty = int(self._safe_float(data.get('qty', 0))) 
             if qty > 0:
-                data['bought'] = True
                 data['shutdown'] = False
-                data['executed_buy'] = True 
             else:
                 data['qty'] = 0
                 data['avg_price'] = 0.0
                 data['shutdown'] = False
                 data['strikes'] = 0
-                data['bought'] = False
-                data['daily_bought_qty'] = 0
-                data['daily_sold_qty'] = 0
-                data['executed_buy'] = False
                 
                 data['limit_order_placed'] = False
                 data['placed_target_th'] = 0.0
                 data['trap_placed_time'] = ""
                 data['buy_odno'] = ""  
 
-            data['PM_H'] = 0.0
-            data['PM_L'] = 0.0
+            # 🚨 MODIFIED: [상태 다이어트] 레거시 파라미터(PM_H, PM_L, T_L, offset, dump_jitter_sec 등) 영구 소각 및 파일 최적화
             data['T_H'] = 0.0
-            data['T_L'] = 0.0
-            data['offset'] = 0.0
-            data['dump_jitter_sec'] = random.randint(0, 180)
-            
-            data.pop('pm_locked', None)
-
             data['date'] = today_str
             self.save_state(ticker, now_est, data)
         
-        # 🚨 MODIFIED: [Insight 14] _safe_float 래핑 일괄 락온
-        data['PM_H'] = self._safe_float(data.get('PM_H', 0.0))
-        data['PM_L'] = self._safe_float(data.get('PM_L', 0.0))
+        # 🚨 [Insight 14] _safe_float 래핑 일괄 락온
         data['T_H'] = self._safe_float(data.get('T_H', 0.0))
-        data['T_L'] = self._safe_float(data.get('T_L', 0.0))
-        data['offset'] = self._safe_float(data.get('offset', 0.0))
-        data['executed_buy'] = bool(data.get('executed_buy'))
-        
         data['limit_order_placed'] = bool(data.get('limit_order_placed'))
         data['placed_target_th'] = self._safe_float(data.get('placed_target_th', 0.0))
         data['trap_placed_time'] = str(data.get('trap_placed_time') or "")
@@ -129,9 +107,6 @@ class VAvwapHybridPlugin:
         data['strikes'] = int(self._safe_float(data.get('strikes', 0)))
         data['qty'] = int(self._safe_float(data.get('qty', 0)))
         data['avg_price'] = self._safe_float(data.get('avg_price', 0.0))
-        data['daily_bought_qty'] = int(self._safe_float(data.get('daily_bought_qty', 0)))
-        data['daily_sold_qty'] = int(self._safe_float(data.get('daily_sold_qty', 0)))
-        data['dump_jitter_sec'] = int(self._safe_float(data.get('dump_jitter_sec', 0)))
 
         return data
 
@@ -140,7 +115,7 @@ class VAvwapHybridPlugin:
         today_str = self._get_logical_date_str(now_est)
 
         merged_data = {}
-        # 🚨 MODIFIED: [Case 08] os.path.exists 소각 및 EAFP 원자적 접근 강제
+        # 🚨 [Case 08] os.path.exists 소각 및 EAFP 원자적 접근 강제
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 merged_data = json.load(f)
@@ -158,13 +133,13 @@ class VAvwapHybridPlugin:
         merged_data['date'] = today_str
 
         dir_name = os.path.dirname(file_path) or '.'
-        # 🚨 MODIFIED: [디스크 I/O 레이스 컨디션 샌드박싱] 무해한 폴더 생성 에러가 트랜잭션을 날리는 과잉 방어(Abort) 차단
+        # 🚨 [디스크 I/O 샌드박싱] 무해한 폴더 생성 에러가 트랜잭션을 날리는 과잉 방어(Abort) 차단
         try:
             os.makedirs(dir_name, exist_ok=True)
         except OSError:
             pass
 
-        # 🚨 MODIFIED: [Case 16] 임시 파일 고아화 방어 스코프 전진 배치
+        # 🚨 [Case 16] 임시 파일 고아화 방어 스코프 전진 배치
         fd = None
         temp_path = None
         try:
@@ -183,24 +158,19 @@ class VAvwapHybridPlugin:
             if temp_path:
                 try: os.remove(temp_path)
                 except OSError: pass
-            logging.error(f"🚨 [V_AVWAP] 상태 저장 실패 (원자적 쓰기 에러): {e}")
+            logging.error(f"🚨 [V_AVWAP] 딥-레스큐 상태 저장 실패 (원자적 쓰기 에러): {e}")
 
     def apply_stock_split(self, ticker, ratio, now_est):
         if ratio <= 0: return
         state = self.load_state(ticker, now_est)
         
-        # 🚨 MODIFIED: [Insight 14] _safe_float 래핑 결속
+        # 🚨 [Insight 14] _safe_float 래핑 결속
         qty = int(self._safe_float(state.get("qty", 0)))
         if qty > 0:
             new_qty = math.floor((qty * ratio) + 0.5)
             old_avg = self._safe_float(state.get("avg_price", 0.0))
             state["qty"] = new_qty
             state["avg_price"] = round(old_avg / ratio, 4) if ratio > 0 else 0.0
-            
-            daily_bought = int(self._safe_float(state.get("daily_bought_qty", 0)))
-            daily_sold = int(self._safe_float(state.get("daily_sold_qty", 0)))
-            state["daily_bought_qty"] = math.floor((daily_bought * ratio) + 0.5)
-            state["daily_sold_qty"] = math.floor((daily_sold * ratio) + 0.5)
             
             placed_target_th = self._safe_float(state.get("placed_target_th", 0.0))
             if placed_target_th > 0:
@@ -227,7 +197,7 @@ class VAvwapHybridPlugin:
                     today_est = now_est.date()
     
                 if not df_1m.empty:
-                    # 🚨 MODIFIED: [YF MultiIndex 붕괴 방어] 계층 평탄화 강제 락온
+                    # 🚨 [YF MultiIndex 붕괴 방어] 계층 평탄화 강제 락온
                     df_1m = self._flatten_columns(df_1m)
                     
                     if df_1m.index.tz is None:
@@ -243,7 +213,6 @@ class VAvwapHybridPlugin:
                         df_prev_day = df_prev_day.between_time('09:30', '15:59')
     
                         if not df_prev_day.empty:
-                            # 🚨 MODIFIED: [Float 붕괴 궁극 소각] np.nan_to_num 혼용 뇌관 제거 및 _safe_float 코어 래퍼로 100% 팩트 교정
                             prev_close = self._safe_float(df_prev_day['Close'].iloc[-1])
                             df_prev_day['tp'] = (df_prev_day['High'].astype(float) + df_prev_day['Low'].astype(float) + df_prev_day['Close'].astype(float)) / 3.0
                             df_prev_day['vol'] = df_prev_day['Volume'].astype(float)
@@ -251,31 +220,9 @@ class VAvwapHybridPlugin:
     
                             cum_vol = df_prev_day['vol'].sum()
                             if cum_vol > 0:
-                                # 🚨 MODIFIED: [Float 붕괴 궁극 소각] prev_vwap 연산에 _safe_float 강제 결속
                                 prev_vwap = self._safe_float(df_prev_day['vol_tp'].sum() / cum_vol)
                             else:
                                 prev_vwap = prev_close
-    
-                df_30m = tkr.history(period="60d", interval="30m", timeout=5)
-                avg_vol_20 = 0.0
-    
-                if not df_30m.empty:
-                    # 🚨 MODIFIED: [YF MultiIndex 붕괴 방어] 계층 평탄화 강제 락온
-                    df_30m = self._flatten_columns(df_30m)
-                    
-                    if df_30m.index.tz is None:
-                        df_30m.index = df_30m.index.tz_localize('UTC').tz_convert(est)
-                    else:
-                        df_30m.index = df_30m.index.tz_convert(est)
-    
-                    first_30m = df_30m[df_30m.index.time == datetime.time(9, 30)]
-                    past_first_30m = first_30m[first_30m.index.date < today_est]
-    
-                    if len(past_first_30m) >= 20:
-                        # 🚨 MODIFIED: [Float 붕괴 궁극 소각] np.nan_to_num 혼용 뇌관 제거
-                        avg_vol_20 = self._safe_float(past_first_30m['Volume'].tail(20).mean())
-                    elif len(past_first_30m) > 0:
-                        avg_vol_20 = self._safe_float(past_first_30m['Volume'].mean())
     
                 if prev_vwap == 0.0:
                     prev_vwap = prev_close
@@ -283,7 +230,7 @@ class VAvwapHybridPlugin:
                 return {
                     "prev_close": prev_close,
                     "prev_vwap": prev_vwap,
-                    "avg_vol_20": avg_vol_20
+                    "avg_vol_20": 0.0 # 레거시 호환용 더미 유지
                 }
     
             except Exception as e:
@@ -291,14 +238,14 @@ class VAvwapHybridPlugin:
                 if attempt == 2: return None
                 time.sleep(1.0 * (2 ** attempt))
 
-    def get_decision(self, base_ticker=None, exec_ticker=None, base_curr_p=0.0, exec_curr_p=0.0, base_day_open=0.0, avwap_avg_price=0.0, avwap_qty=0, avwap_alloc_cash=0.0, context_data=None, df_1min_base=None, df_1min_exec=None, now_est=None, avwap_state=None, regime_data=None, is_simulation=False, sortie_mode="SINGLE", **kwargs):
+    def get_decision(self, base_ticker=None, exec_ticker=None, base_curr_p=0.0, exec_curr_p=0.0, df_1min_base=None, df_1min_exec=None, avwap_qty=0, avwap_alloc_cash=0.0, now_est=None, avwap_state=None, context_data=None, is_simulation=False, amp5=0.0, prev_close=0.0, ma_5day=0.0, **kwargs):
         is_holiday = kwargs.get('is_holiday', False)
         now_est = now_est or datetime.datetime.now(ZoneInfo('America/New_York'))
         
         if now_est.weekday() >= 5:
             is_holiday = True
 
-        # 🚨 MODIFIED: [Insight 11/17] None 객체 유입 시 TypeError 붕괴를 원천 봉쇄하는 _safe_float 강제 캐스팅 선행 락온
+        # 🚨 [Insight 11/17] None 객체 유입 시 TypeError 붕괴를 원천 봉쇄하는 _safe_float 강제 캐스팅 선행 락온
         avwap_qty = int(self._safe_float(avwap_qty))
         if avwap_qty == 0:
             avwap_qty = int(self._safe_float(kwargs.get('current_qty', 0)))
@@ -307,99 +254,30 @@ class VAvwapHybridPlugin:
         if exec_curr_p == 0.0:
             exec_curr_p = self._safe_float(kwargs.get('exec_curr_p', 0.0))
             
-        avwap_avg_price = self._safe_float(avwap_avg_price)
-        if avwap_avg_price == 0.0:
-            avwap_avg_price = self._safe_float(kwargs.get('avwap_avg_price', kwargs.get('avg_price', 0.0)))
-            
         avwap_alloc_cash = self._safe_float(avwap_alloc_cash)
         if avwap_alloc_cash == 0.0:
             avwap_alloc_cash = self._safe_float(kwargs.get('alloc_cash', kwargs.get('avwap_alloc_cash', 0.0)))
         
         amp5 = self._safe_float(kwargs.get('amp5', 0.0))
-        prev_c = self._safe_float(kwargs.get('prev_close', 0.0))
-        ma_5day = self._safe_float(kwargs.get('ma_5day', 0.0))
         
-        anchor_price = ma_5day if ma_5day > 0 else prev_c
-        
-        curr_pm_h = 0.0
-        curr_pm_l = 0.0
-        curr_c = 0.0
+        # 🚨 MODIFIED: [사후 하락장 게이트] 본진(V-REV)의 KIS 실제 평단가를 kwargs에서 정밀 추출
+        main_actual_avg = self._safe_float(kwargs.get('main_actual_avg', 0.0))
+
         curr_l = 0.0
-        curr_offset = 0.0
-        curr_t_h = 0.0
-        curr_t_l = 0.0
         curr_candle_time_str = "" 
+        exec_day_open = 0.0
         
         curr_time = now_est.time()
-        
-        time_0400 = datetime.time(4, 0)
         time_0930 = datetime.time(9, 30)
-        time_1300 = datetime.time(13, 0)
 
         persistent_state = self.load_state(exec_ticker, now_est)
         
         is_shutdown = bool(persistent_state.get('shutdown'))
-        executed_buy = bool(persistent_state.get('executed_buy'))
         limit_order_placed = bool(persistent_state.get('limit_order_placed'))
         placed_target_th = self._safe_float(persistent_state.get('placed_target_th', 0.0))
-        
         trap_placed_time = str((avwap_state or {}).get('trap_placed_time') or persistent_state.get('trap_placed_time') or "")
-        
-        dump_jitter_sec = int(self._safe_float(persistent_state.get('dump_jitter_sec', 0)))
-        pm_h = self._safe_float(persistent_state.get('PM_H', 0.0))
-        pm_l = self._safe_float(persistent_state.get('PM_L', 0.0))
         t_h = self._safe_float(persistent_state.get('T_H', 0.0))
-        t_l = self._safe_float(persistent_state.get('T_L', 0.0))
-        offset = self._safe_float(persistent_state.get('offset', 0.0))
         
-        base_dump_dt = datetime.datetime.combine(now_est.date(), datetime.time(15, 20)).replace(tzinfo=ZoneInfo('America/New_York'))
-        dynamic_dump_dt = base_dump_dt - datetime.timedelta(seconds=dump_jitter_sec)
-        time_dynamic_dump = dynamic_dump_dt.time()
-
-        if curr_time >= time_0400:
-            df_1m = df_1min_exec
-            if df_1m is not None and not df_1m.empty and 'time_est' in df_1m.columns:
-                curr_time_str_raw = curr_time.strftime('%H%M%S')
-                df_today = df_1m[(df_1m['time_est'] >= '040000') & (df_1m['time_est'] <= curr_time_str_raw)]
-                
-                if not df_today.empty:
-                    curr_candle_time_str = str(df_today.iloc[-1]['time_est'])
-
-                    slice_end_str = '092959' if curr_time >= time_0930 else curr_time_str_raw
-                    df_pm = df_1m[(df_1m['time_est'] >= '040000') & (df_1m['time_est'] <= slice_end_str)]
-                    
-                    if not df_pm.empty:
-                        # 🚨 MODIFIED: [Float 붕괴 궁극 소각] np.nan_to_num 혼용 뇌관 제거 및 _safe_float 코어 래퍼로 100% 교체
-                        curr_pm_h = self._safe_float(df_pm['close'].astype(float).max())
-                        curr_pm_l = self._safe_float(df_pm['close'].astype(float).min())
-                    else:
-                        curr_pm_h = 0.0
-                        curr_pm_l = 0.0
-
-                    # 🚨 MODIFIED: [Float 붕괴 궁극 소각] np.nan_to_num 혼용 뇌관 제거
-                    curr_c = self._safe_float(df_today.iloc[-1].get('close', 0.0))
-                    curr_l = self._safe_float(df_today.iloc[-1].get('low', 0.0))
-                    
-                    curr_offset = anchor_price * amp5 * 0.45
-                    
-                    curr_t_h = curr_pm_h - curr_offset
-                    curr_t_l = curr_pm_l + curr_offset
-
-                    pm_h = curr_pm_h
-                    pm_l = curr_pm_l
-                    t_h = curr_t_h
-                    t_l = curr_t_l
-                    offset = curr_offset
-
-                    persistent_state['PM_H'] = pm_h
-                    persistent_state['PM_L'] = pm_l
-                    persistent_state['T_H'] = t_h
-                    persistent_state['T_L'] = t_l
-                    persistent_state['offset'] = offset
-                    
-                    if not is_simulation:
-                        self.save_state(exec_ticker, now_est, persistent_state)
-
         def _build_res(action, reason, qty=0, target_price=0.0, t_time=None):
             return {
                 'action': action,
@@ -408,13 +286,8 @@ class VAvwapHybridPlugin:
                 'target_price': target_price,
                 'vwap': 0.0,
                 'base_curr_p': base_curr_p,
-                # 🚨 MODIFIED: [Insight 06/07] 딕셔너리 단락 평가 및 캐스팅 보호
                 'prev_vwap': self._safe_float((context_data or {}).get('prev_vwap', 0.0)) if isinstance(context_data, dict) else 0.0,
-                'PM_H': pm_h,
-                'PM_L': pm_l,
                 'T_H': t_h,
-                'T_L': t_l,
-                'offset': offset,
                 'limit_order_placed': limit_order_placed,
                 'placed_target_th': placed_target_th,
                 'trap_placed_time': trap_placed_time if t_time is None else t_time,
@@ -423,100 +296,52 @@ class VAvwapHybridPlugin:
 
         if is_holiday:
             if avwap_qty > 0:
-                return _build_res('HOLD', '미국_증시_휴장일(보유물량_이월)')
+                return _build_res('HOLD', '미국_증시_휴장일(암살자퇴근_이월대기)')
             return _build_res('WAIT', '미국_증시_휴장일(관측_중지)')
 
-        # 🚨 MODIFIED: [익절 감시망 붕괴 패러독스 원천 소각]
-        # 진입(Entry) 지표(anchor_price, amp5) 통신이 100% 실패하더라도 엑시트(Exit) 감시망은 절대 멈추지 않도록
-        # 기보유 물량(avwap_qty > 0) 처리 블록을 결측치 대기(WAIT) 로직보다 최상단으로 전진 배치(Hoisting) 락온.
+        # 🚨 MODIFIED: [Fire & Forget 락온] 체결된 물량(avwap_qty > 0)이 존재하면 무조건 퇴근 모드(HOLD) 반환.
+        # 시장가 덤핑 등 추가 개입을 완벽히 차단하고 애프터마켓 종료 시점까지 스케줄러(단독 구출 덫)에 위임.
         if avwap_qty > 0:
-            safe_avg = avwap_avg_price if avwap_avg_price > 0 else exec_curr_p
+            return _build_res('HOLD', '🎯 구출 덫 장전 완료 및 암살자 퇴근 (Fire & Forget)')
 
-            if safe_avg <= 0:
-                return _build_res('SELL', 'CORRUPT_PRICE_EMERGENCY_DUMP', qty=avwap_qty, target_price=exec_curr_p)
-
-            if curr_time >= time_dynamic_dump:
-                persistent_state["shutdown"] = True
-                if not is_simulation:
-                    self.save_state(exec_ticker, now_est, persistent_state)
-                return _build_res('SELL', '동적_덤핑_타임라인_도달_전량_시장가_덤핑', qty=avwap_qty, target_price=exec_curr_p)
-
-            exit_target_price = round(safe_avg * 1.02, 2)
-            if exec_curr_p >= exit_target_price:
-                return _build_res('SELL', '목표가(+2.0%)_도달_순수모멘텀_익절_격발', qty=avwap_qty, target_price=exit_target_price)
-
-            return _build_res('HOLD', '보유중_순수익절(+2.0%)_및_동적덤핑_감시중')
-
-        # --- 이 아래부터는 오직 신규 진입(Entry)을 위한 전용 로직입니다 ---
-        if anchor_price <= 0 or amp5 <= 0:
-            return _build_res('WAIT', '진입_평가용_필수데이터_결측_대기')
-
+        # --- 이 아래부터는 오직 딥-매수 신규 진입(Entry)을 위한 전용 로직입니다 ---
         if is_shutdown:
             return _build_res('WAIT', '당일영구동결_상태(신규진입금지)')
 
-        if curr_time >= time_dynamic_dump:
-            persistent_state["shutdown"] = True
-            if not is_simulation:
-                self.save_state(exec_ticker, now_est, persistent_state)
-            return _build_res('SHUTDOWN', '동적_덤핑_타임라인_도달_신규진입_영구동결')
-            
-        if executed_buy and sortie_mode == "SINGLE":
-            return _build_res('WAIT', '일일_1회_타격_완료_매매_종료(단일타격_모드)')
+        if curr_time < time_0930:
+            return _build_res('WAIT', '프리장 관망 (정규장 시가 및 하락장 확정 대기)')
 
-        if curr_time >= time_0930 and not executed_buy:
-            persistent_state["shutdown"] = True
-            persistent_state["limit_order_placed"] = False
-            persistent_state["placed_target_th"] = 0.0
-            persistent_state["trap_placed_time"] = ""
-            persistent_state["buy_odno"] = ""  
-            limit_order_placed = False
-            placed_target_th = 0.0
-            trap_placed_time = ""
-            
-            if not is_simulation:
-                self.save_state(exec_ticker, now_est, persistent_state)
-                
-            logging.info(f"🛑 [09:30 기요틴 셧다운] 프리장 매수 체결 불발. 정규장 폭락 휩소를 회피하기 위해 당일 매매를 종료(퇴근)합니다.")
-            return _build_res('SHUTDOWN', '09:30_기요틴_프리장미체결_정규장회피_당일퇴근')
+        # 🚨 MODIFIED: [시가 추출] 정규장 당일 시가(Open) 추출 락온
+        if df_1min_exec is not None and not df_1min_exec.empty and 'time_est' in df_1min_exec.columns:
+            df_reg = df_1min_exec[(df_1min_exec['time_est'] >= '093000') & (df_1min_exec['time_est'] <= '155959')]
+            if not df_reg.empty:
+                exec_day_open = self._safe_float(df_reg.iloc[0]['open'])
+                curr_l = self._safe_float(df_reg.iloc[-1]['low'])
+                curr_candle_time_str = str(df_reg.iloc[-1]['time_est'])
 
-        if avwap_qty == 0 and curr_time >= time_1300 and not limit_order_placed:
-            persistent_state["shutdown"] = True
-            persistent_state["limit_order_placed"] = False
-            persistent_state["placed_target_th"] = 0.0
-            persistent_state["trap_placed_time"] = ""
-            persistent_state["buy_odno"] = ""  
-            limit_order_placed = False
-            placed_target_th = 0.0
-            trap_placed_time = ""
-            
-            if not is_simulation:
-                self.save_state(exec_ticker, now_est, persistent_state)
-            
-            return _build_res('SHUTDOWN', '13:00_장마감3시간전_신규진입_타임라인_영구차단(SHUTDOWN)')
-            
-        if not limit_order_placed:
-            if curr_l > 0 and curr_l <= t_h:
-                safe_budget = avwap_alloc_cash * 0.95
-                buy_qty = max(0, int(math.floor(safe_budget / t_h))) if t_h > 0 else 0 
-                
-                if buy_qty > 0:
-                    # 🚨 MODIFIED: [무한 덫 장전 패러독스 수술] 사전 파일 I/O(Eager Save)에 의한 상태 오염 원천 소각
-                    # 엔진이 KIS 서버 승인을 받기 전에 미리 로컬 상태를 True로 확정짓는 코드를 전면 제거하여,
-                    # 통신 오류 시 발생하던 고스트 덫(Ghost State)과 덫 무한 장전 버그를 100% 봉쇄합니다.
-                    logging.info(f"🚀 [V79.50 덫 장전] 1분봉 저가({curr_l:.2f}) T_H 순수 관통. 지정가({t_h:.2f}) 타격 락온! (기준 캔들: {curr_candle_time_str})")
-                    return _build_res('PLACE_TRAP', 'T_H순수관통_지정가_덫장전', qty=buy_qty, target_price=t_h, t_time=curr_candle_time_str)
-                else:
-                    # 🚨 MODIFIED: [Indentation 붕괴 수술] 예산 부족 WAIT이 정상 대기 시점에도 침범하던 들여쓰기 맹점 수복
-                    return _build_res('WAIT', '조건_충족이나_예산부족(0주)_덫장전_보류')
-        else:
+        if exec_day_open <= 0.0:
+            return _build_res('WAIT', '정규장 시가(Open) 확정 대기중')
+
+        # 🚨 MODIFIED: [시가 앵커링 고정 덫 산출]
+        t_h = exec_day_open - (exec_day_open * amp5 * 0.45)
+        persistent_state['T_H'] = t_h
+        if not is_simulation:
+            self.save_state(exec_ticker, now_est, persistent_state)
+
+        # 🚨 MODIFIED: [사후 하락장 게이트 검증]
+        # Actual_Avg(main_actual_avg)가 당일 시가(Open)보다 낮거나 같다면 암살자 투입 차단
+        if main_actual_avg <= exec_day_open:
+            return _build_res('WAIT', f'사후 하락장 조건 미달 (본진 평단가 ${main_actual_avg:.2f} <= 당일 시가 ${exec_day_open:.2f})')
+
+        # 이미 덫을 장전한 상태라면 체결 검증을 위한 분기 진행
+        if limit_order_placed:
             is_time_shield_active = False
             if trap_placed_time and curr_candle_time_str:
                 try:
                     t1 = datetime.datetime.strptime(trap_placed_time, '%H%M%S')
                     t2 = datetime.datetime.strptime(curr_candle_time_str, '%H%M%S')
                     diff_sec = (t2 - t1).total_seconds()
-                    if diff_sec < 0: 
-                        diff_sec += 86400
+                    if diff_sec < 0: diff_sec += 86400
                     if 0 <= diff_sec <= 60:
                         is_time_shield_active = True
                 except Exception:
@@ -524,13 +349,24 @@ class VAvwapHybridPlugin:
 
             if curr_l > 0 and curr_l <= placed_target_th:
                 if is_time_shield_active:
-                    logging.info(f"🛡️ [Case 31 시차 패러독스 방어] 1분봉 시차 패러독스 차단: 장전시각({trap_placed_time}) 직후 캔들({curr_candle_time_str}) 노이즈 관통 바이패스. 덫 자폭(Self-Destruct) 방어!")
-                    return _build_res('TRAP_WAIT', f'주문전송_지연방어(1분패러독스)_지정가덫({placed_target_th:.2f})_시장대기중', qty=0, target_price=placed_target_th)
-                return _build_res('VERIFY_TRAP_FILL', '지정가덫_하향관통_실체결검증_및_익절덫동시투하_요청', qty=0, target_price=placed_target_th)
+                    logging.info(f"🛡️ [Case 31 시차 패러독스 방어] 장전시각({trap_placed_time}) 직후 캔들({curr_candle_time_str}) 노이즈 관통 바이패스.")
+                    return _build_res('TRAP_WAIT', f'주문전송_지연방어(1분패러독스)_지정가덫({placed_target_th:.2f})_시장대기중', target_price=placed_target_th)
+                return _build_res('VERIFY_TRAP_FILL', '지정가덫_하향관통_실체결검증_및_단독구출덫_투하요청', target_price=placed_target_th)
             else:
                 reason_msg = f'선제지정가덫({placed_target_th:.2f})_시장대기중'
                 if is_time_shield_active:
                     reason_msg = f'1분봉_시차패러독스_타임쉴드_가동중({placed_target_th:.2f})'
-                return _build_res('TRAP_WAIT', reason_msg, qty=0, target_price=placed_target_th)
+                return _build_res('TRAP_WAIT', reason_msg, target_price=placed_target_th)
 
-        return _build_res('WAIT', '동적_순수타격선_도달_감시중')
+        # 🚨 MODIFIED: [수학적 붕괴 방어] T_H 타점이 0.0 이하로 산출 시 ZeroDivision 차단을 위한 쉴드 락온
+        if t_h <= 0.0:
+            return _build_res('WAIT', '비정상 T_H(0.0 이하) 산출 차단 (수학적 붕괴 방어)')
+
+        # 🚨 MODIFIED: [100% 자율 격발] 조건 달성 즉시 잉여 현금 100% 딥-매수 덫 장전 지시
+        if avwap_alloc_cash / t_h < 1.0:
+            return _build_res('WAIT', '예산 고갈 ZeroDivision 방어 (1주 미만 산출)')
+
+        buy_qty = int(math.floor(avwap_alloc_cash / t_h))
+        logging.info(f"🚀 [V84.00 딥-레스큐 덫 장전] 사후 하락장 팩트 확정. 시가 앵커링 덫 즉시 장전! (타겟가: ${t_h:.2f}, 수량: {buy_qty}주)")
+        
+        return _build_res('PLACE_TRAP', '사후 하락장 판별 확정. 시가 앵커링 고정 덫 즉시 장전', qty=buy_qty, target_price=t_h, t_time=curr_candle_time_str)

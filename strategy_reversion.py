@@ -1,20 +1,17 @@
 # ==========================================================
 # FILE: strategy_reversion.py
 # ==========================================================
+# 🚨 MODIFIED: [딥-레스큐 아키텍처 V84.00 전면 리빌딩] 
+# 🚨 MODIFIED: [투트랙 디커플링 팩트 락온] 암살자 단독 구출 덫(Fire & Forget)과의 KIS 호가 수량 충돌(잔고 부족 리젝)을 완벽히 차단하기 위해, 큐 장부의 통합 수량(L1)에서 암살자의 락온 수량(`AVWAP_Qty`)을 뺄셈하여 '순수 본진 잔여 물량'에 대해서만 매도 덫을 산출하는 방어막 전격 이식.
 # 🚨 MODIFIED: [단일 지층 락온] 잔여 지층이 1개일 경우 상위층 덫(Upper_Price) 생성을 영구 소각하고 1층 탈출 덫만 단일 장전하도록 팩트 교정 완료
-# 🚨 MODIFIED: [Float 정밀도 오염 차단] 부동소수점 오차(Float Precision Error)로 인한 trigger_upper 바운딩 붕괴 방어용 절대 쉴드(0.01) 주입
 # 🚨 MODIFIED: [Case 08 절대 규칙 준수] 스냅샷 멱등성 훼손을 유발하는 os.path.exists 동기 스캔을 100% 영구 소각하고 EAFP 원자적 파일 I/O로 전면 교체
-# 🚨 MODIFIED: [Float 정밀도 오염 차단] upper_inv 음수 발생 시 0.0으로 바운딩하는 max() 쉴드 적용
+# 🚨 MODIFIED: [Float 정밀도 오염 차단] 부동소수점 오차(Float Precision Error)로 인한 trigger_upper 바운딩 붕괴 방어용 절대 쉴드(0.01) 주입 및 upper_inv 음수 발생 시 0.0 바운딩
 # 🚨 MODIFIED: [Case 16 위반 교정] 원자적 쓰기 UnboundLocalError 방어막(스코프 전진배치 및 dir_name or '.') 결속
-# 🚨 REMOVED: [Case 02 위반 교정] 사용되지 않는 유령 변수(pure_qty, avg_price, legacy_q, side) 데드코드 100% 영구 소각
 # 🚨 MODIFIED: [TypeError 붕괴 방어] q_data 결측치(None) 유입 시 루프 마비를 막기 위한 단락 평가(or []) 쉴드 래핑
-# 🚨 MODIFIED: [제2헌법 준수] VWAP 동적 지터 시간 연산의 100% 중복(Copy-Paste) 블록 영구 소각 및 최상단 전진 배치(Hoisting)
 # 🚨 MODIFIED: [Insight 14] String-Float 콤마 맹독성 런타임 붕괴 방어용 `_safe_float` 래핑 전면 이식
 # 🚨 MODIFIED: [Insight 12] 큐 장부 오염 객체(Dirty Record) 방어용 `isinstance(item, dict)` 필터링 락온
 # 🚨 MODIFIED: [Insight 06/07] JSON 이중 get() 호출 시 발생하는 AttributeError 붕괴 방어용 `(dict or {})` 단락 평가 쉴드 주입
-# 🚨 NEW: [Case 20] KIS 서버 VWAP 알고리즘 10주 최소 수량 제약(10주 미만 시 LOC 강제 폴백) 데드코드 전면 소각. 자체 로컬 1분 슬라이싱 엔진은 수량 무관하게 쪼개기(Slicing)가 가능하므로 전량 'VWAP' 태그로 락온하여 섀도우 엔진에 100% 인계
-# 🚨 MODIFIED: [궁극의 Type-Safety 아머 결속] get_dynamic_plan 및 ensure_failsafe_snapshot 진입부의 모든 파라미터에 _safe_float 쉴드를 100% 강제 래핑하여 TypeError 런타임 붕괴 원천 봉쇄
-# 🚨 MODIFIED: [당일 지층 매수 앵커 최우선 락온] is_zero_start_session 조건을 해체하고 오직 실제 물량(total_q) 유무만을 기준으로 매수 앵커를 산출하도록 교정. 당일 연속 체결 시 허공 타점(1.15배수) 파괴 및 1지층 평단가 연계 100% 락온.
+# 🚨 MODIFIED: [당일 지층 매수 앵커 최우선 락온] is_zero_start_session 조건을 해체하고 오직 실제 물량(total_q) 유무만을 기준으로 매수 앵커를 산출하도록 교정.
 # ==========================================================
 import math
 import os
@@ -61,7 +58,7 @@ class ReversionStrategy:
             return 
         
         state_file = self._get_state_file(ticker)
-        # 🚨 MODIFIED: [TOCTOU 붕괴 방어] os.path.exists 동기 스캔 전면 소각 및 EAFP 적용
+        # 🚨 [TOCTOU 붕괴 방어] os.path.exists 동기 스캔 전면 소각 및 EAFP 적용
         try:
             with open(state_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -156,7 +153,7 @@ class ReversionStrategy:
         return None
 
     def ensure_failsafe_snapshot(self, ticker, curr_p, prev_c, alloc_cash, q_data, total_kis_qty, avwap_qty):
-        # 🚨 MODIFIED: 진입 파라미터 Type-Safety 절대 방어막 결속
+        # 🚨 [Type-Safety] 진입 파라미터 방어막 결속
         curr_p = self._safe_float(curr_p)
         prev_c = self._safe_float(prev_c)
         alloc_cash = self._safe_float(alloc_cash)
@@ -196,7 +193,7 @@ class ReversionStrategy:
         self._save_state(ticker)
 
     def get_dynamic_plan(self, ticker, curr_p, prev_c, current_weight, vwap_status, min_idx, alloc_cash, q_data, is_snapshot_mode=False, market_type="REG"):
-        # 🚨 MODIFIED: 진입 파라미터 Type-Safety 절대 방어막 결속
+        # 🚨 [Type-Safety] 진입 파라미터 방어막 결속
         curr_p = self._safe_float(curr_p)
         prev_c = self._safe_float(prev_c)
         current_weight = self._safe_float(current_weight)
@@ -208,11 +205,24 @@ class ReversionStrategy:
         if not is_snapshot_mode and cached_plan:
             return cached_plan
 
+        # 🚨 [투트랙 디커플링 (잔고 부족 쉴드)] 암살자 생존 여부 팩트 스캔
+        avwap_qty = 0
+        try:
+            avwap_state_file = f"data/avwap_state_persistent_{ticker}.json"
+            with open(avwap_state_file, 'r', encoding='utf-8') as f:
+                avwap_data = json.load(f)
+                if isinstance(avwap_data, dict):
+                    today_str_est = self._get_logical_date_str()
+                    if avwap_data.get('date') == today_str_est:
+                        avwap_qty = int(self._safe_float(avwap_data.get('qty', 0)))
+        except OSError: pass
+        except json.JSONDecodeError: pass
+
         valid_q_data = [item for item in (q_data or []) if isinstance(item, dict) and self._safe_float(item.get('price')) > 0]
         total_q = sum(int(self._safe_float(item.get("qty"))) for item in valid_q_data)
         total_inv = sum(self._safe_float(item.get('qty')) * self._safe_float(item.get('price')) for item in valid_q_data)
         
-        # 🚨 MODIFIED: TypeError(비교 불가) 방어를 위한 str() 캐스팅 결속
+        # TypeError(비교 불가) 방어를 위한 str() 캐스팅
         dates_in_queue = sorted(list(set(str(item.get('date', '')) for item in valid_q_data if item.get('date'))), reverse=True)
         l1_qty, l1_price = 0, 0.0
         
@@ -223,10 +233,25 @@ class ReversionStrategy:
         
         upper_qty = total_q - l1_qty
 
+        # 🚨 [투트랙 디커플링] 암살자 퇴근 물량(AVWAP_Qty) 뺄셈 락온
+        # 암살자 물량은 가장 최근 통합 지층(L1)에 속해 있으므로 L1에서 최우선 차감하여 순수 본진 잔여 물량을 도출
+        pure_l1_qty = l1_qty
+        pure_upper_qty = upper_qty
+        rem_avwap = avwap_qty
+
+        if rem_avwap > 0:
+            if pure_l1_qty >= rem_avwap:
+                pure_l1_qty -= rem_avwap
+            else:
+                rem_avwap -= pure_l1_qty
+                pure_l1_qty = 0
+                pure_upper_qty = max(0, pure_upper_qty - rem_avwap)
+
         trigger_l1 = round(l1_price * 1.006, 2)
         
-        # 🚨 MODIFIED: [Float 정밀도 방어] 지층이 2개 이상일 때만 상위층 덫 생성. 부동소수점 오차 차단을 위해 0.0으로 명시적 바운딩
-        if upper_qty > 0 and len(dates_in_queue) >= 2:
+        # 🚨 [단일 지층 락온] 순수 상위 지층이 존재하고(pure_upper_qty > 0) 지층 종류가 2개 이상일 때만 상위층 탈출 덫 장전
+        if pure_upper_qty > 0 and len(dates_in_queue) >= 2:
+            # upper_inv는 전체 투자금에서 수학적 1지층(l1_qty) 투자금을 빼서 산출
             upper_inv = max(0.0, total_inv - (l1_price * l1_qty))
             upper_price = upper_inv / upper_qty if upper_qty > 0 else 0.0
             trigger_upper = round(upper_price * 1.010, 2)
@@ -244,8 +269,7 @@ class ReversionStrategy:
                 legacy_q = sum(int(self._safe_float(item.get("qty"))) for item in legacy_lots)
                 is_zero_start_session = (legacy_q == 0)
 
-        # 🚨 MODIFIED: [당일 지층 매수 앵커 최우선 락온] is_zero_start_session 플래그를 철저히 배제하고, 오직 팩트 물량(total_q)에 의존하여 타점을 연산.
-        # 당일 0주 새출발로 대규모 1차/2차 물량이 연속 체결되었음에도 1지층 평단가가 아닌 1.15배수(허공) 타점이 재생성되는 렌더링/논리 패러독스 완벽 소각.
+        # 🚨 [당일 지층 매수 앵커 최우선 락온] is_zero_start_session을 배제하고 오직 팩트 물량(total_q)에 기반한 매수 앵커 맵핑
         if total_q == 0:
             p1_trigger = round(prev_c * 1.15, 2)
             p2_trigger = round(prev_c * 0.999, 2)
@@ -254,15 +278,16 @@ class ReversionStrategy:
             p1_trigger = round(safe_anchor * 0.9976, 2)
             p2_trigger = round(safe_anchor * 0.9887, 2)
 
-        rem_qty_total = max(0, int(total_q) - int(self._safe_float((self.executed.get("SELL_QTY") or {}).get(ticker, 0))))
-        available_l1 = min(l1_qty, rem_qty_total) if rem_qty_total > 0 else 0
-        available_upper = min(upper_qty, rem_qty_total - available_l1) if rem_qty_total > 0 else 0
+        # 본진이 오늘 매도한 수량을 제외하고 순수 본진 물량 배분
+        rem_qty_total = max(0, int(pure_l1_qty + pure_upper_qty) - int(self._safe_float((self.executed.get("SELL_QTY") or {}).get(ticker, 0))))
+        available_l1 = min(pure_l1_qty, rem_qty_total) if rem_qty_total > 0 else 0
+        available_upper = min(pure_upper_qty, rem_qty_total - available_l1) if rem_qty_total > 0 else 0
         
         if rem_qty_total > 0:
             active_sells = []
             if available_l1 > 0 and trigger_l1 > 0:
                 active_sells.append(trigger_l1)
-            # 🚨 MODIFIED: [Float 정밀도 방어] 0.01 하드코딩으로 부동소수점 찌꺼기 완벽 필터링 (단일 지층 락온 사수)
+            # 🚨 [Float 정밀도 방어] 0.01 하드코딩으로 부동소수점 찌꺼기 완벽 필터링
             if available_upper > 0 and trigger_upper >= 0.01:
                 active_sells.append(trigger_upper)
                 
@@ -316,7 +341,7 @@ class ReversionStrategy:
             elif q2 == 0 and q1 > 0:
                 q1 = math.floor(rem_budget / p1_trigger) if p1_trigger > 0 else 0
             
-            # 🚨 MODIFIED: [V-REV 로컬 슬라이싱 엔진] KIS 서버 VWAP 10주 제약 파기 및 자체 슬라이싱 엔진에 100% 위임 (무조건 VWAP 태그 락온)
+            # 🚨 [V-REV 로컬 슬라이싱 엔진] 무조건 VWAP 태그 락온
             if q1 > 0:
                 ord_type = "VWAP"
                 desc_str = "VWAP매수(Buy1)"
@@ -330,13 +355,13 @@ class ReversionStrategy:
             sell_dict = {}
             if available_l1 > 0 and trigger_l1 > 0:
                 sell_dict[trigger_l1] = sell_dict.get(trigger_l1, 0) + available_l1
-            # 🚨 MODIFIED: [Float 정밀도 방어] 0.01 하드코딩으로 부동소수점 찌꺼기 완벽 필터링
+            # 🚨 [Float 정밀도 방어] 0.01 하드코딩으로 부동소수점 찌꺼기 완벽 필터링 (단일 지층 락온 사수)
             if available_upper > 0 and trigger_upper >= 0.01:
                 sell_dict[trigger_upper] = sell_dict.get(trigger_upper, 0) + available_upper
                 
             for price in sorted(sell_dict.keys()):
                 s_qty = sell_dict[price]
-                # 🚨 MODIFIED: [V-REV 로컬 슬라이싱 엔진] KIS 서버 VWAP 10주 제약 파기 및 전면 자체 VWAP 위임
+                # 🚨 [V-REV 로컬 슬라이싱 엔진] KIS 서버 VWAP 10주 제약 파기 및 전면 자체 VWAP 위임
                 ord_type = "VWAP"
                 
                 if price == trigger_l1 and price == trigger_upper:
