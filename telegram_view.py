@@ -87,8 +87,7 @@ class TelegramView:
         msg += f"🔹 {fact_hour}:00 : 🔐 매매 초기화 및 변동성 락온\n"
         msg += f"🔹 {fact_hour}:05 : 📸 V14장전 & V-REV스냅샷\n"
         msg += f"🔹 {matrix_time} : 🏛️ 옴니 매트릭스 시장 국면 판별\n"
-        msg += f"🔹 {trap_time} : 🌃 V-REV 로컬 1분 슬라이싱 가동\n"
-        msg += "       (자전거래 차단)\n"
+        msg += f"🔹 {trap_time} : 🌃 V-REV 1분 슬라이싱 가동\n"
         msg += f"🔹 {sync_time} : 📝 확정 정산 스캔 & 졸업 발급\n"
         msg += "🔹 6시간 간격 : 🔑 API 토큰 자동 갱신\n\n"
         
