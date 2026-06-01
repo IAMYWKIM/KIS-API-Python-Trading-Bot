@@ -12,6 +12,8 @@
 # 🚨 MODIFIED: [Insight 14, 25] API String-Float 및 NaN/Inf 맹독성 포맷팅 쉴드. `_safe_float` 코어 래핑 전면 결속 완료.
 # 🚨 MODIFIED: [Case 26 절대 헌법 준수] 텔레그램 HTML 파서 붕괴 방어를 위한 html.escape 쉴드 전역 강제 주입.
 # 🚨 MODIFIED: [Case 32 & 33 절대 규칙] TPS 캡핑(0.06s) 및 3단 지수 백오프, 타임아웃(10s) 샌드위치 락온.
+# 🚨 NEW: [타임라인 관통 추적] 프리장 최고가 및 매수/매도 덫 타점의 실제 관통(Pierce) 시각을 추적하여 UI 렌더링을 고도화.
+# 🚨 MODIFIED: [V86.00 시계열 UI 재배열] 관제탑 렌더링을 [전일종가 -> 프리장시가 -> 프리장고가 -> 매수타점 -> 매도타점] 시계열 흐름에 맞게 전면 팩트 재정렬 락온.
 # ==========================================================
 import logging
 import datetime
@@ -208,12 +210,24 @@ class AvwapConsolePlugin:
             except Exception as e:
                 curr_p, prev_c, df_1m = 0.0, 0.0, None
 
-            # 🚨 MODIFIED: [프리장 시가 추출] 당일 프리장 시가(04:00 Open) 정밀 렌더링 락온
+            # 🚨 MODIFIED: [프리장 시가 및 최고가 추출 락온]
+            # NEW: 당일 최고가를 달성한 시점 추출 및 기록
             pre_open = 0.0
+            pre_high = 0.0
+            pre_high_time = "미도달"
+
             if df_1m is not None and not df_1m.empty and 'time_est' in df_1m.columns:
                 df_pre = df_1m[(df_1m['time_est'] >= '040000') & (df_1m['time_est'] <= '092959')]
                 if not df_pre.empty:
                     pre_open = self._safe_float(df_pre['open'].iloc[0])
+                    pre_high = self._safe_float(df_pre['high'].max())
+                    try:
+                        # 최고가를 기록한 행 필터링
+                        h_row = df_pre[df_pre['high'].astype(float) >= pre_high]
+                        if not h_row.empty:
+                            raw_h_t = str(h_row['time_est'].iloc[0]).zfill(6)
+                            pre_high_time = f"{raw_h_t[:2]}:{raw_h_t[2:4]}"
+                    except Exception: pass
 
             avwap_qty = int(self._safe_float(tracking_cache.get(f"AVWAP_QTY_{t}")))
             avwap_avg = self._safe_float(tracking_cache.get(f"AVWAP_AVG_{t}"))
@@ -233,6 +247,29 @@ class AvwapConsolePlugin:
                 t_h = round(pre_open * 0.990, 2)
             if placed_target_th == 0.0 and pre_open > 0.0:
                 placed_target_th = round(pre_open * 0.995, 2)
+
+            # 🚨 NEW: [타점 관통 시각 추적 연산] 매수/매도 덫을 관통한 시각 스캔
+            pierce_buy_time = "미도달"
+            pierce_sell_time = "미도달"
+
+            if df_1m is not None and not df_1m.empty and 'time_est' in df_1m.columns:
+                df_pre = df_1m[(df_1m['time_est'] >= '040000') & (df_1m['time_est'] <= '092959')]
+                if not df_pre.empty and t_h > 0.0:
+                    try:
+                        # 매수 타점 관통(Low가 덫 가격 이하로 하락한 최초 시점)
+                        b_rows = df_pre[df_pre['low'].astype(float) <= t_h]
+                        if not b_rows.empty:
+                            raw_b_t = str(b_rows['time_est'].iloc[0]).zfill(6)
+                            pierce_buy_time = f"{raw_b_t[:2]}:{raw_b_t[2:4]}"
+
+                            # 매도 타점 관통 (반드시 매수 관통 시각 이후의 데이터만 잘라내어 판단)
+                            if placed_target_th > 0.0:
+                                df_after = df_pre[df_pre['time_est'] >= raw_b_t]
+                                s_rows = df_after[df_after['high'].astype(float) >= placed_target_th]
+                                if not s_rows.empty:
+                                    raw_s_t = str(s_rows['time_est'].iloc[0]).zfill(6)
+                                    pierce_sell_time = f"{raw_s_t[:2]}:{raw_s_t[2:4]}"
+                    except Exception: pass
             
             # 🚨 [UI Rendering 무결성 수술] 통신 타임아웃 대비 사전 캐시 상태 평가로 Fallback 락온
             if is_holiday:
@@ -323,12 +360,14 @@ class AvwapConsolePlugin:
             except Exception as e:
                 pass
 
-            # 🚨 [V86.00 뷰포트 상태 메시지 팩트 교정] 가변 오프셋 지표 소각 및 절대 앵커링 좌표 렌더링 락온, 프리장 스캘퍼 명칭 롤오버
+            # 🚨 MODIFIED: [V86.00 시계열 정렬 팩트 교정] 인지 부하 최소화를 위해 팩트 발생 시간순 렌더링 락온
             msg += f"🎯 <b>[ {ticker_clean} 프리장 스캘퍼 관제탑 - {active_str} ]</b>\n"
-            msg += f"▫️ 프리장 시가(04:00): <b>${pre_open:.2f}</b>\n"
             msg += f"▫️ 전일 종가(Prev): <b>${prev_c:.2f}</b>\n"
-            msg += f"▫️ 딥-매수 덫(-1.0%): <b>${t_h:.2f}</b>\n"
-            msg += f"▫️ 단독 구출가(-0.5%): <b>${placed_target_th:.2f}</b>\n\n"
+            msg += f"▫️ 프리장 시가(04:00): <b>${pre_open:.2f}</b>\n"
+            if pre_high > 0:
+                msg += f"▫️ 프리장 고가(High): <b>${pre_high:.2f}</b> (달성: {pre_high_time})\n"
+            msg += f"▫️ 딥-매수 덫(-1.0%): <b>${t_h:.2f}</b> (관통: {pierce_buy_time})\n"
+            msg += f"▫️ 단독 구출가(-0.5%): <b>${placed_target_th:.2f}</b> (관통: {pierce_sell_time})\n\n"
 
             msg += f"📊 <b>[ 실시간 잔고 스프레드 ]</b>\n"
             msg += f"▫️ 현재가격: <b>${curr_p:.2f}</b>\n"
