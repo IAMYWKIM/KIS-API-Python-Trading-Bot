@@ -1,12 +1,7 @@
 # ==========================================================
 # FILE: callback_config_handler.py
 # ==========================================================
-# 🚨 MODIFIED: [환경설정/뷰어 도메인] 장부 초기화, 버전 스위칭, 이미지 생성 등 뷰/환경설정 로직 분리
-# 🚨 MODIFIED: [Case 08, 16] os.path.exists 동기스캔 배제, EAFP 적용 및 temp_path 원자적 쓰기 스코프 전진 배치 유지
-# 🚨 MODIFIED: [Insight 14, 26] Float 정밀도 보호(_safe_float) 및 html.escape HTML 파서 붕괴 방어막 강화
-# 🚨 MODIFIED: [AttributeError 궁극 수술] SET_VER(모드 전환) 시 증발한 _get_max_holdings_qty 의존성을 해체하고 인라인 3중 검증망 락온
-# 🚨 MODIFIED: [Float 붕괴 궁극 소각] 클래스 내부에 _safe_float 래퍼를 전면 이식하여 NaN, Inf, String-Comma로 인한 런타임 즉사 원천 차단
-# ==========================================================
+# 🚨 MODIFIED: [Reset 0주 오인 패러독스 소각] 리셋(장부 소각) 후 새로운 스냅샷을 박제할 때, qty=0 을 강제 주입하던 치명적 하드코딩 버그를 소각하고 KIS 실잔고(kis_qty)와 평단가(kis_avg)를 정밀 추출하여 팩트 주입 락온 완료.
 import logging
 import datetime
 import math
@@ -29,7 +24,6 @@ class CallbackConfigHandler:
         self.view = view
         self.tx_lock = tx_lock
 
-    # 🚨 MODIFIED: [Insight 14] String-Float 콤마 및 NaN/Inf 맹독성 런타임 붕괴 방어용 절대 쉴드 락온
     def _safe_float(self, val):
         try:
             f_val = float(str(val or 0.0).replace(',', ''))
@@ -90,8 +84,28 @@ class CallbackConfigHandler:
                 except Exception: pass
             elif sub == "LOCK": 
                 if ticker:
+                    def _hijack_vwap_lock():
+                        slice_file = f"data/vrev_slice_state_{ticker}.json"
+                        try:
+                            if os.path.exists(slice_file):
+                                with open(slice_file, 'r', encoding='utf-8') as f:
+                                    s_state = json.load(f)
+                                s_state['hijacked'] = True
+                                s_state['orders'] = []
+                                with open(slice_file, 'w', encoding='utf-8') as f:
+                                    json.dump(s_state, f, ensure_ascii=False, indent=4)
+                        except Exception: pass
+                        try:
+                            est_now = datetime.datetime.now(ZoneInfo('America/New_York'))
+                            today_str = est_now.strftime("%Y-%m-%d")
+                            snap_file = f"data/daily_snapshot_REV_{today_str}_{ticker}.json"
+                            if os.path.exists(snap_file):
+                                os.remove(snap_file)
+                        except Exception: pass
+                        
+                    await asyncio.to_thread(_hijack_vwap_lock)
                     await asyncio.to_thread(self.cfg.reset_lock_for_ticker, ticker)
-                    try: await query.edit_message_text(f"✅ <b>[{html.escape(str(ticker))}] 금일 매매 잠금이 해제되었습니다.</b>", parse_mode='HTML')
+                    try: await query.edit_message_text(f"✅ <b>[{html.escape(str(ticker))}] 금일 매매 잠금이 해제되었으며, 오염된 슬라이싱 엔진도 무효화되었습니다.</b>", parse_mode='HTML')
                     except Exception: pass
             elif sub == "REV":
                 if ticker:
@@ -152,6 +166,8 @@ class CallbackConfigHandler:
                 
                 if prev_c > 0:
                     try:
+                        kis_qty = 0
+                        kis_avg = 0.0
                         async with self.tx_lock:
                             cash_val = 0.0
                             for attempt in range(3):
@@ -159,12 +175,19 @@ class CallbackConfigHandler:
                                     await asyncio.sleep(0.06)
                                     cash_tuple = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=10.0)
                                     cash_val = cash_tuple[0] if isinstance(cash_tuple, (list, tuple)) and len(cash_tuple) > 0 else 0.0
+                                    holdings = cash_tuple[1] if isinstance(cash_tuple, (list, tuple)) and len(cash_tuple) > 1 else {}
                                     break
                                 except Exception:
-                                    if attempt == 2: cash_val = 0.0
+                                    if attempt == 2: holdings = {}
                                     else: await asyncio.sleep(1.0 * (2 ** attempt))
                                     
                             cash = self._safe_float(cash_val)
+                            
+                            # 🚨 MODIFIED: [0주 오인 패러독스 수술] 장부 소각 후 KIS 실잔고 팩트 무조건 추출 및 주입
+                            if isinstance(holdings, dict) and ticker in holdings:
+                                kis_qty = int(self._safe_float(holdings[ticker].get('qty', 0)))
+                                kis_avg = self._safe_float(holdings[ticker].get('avg', 0.0))
+                            
                             from scheduler_core import get_budget_allocation
                             active_tickers_list = await asyncio.to_thread(self.cfg.get_active_tickers) or []
                             _, alloc_cash_dict = await asyncio.to_thread(get_budget_allocation, cash, active_tickers_list, self.cfg)
@@ -173,7 +196,7 @@ class CallbackConfigHandler:
                             
                             await asyncio.to_thread(
                                 self.strategy.get_plan, 
-                                ticker, 0.0, 0.0, 0, prev_c, 
+                                ticker, 0.0, kis_avg, kis_qty, prev_c, # 🚨 [팩트 주입] 0, 0.0 데드코드 소각 및 KIS 실잔고 주입
                                 ma_5day=0.0, market_type="REG", available_cash=available_cash, 
                                 is_simulation=True, is_snapshot_mode=True
                             )
@@ -181,7 +204,7 @@ class CallbackConfigHandler:
                         logging.error(f"🚨 0주 강제 스냅샷 오버라이드 에러: {e}")
 
                 try:
-                    await query.edit_message_text(f"✅ <b>[{html.escape(str(ticker))}] 삼위일체 소각(Nuke) 및 초기화 완료!</b>\n▫️ 본장부, 백업장부, 큐(Queue) 찌꺼기 데이터가 100% 영구 삭제되었습니다.\n▫️ KIS 실잔고 0주 동기화, 매매 잠금 해제 및 0주 새출발 디커플링 타점 스냅샷 원자적 덮어쓰기가 완벽히 집행되었습니다.", parse_mode='HTML')
+                    await query.edit_message_text(f"✅ <b>[{html.escape(str(ticker))}] 삼위일체 소각(Nuke) 및 초기화 완료!</b>\n▫️ 본장부, 백업장부, 큐(Queue) 찌꺼기 데이터가 100% 영구 삭제되었습니다.\n▫️ KIS 실잔고 동기화, 매매 잠금 해제 및 디커플링 타점 스냅샷 원자적 덮어쓰기가 완벽히 집행되었습니다.", parse_mode='HTML')
                 except Exception: pass
        
             elif sub == "CANCEL":
@@ -333,8 +356,6 @@ class CallbackConfigHandler:
             except Exception:
                 kis_qty = 0
             
-            # 🚨 MODIFIED: [AttributeError 궁극 수술] TelegramCallbacks에서 증발한 _get_max_holdings_qty 의존성을 전면 해체하고,
-            # 현재 파일 내에서 KIS 잔고, V14 장부, V-REV 큐 장부를 직접 비동기 락온하여 max_qty를 연산하도록 무결점 수술 완료
             max_qty = kis_qty
             
             try:

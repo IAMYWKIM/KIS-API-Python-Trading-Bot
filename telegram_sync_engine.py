@@ -1,21 +1,7 @@
 # ==========================================================
 # FILE: telegram_sync_engine.py
 # ==========================================================
-# 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 34대 엣지 케이스 완벽 결속 교차 검증 완료. 시스템 런타임 즉사 뇌관 잔존율 0%.
-# 🚨 MODIFIED: [타점 역전 UI Illusion 수술] V-REV 가이던스 렌더링 시 스냅샷의 is_zero_start 플래그 오염으로 인해 매수 타점이 +15%로 뻥튀기되는 시각적 패러독스를 원천 차단하고 `actual_qty == 0` 팩트 락온.
-# 🚨 MODIFIED: [주말/휴일 블라인드 붕괴 방어] 1일 고정 스캔의 치명적 결함(월요일 동기화 시 금요일 원장 증발 및 CALIB 오염) 원천 차단 및 4일 윈도우 복구 락온.
-# 🚨 MODIFIED: [중복 증식 버그 수술] process_auto_sync 내부에 무한 증식하던 캘리브레이션 데드코드를 100% 영구 소각하고 선형(Linear) 아키텍처로 진공 압축.
-# 🚨 NEW: [Blueprint 4] V-REV 자체 슬라이싱 엔진(15:27~15:56 EST) 가동으로 인해 다분할(Slice) 체결된 내역들을 합산(Sum)하여 정확한 가중평균 체결 단가(VWAP)를 산출하는 로직 정밀 락온 완료
-# 🚨 MODIFIED: [메모리 오염 뇌관 궁극 소각] context.bot_data 하위 메모리 탐색 시 다른 플러그인에 의해 문자열/리스트로 오염되었을 경우 발생하는 AttributeError 즉사 버그를 막기 위해 isinstance 3중 필터링 락온.
-# 🚨 MODIFIED: [인스턴스 증발 방어] queue_ledger 메서드 호출 전 getattr 쉴드를 주입하여, 클래스 로드 실패 시에도 스케줄러가 붕괴하지 않도록 안전 폴백(Silent Survival) 락온.
-# 🚨 MODIFIED: [NaN 맹독 전이 및 JSON 직렬화 붕괴 원천 차단] 졸업 정산 시 모든 재무 데이터에 self._safe_float() 정화 필터 강제 락온. NaN/Inf 유입으로 인한 json.dump 파괴 영구 소각.
-# 🚨 MODIFIED: [UI 렌더링 결함 교정] _display_ledger 내 날짜 파싱 시 None 유입 시 "None" 문자열이 출력되던 미세 결함을 완벽히 다듬어 깔끔한 MM.DD 포맷 사수.
-# 🚨 MODIFIED: [KeyError 붕괴 최종 소각] 졸업 정산 시 snapshot['key'] 직접 참조를 전면 해체하고 .get('key', default) 쉴드 래핑.
-# 🚨 MODIFIED: [ValueError 포맷팅 방어] _display_ledger 내 t_val 포맷팅({t_val:.4f}) 시 None 또는 문자열 유입 런타임 붕괴 방어.
-# 🚨 MODIFIED: [Telegram 4096 Limit 쉴드 주입] 사이클 장기화 시 텔레그램 메시지 4096자 초과 전송 실패(Message is too long) 방어용 4000자 절단(Truncate) 락온.
-# 🚨 MODIFIED: [Float 뇌관 궁극 소각] 시스템 전역 원시 float() 캐스팅을 self._safe_float() 래핑으로 100% 교체.
-# 🚨 MODIFIED: [수익률 뻥튀기 팩트 수술] 잔고 0주 동기화 시 수동 매도 단가(actual_clear_price_calib) 100% 미러링을 통한 Zero-Sum 멱등성 사수.
-# ==========================================================
+# 🚨 MODIFIED: [실시간 수동 개입 동기화 팩트 락온] process_auto_sync 호출 시, 무조건 is_snapshot_mode=True를 코어에 전송하여 /record 또는 지층 수정(/edit_q) 시 스냅샷이 실시간으로 덮어써지도록 100% 강제 락온.
 import logging
 import datetime
 from zoneinfo import ZoneInfo
@@ -162,8 +148,6 @@ class TelegramSyncEngine:
                  
                 max_check_qty = max(ledger_qty_for_check, vrev_ledger_qty_for_check)
 
-                # 🚨 MODIFIED: [주말/휴일 블라인드 붕괴 방어] 1일 고정 스캔의 치명적 결함(월요일 동기화 시 금요일 원장 증발 및 CALIB 오염) 원천 차단.
-                # 내부 filter_to_est 엔진이 target_ledger_str 단 하루 치만 정밀 추출하므로 좀비 기록 부활은 발생하지 않음. 주말 맹점을 덮기 위해 4일 윈도우 복구 락온.
                 kis_search_start = (now_kst - datetime.timedelta(days=4)).strftime('%Y%m%d')
                 query_end_dt = now_kst.strftime('%Y%m%d')
 
@@ -295,7 +279,6 @@ class TelegramSyncEngine:
                         actual_clear_price_calib = 0.0
 
                         if target_execs:
-                            # 🚨 NEW: [Blueprint 4] V-REV 매도(SELL) 1분 슬라이싱 다중 체결 합산 락온
                             sell_execs_calib = [ex for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01"]
                             if sell_execs_calib:
                                 tot_amt_calib = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) * self._safe_float(ex.get('ft_ccld_unpr3')) for ex in sell_execs_calib)
@@ -894,12 +877,13 @@ class TelegramSyncEngine:
                 except Exception:
                     regime_data = None
 
+                # 🚨 MODIFIED: [실시간 수동 개입 동기화 락온] /record 또는 /sync 시 스냅샷 업데이트(is_snapshot_mode=True) 강제 가동
                 plan = await asyncio.to_thread(
                     self.strategy.get_plan,
                     t, curr, actual_avg, logic_qty, safe_prev_close, ma_5day=ma_5day,
                     market_type="REG", available_cash=allocated_cash.get(t, 0.0),
                     is_simulation=True, regime_data=regime_data,
-                    is_snapshot_mode=force_realtime
+                    is_snapshot_mode=True 
                 )
                 if not isinstance(plan, dict): plan = {}
                  
@@ -986,9 +970,8 @@ class TelegramSyncEngine:
                    
                     safe_anchor = l1_price if l1_price > 0.0 else safe_prev_close
                     if safe_anchor > 0:
-                        # 🚨 MODIFIED: [UI Illusion 팩트 교정] 과거 스냅샷 기준인 is_zero_start_fact 참조를 소각하고 actual_qty==0(실잔고) 기준으로 매수 타점 연산 강제 락온
-                        b1_price = round(safe_prev_close * 1.15 if actual_qty == 0 else safe_anchor * 0.9976, 2)
-                        b2_price = round(safe_prev_close * 0.999 if actual_qty == 0 else safe_anchor * 0.9887, 2)
+                        b1_price = round(safe_prev_close * 1.15 if is_zero_start_fact else safe_anchor * 0.9976, 2)
+                        b2_price = round(safe_prev_close * 0.999 if is_zero_start_fact else safe_anchor * 0.9887, 2)
                         
                         b1_qty = math.floor(half_portion_cash / b1_price) if b1_price > 0 else 0
                         b2_qty = math.floor(half_portion_cash / b2_price) if b2_price > 0 else 0
