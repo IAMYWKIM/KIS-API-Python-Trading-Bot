@@ -2,6 +2,8 @@
 # FILE: telegram_avwap_console.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 3중 딥다이브 교차 검증(Async I/O 족쇄, State Mismatch 방어, Float 정밀도 사수) 통과 완료.
+# 🚨 MODIFIED: [딥-레스큐 V86.50 LP 무한공급 맹목적 신뢰(Blind Fire) 락온]
+# 🚨 MODIFIED: [Phantom Pierce 방어 뷰포트 롤오버] 실체결 무결성 검증 격발(VERIFY_TRAP_FILL) 텍스트를 영구 소각하고, 'LP 무한공급 신뢰: 단독 구출가 맹목적(Blind) 장전'으로 팩트 교정 완료.
 # 🚨 MODIFIED: [Bad Print 맹독성 방어] 04:00 YF 잔여 노이즈 데이터 차단을 위해 UI 관제탑 시뮬레이션(가상 타점) 및 시가 추출 진입 게이트를 04:01 EST로 1분 지연 락온.
 # 🚨 MODIFIED: [V86.00 텍스트 팩트 롤오버] '딥-레스큐' 및 '암살자' 레거시 명칭 영구 소각. '새벽 수금원' 및 '프리장 스캘퍼' 퀀트 네이밍으로 100% 팩트 교정 완료.
 # 🚨 MODIFIED: [프리장 스캘퍼 전면 리빌딩] 기존 정규장 기반의 "실시간 딥-레스큐" 텍스트를 "프리장 스캘핑 모드"로 전면 교체.
@@ -162,7 +164,7 @@ class AvwapConsolePlugin:
         available_cash = self._safe_float(cash_val)
         
         # 🚨 MODIFIED: [V86.00 헤더 팩트 롤오버] 새벽 수금원 텍스트 교정
-        msg = f"🔫 <b>[ 새벽 수금원(스캘퍼) V86.00 관제탑 ]</b>\n{header_status}\n\n"
+        msg = f"🔫 <b>[ 새벽 수금원(스캘퍼) V86.50 관제탑 ]</b>\n{header_status}\n\n"
         keyboard = []
 
         async def _get_with_retry(func, *args):
@@ -363,8 +365,9 @@ class AvwapConsolePlugin:
                     else:
                         if action == "PLACE_TRAP":
                             status_txt = f"⚡ 시가 확정 ➡️ [지정가 매수 덫 장전 집행]"
-                        elif action == "VERIFY_TRAP_FILL":
-                            status_txt = f"🔥 덫 하향 관통 ➡️ [실체결 무결성 검증 격발]"
+                        # 🚨 MODIFIED: [BLIND_SELL_FIRE 렌더링] 맹목적 매도 텍스트 팩트 오버라이드
+                        elif action == "BLIND_SELL_FIRE":
+                            status_txt = f"🔥 덫 하향 관통 ➡️ [LP 무한공급 신뢰: 단독 구출가 맹목적(Blind) 장전]"
                         elif action == "TRAP_WAIT":
                             status_txt = f"⏳ 지정가 덫 장전 완료 ➡️ [지정가 매수 체결 대기]"
                         elif action == 'SHUTDOWN':

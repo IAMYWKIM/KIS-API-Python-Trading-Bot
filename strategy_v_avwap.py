@@ -1,7 +1,8 @@
 # ==========================================================
 # FILE: strategy_v_avwap.py
 # ==========================================================
-# 🚨 MODIFIED: [딥-레스큐 V85.00 프리장 스캘퍼 완전 개조]
+# 🚨 MODIFIED: [딥-레스큐 V86.50 LP 무한공급 맹목적 신뢰(Blind Fire) 락온]
+# 🚨 MODIFIED: [Phantom Pierce 방어 전면 수술] 타점 관통 시 기존 VERIFY_TRAP_FILL(실체결 검증)을 영구 소각하고, BLIND_SELL_FIRE 시그널로 교체하여 KIS 원장 딜레이를 무시하고 즉각 매도 덫을 깔도록 아키텍처 개조.
 # 🚨 MODIFIED: [Bad Print 맹독성 방어] 04:00 개장 직후 YF 시장 조성자 잔여 노이즈 데이터 유입을 막기 위해 엔진 진입 게이트를 04:01 EST로 1분 지연 락온.
 # 🚨 MODIFIED: [타임라인 팩트 롤오버] 정규장 스캔을 전면 소각하고 04:01~09:29 EST 프리장(Pre-market) 시간대 전용 작동 락온. 09:30 도달 시 미체결 덫 강제 파기(SHUTDOWN).
 # 🚨 MODIFIED: [진입 게이트 순수성] 갭하락 필터 완벽 폐기. 본진 평단가 및 전일 종가 비교 로직을 100% 영구 소각. 매일 프리장 1분 캔들 확정 시 무조건 100% 개방(무제한 타격 모드).
@@ -27,7 +28,7 @@ import tempfile
 
 class VAvwapHybridPlugin:
     def __init__(self):
-        self.plugin_name = "DEEP_RESCUE_V85.00_PREMARKET_SCALPER"
+        self.plugin_name = "DEEP_RESCUE_V86.50_PREMARKET_SCALPER"
 
     # 🚨 [Case 05, Insight 14] NaN, Infinity 및 String-Comma 맹독성 데이터 정밀 필터링 락온
     def _safe_float(self, value):
@@ -356,8 +357,9 @@ class VAvwapHybridPlugin:
                 if is_time_shield_active:
                     logging.info(f"🛡️ [Case 31 시차 패러독스 방어] 장전시각({trap_placed_time}) 직후 캔들({curr_candle_time_str}) 노이즈 관통 바이패스.")
                     return _build_res('TRAP_WAIT', f'주문전송_지연방어(1분패러독스)_지정가덫({t_h:.2f})_시장대기중', target_price=t_h)
-                # 🚨 MODIFIED: 체결 검증 통과 시 암살자 단독 탈출가(프리장 시가 -0.5%) 스케줄러 인계
-                return _build_res('VERIFY_TRAP_FILL', '지정가덫_하향관통_실체결검증_및_단독구출덫_투하요청', target_price=target_sell)
+                
+                # 🚨 MODIFIED: [V86.50 맹목적 구출 덫 전개] LP 무한공급 신뢰로 실체결 검증(VERIFY_TRAP_FILL) 생략 및 즉각 매도(BLIND_SELL_FIRE) 지시
+                return _build_res('BLIND_SELL_FIRE', 'LP무한공급_신뢰:지정가덫_하향관통_맹목적구출덫_투하요청', target_price=target_sell)
             else:
                 reason_msg = f'선제지정가덫({t_h:.2f})_시장대기중'
                 if is_time_shield_active:
