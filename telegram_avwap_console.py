@@ -2,7 +2,8 @@
 # FILE: telegram_avwap_console.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 3중 딥다이브 교차 검증(Async I/O 족쇄, State Mismatch 방어, Float 정밀도 사수) 통과 완료.
-# 🚨 MODIFIED: [딥-레스큐 V85.00 프리장 스캘퍼 전면 리빌딩] 기존 정규장 기반의 "실시간 딥-레스큐" 텍스트를 "프리장 스캘핑 모드"로 전면 교체.
+# 🚨 MODIFIED: [V86.00 텍스트 팩트 롤오버] '딥-레스큐' 및 '암살자' 레거시 명칭 영구 소각. '새벽 수금원' 및 '프리장 스캘퍼' 퀀트 네이밍으로 100% 팩트 교정 완료.
+# 🚨 MODIFIED: [프리장 스캘퍼 전면 리빌딩] 기존 정규장 기반의 "실시간 딥-레스큐" 텍스트를 "프리장 스캘핑 모드"로 전면 교체.
 # 🚨 MODIFIED: [텍스트 팩트 롤오버] 갭 하락 게이트웨이가 소각됨에 따라 '순수 갭 하락 스캔 중', '갭 하락 조건 충족' 등의 텍스트를 전면 소각하고 '무제한 딥-매수 타격 스캔 중', '시가 확정' 포맷으로 100% 교정 락온.
 # 🚨 MODIFIED: [뷰포트 팩트 교정] 당일 시가(Open) 및 Amp5 오프셋 기반의 타점 렌더링을 100% 소각. 오직 04:00 기준 "프리장 시가(Pre_Open)"를 추출하여 "-1.0% 딥-매수", "-0.5% 단독구출가" 절대 앵커링 좌표만 정밀 렌더링.
 # 🚨 MODIFIED: [진입 게이트 동기화] 본진 평단가(main_actual_avg) 비교 로직 UI 소각. 전일 종가 비교 역시 소각.
@@ -53,7 +54,7 @@ class AvwapConsolePlugin:
         
         time_0400 = datetime.time(4, 0)
         time_0930 = datetime.time(9, 30)
-     
+        
         def _fetch_schedule():
             time.sleep(0.06) 
             nyse = mcal.get_calendar('NYSE')
@@ -100,7 +101,7 @@ class AvwapConsolePlugin:
             else:
                 status_code = "CLOSE"
 
-        # 🚨 MODIFIED: [V85.00 헤더 팩트 롤오버] 프리장 스캘핑 모드로 텍스트 정밀 교정 (무제한 타격)
+        # 🚨 MODIFIED: [V86.00 헤더 팩트 롤오버] 새벽 수금원(스캘퍼) 모드로 텍스트 정밀 교정 (무제한 타격)
         if status_code == "HOLIDAY":
             header_status = "💤 <b>[ 미국 증시 휴장일 / 관망 모드 ]</b>"
         elif status_code in ["AFTER", "CLOSE"]:
@@ -120,7 +121,7 @@ class AvwapConsolePlugin:
         avwap_tickers = [t for t in active_tickers if t == "SOXL"]
        
         if not avwap_tickers:
-            return "⚠️ <b>[프리장 스캘퍼 오프라인]</b>\n▫️ 딥-레스큐 지원 종목이 없습니다.", None
+            return "⚠️ <b>[프리장 스캘퍼 오프라인]</b>\n▫️ 스캘퍼 지원 종목이 없습니다.", None
            
         active_avwap = avwap_tickers
         
@@ -147,7 +148,8 @@ class AvwapConsolePlugin:
         
         available_cash = self._safe_float(cash_val)
         
-        msg = f"🔫 <b>[ 딥-레스큐 V85.00 관제탑 ]</b>\n{header_status}\n\n"
+        # 🚨 MODIFIED: [V86.00 헤더 팩트 롤오버] 새벽 수금원 텍스트 교정
+        msg = f"🔫 <b>[ 새벽 수금원(스캘퍼) V86.00 관제탑 ]</b>\n{header_status}\n\n"
         keyboard = []
 
         async def _get_with_retry(func, *args):
@@ -241,7 +243,7 @@ class AvwapConsolePlugin:
                 status_txt = "🎯 0.5% 단독 구출 덫 가동 중 (Fire & Forget)"
             elif limit_order_placed and t_h > 0:
                 # 🚨 MODIFIED: [텍스트 팩트 롤오버] 갭 하락 조건 텍스트 소각
-                status_txt = f"⚡ 시가 확정 ➡️ [프리장 -1.0% 지정가 매수 덫 장전 집행: ${t_h:.2f}]"
+                status_txt = f"⚡ 시가 확정 ➡️ [지정가 매수 덫 장전 중: ${t_h:.2f}]"
             else:
                 status_txt = "⚡ 프리장 시가(Pre_Open) 확정 대기 중"
             
@@ -321,7 +323,7 @@ class AvwapConsolePlugin:
             except Exception as e:
                 pass
 
-            # 🚨 [V85.00 뷰포트 상태 메시지 팩트 교정] 가변 오프셋 지표 소각 및 절대 앵커링 좌표 렌더링 락온
+            # 🚨 [V86.00 뷰포트 상태 메시지 팩트 교정] 가변 오프셋 지표 소각 및 절대 앵커링 좌표 렌더링 락온, 프리장 스캘퍼 명칭 롤오버
             msg += f"🎯 <b>[ {ticker_clean} 프리장 스캘퍼 관제탑 - {active_str} ]</b>\n"
             msg += f"▫️ 프리장 시가(04:00): <b>${pre_open:.2f}</b>\n"
             msg += f"▫️ 전일 종가(Prev): <b>${prev_c:.2f}</b>\n"
@@ -345,7 +347,8 @@ class AvwapConsolePlugin:
                 keyboard.append([InlineKeyboardButton(f"💤 [{ticker_clean}] 증시 휴장일", callback_data="AVWAP_SET:REFRESH:NONE")])
             elif status_code in ["PRE", "REG"]:
                 if avwap_qty > 0:
-                    keyboard.append([InlineKeyboardButton(f"🧯 {ticker_clean} 암살자 수동 청산 (0주 락온)", callback_data=f"AVWAP_SET:SYNC_ZERO:{t}")])
+                    # 🚨 MODIFIED: [V86.00 텍스트 롤오버] 스캘퍼 수동 청산 명칭 변경
+                    keyboard.append([InlineKeyboardButton(f"🧯 {ticker_clean} 스캘퍼 수동 청산 (0주 락온)", callback_data=f"AVWAP_SET:SYNC_ZERO:{t}")])
             else:
                 keyboard.append([InlineKeyboardButton(f"⛔ [{ticker_clean}] 장마감 (수동 제어 불가)", callback_data="AVWAP_SET:REFRESH:NONE")])
 

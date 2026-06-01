@@ -2,6 +2,7 @@
 # FILE: callback_avwap_handler.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 3중 딥다이브 교차 검증(Async I/O 족쇄, State Mismatch 방어, Float 정밀도 사수) 통과 완료.
+# 🚨 MODIFIED: [V86.00 텍스트 팩트 롤오버 궁극 수술] 하위 알림 메시지에 잔존하던 '딥-레스큐 암살자' 및 '암살자 물량' 레거시 명칭을 100% 영구 소각하고 '새벽 수금원(스캘퍼)' 퀀트 네이밍으로 팩트 교정 완료.
 # 🚨 MODIFIED: [딥-레스큐 V84.00 전면 리빌딩] 100% 자율주행 아키텍처 도입에 따른 데드코드 영구 소각.
 # 🚨 MODIFIED: [수동 제어망 완전 소각] MANUAL_FIRE_REQ, MANUAL_FIRE_EXEC, MANUAL_CANCEL_REQ 등 팻핑거 개입을 유발하는 모든 라우팅과 연계 로직을 100% 진공 압축(제거).
 # 🚨 MODIFIED: [다중 출격 소각] AVWAP_SORTIE 라우팅 데드코드 영구 제거 (단일 구출 후 무조건 퇴근).
@@ -9,6 +10,7 @@
 # 🚨 MODIFIED: [Float 정밀도 붕괴 원천 차단] 클래스 전용 `_safe_float` 래퍼 메서드를 주입하여 파편화된 인라인 캐스팅을 통합하고 NaN/Inf 맹독성 붕괴 원천 차단.
 # 🚨 MODIFIED: [제1헌법 철저 준수] 로컬 파일 I/O(save_state, config 조작) 실행 시 `wait_for(..., timeout=5.0)` 족쇄를 완벽히 래핑하여 디스크 I/O 병목으로 인한 이벤트 루프 교착 원천 차단.
 # 🚨 MODIFIED: [Case 26 절대 헌법 준수] 텔레그램 타전망 내 동적 변수 전역에 `html.escape` 쉴드 강제 래핑 완료.
+# 🚨 MODIFIED: [Ghost Chat 붕괴 원천 봉쇄] update.effective_chat 결측치(None) 유입 시 발생하는 AttributeError 즉사 버그를 막기 위한 진입 게이트 단락 평가 쉴드 락온.
 # ==========================================================
 import logging
 import datetime
@@ -39,7 +41,15 @@ class CallbackAvwapHandler:
 
     async def handle(self, update: Update, context: ContextTypes.DEFAULT_TYPE, controller, action: str, sub: str, data: list):
         query = update.callback_query
-        chat_id = update.effective_chat.id
+        
+        # 🚨 MODIFIED: [Ghost Chat 붕괴 원천 봉쇄] 통신 노이즈로 텔레그램 객체가 파손되어 유입될 경우 즉사 버그 100% 방어
+        if not query:
+            return
+            
+        chat_id = update.effective_chat.id if update.effective_chat else 0
+        if chat_id == 0:
+            return
+            
         ticker = data[2] if len(data) > 2 else ""
 
         if action == "AVWAP":
@@ -160,7 +170,8 @@ class CallbackAvwapHandler:
                                 logging.error(f"🚨 수동 0주 포맷 로컬 파일 저장 에러 (RAM은 초기화됨): {e}")
                         
                         try:
-                            msg_success = f"🧯 <b>[{html.escape(str(ticker))}] 딥-레스큐 암살자 수동 청산 (0주 락온) 완료!</b>\n▫️ 암살자 물량이 0주로 강제 포맷되었으며, 금일 남은 시간 동안 영구 동결(SHUTDOWN)됩니다."
+                            # 🚨 MODIFIED: [V86.00 텍스트 롤오버] 하위 알림 메시지까지 100% 새벽 수금원(스캘퍼) 포맷으로 교체 완료
+                            msg_success = f"🧯 <b>[{html.escape(str(ticker))}] 새벽 수금원(스캘퍼) 수동 청산 (0주 락온) 완료!</b>\n▫️ 스캘퍼 물량이 0주로 강제 포맷되었으며, 금일 남은 시간 동안 영구 동결(SHUTDOWN)됩니다."
                             keyboard = [[InlineKeyboardButton("🔄 관제탑 복귀", callback_data="AVWAP_SET:REFRESH:NONE")]]
                             await query.edit_message_text(msg_success, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
                         except Exception: pass

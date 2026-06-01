@@ -2,6 +2,7 @@
 # FILE: telegram_view.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 34대 엣지 케이스 완벽 결속 교차 검증 완료
+# 🚨 MODIFIED: [V86.00 텍스트 팩트 롤오버] '딥-레스큐' 및 '암살자' 레거시 명칭 영구 소각. '새벽 수금원' 및 '프리장 스캘퍼' 퀀트 네이밍으로 100% 팩트 교정 완료.
 # 🚨 MODIFIED: [V85.00 딥-레스큐 UI 팩트 교정] 다중 출격(Sortie) 스위치 버튼 및 관련 텍스트 100% 영구 소각 (단일 구출 후 무조건 퇴근 락온)
 # 🚨 MODIFIED: [경고문 무제한 타격 롤오버] get_avwap_warning_menu 내의 '사후 하락장 확정 시' 문구를 '전일 종가 및 갭하락 조건 영구 소각, 매일 프리장 개장 시 무조건 100% 개방' 팩트로 전면 재작성
 # 🚨 MODIFIED: [UI 팩트 동기화 수술] 시스템이 로컬 자체 1분 슬라이싱 VWAP 엔진으로 이관됨에 따라, 통합지시서 및 환경설정 텍스트 팩트 일치화
@@ -149,7 +150,7 @@ class TelegramView:
         safe_t = html.escape(str(ticker))
         msg = f"🚨 <b>[{safe_t} 삼위일체 소각 최종 확인]</b>\n\n"
         msg += f"정말 <b>{safe_t}</b>의 모든 퀀트 장부 데이터를 영구 삭제하시겠습니까?\n"
-        msg += "이 작업은 되돌릴 수 없습니다!"
+        msg += "이 작업은 되돌릴 수 옵니다!"
         
         keyboard = [
             [InlineKeyboardButton("🔥 네, 즉시 영구 소각합니다", callback_data=f"RESET:CONFIRM:{ticker}")],
@@ -237,13 +238,13 @@ class TelegramView:
         ]
         return msg, InlineKeyboardMarkup(keyboard)
 
-    # 🚨 MODIFIED: [V85.00 딥-레스큐 무제한 타격 팩트 롤오버]
+    # 🚨 MODIFIED: [V86.00 텍스트 팩트 롤오버] 새벽 수금원(스캘퍼) 명칭으로 100% 진공 압축 교체
     def get_avwap_warning_menu(self, ticker):
         safe_t = html.escape(str(ticker))
-        msg = f"🛑 <b>[{safe_t}] 딥-레스큐 암살자 무장 해제 및 경고</b>\n\n"
-        msg += "현재 <b>AVWAP 딥-레스큐 모드</b> 가동을 지시하셨습니다.\n"
+        msg = f"🛑 <b>[{safe_t}] 새벽 수금원(스캘퍼) 무장 해제 및 경고</b>\n\n"
+        msg += "현재 <b>새벽 수금원(프리장 스캘핑) 모드</b> 가동을 지시하셨습니다.\n"
         msg += "이 전술은 전일 종가 및 본진 상태와 무관하게 매일 프리장 개장 시 잉여 현금 100%를 동원해 무조건 출격하는 무제한 타격 특수 용병 옵션입니다.\n\n"
-        msg += "⚠️ <b>[ 딥-레스큐 가동 제약 사항 (V85.00 락온) ]</b>\n"
+        msg += "⚠️ <b>[ 스캘퍼 가동 제약 사항 (V86.00 락온) ]</b>\n"
         msg += "1. 갭 하락 조건이 100% 영구 소각되었으며, 프리장 개장(04:00 EST) 시 무조건 지정가 덫(-1.0%)을 장전합니다.\n"
         msg += "2. 100% 완전 자율주행(Fire & Forget)으로 작동하며, 일체의 수동 개입이 차단됩니다.\n"
         msg += "3. LIFO 큐 장부 대통합은 영구 소각되었으며, 본진 지층을 100% 보존한 상태로 단독 구출가(-0.5%) 덫을 장전합니다.\n"
@@ -251,11 +252,12 @@ class TelegramView:
         msg += "포트폴리오 매니저의 최종 승인을 대기합니다."
         
         keyboard = [
-            [InlineKeyboardButton("🔥 리스크 확인. 딥-레스큐 락온(Lock-on) 승인", callback_data=f"MODE:AVWAP_ON:{ticker}")],
+            [InlineKeyboardButton("🔥 리스크 확인. 스캘퍼 락온(Lock-on) 승인", callback_data=f"MODE:AVWAP_ON:{ticker}")],
             [InlineKeyboardButton("❌ 작전 취소 (안전 모드 유지)", callback_data="RESET:CANCEL")]
         ]
         return msg, InlineKeyboardMarkup(keyboard)
 
+    # 🚨 MODIFIED: [V86.00 텍스트 팩트 롤오버] 현재 시스템 버전 명칭 교체
     def get_version_message(self, history_data, page_index=None):
         history_data = history_data or []
         ITEMS_PER_PAGE = 5
@@ -270,7 +272,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V85.00 딥-레스큐 무제한 타격 에디션</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V86.00 새벽 수금원(스캘퍼) 무제한 타격 에디션</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -514,6 +516,7 @@ class TelegramView:
 
         return final_msg, InlineKeyboardMarkup(keyboard) if keyboard else None
 
+    # 🚨 MODIFIED: [V86.00 텍스트 팩트 롤오버] 설정 및 복리 상태 메시지 내 명칭 전면 교체
     def get_settlement_message(self, active_tickers, config, atr_data, tracking_cache=None):
         msg = ""
         keyboard = []
@@ -556,7 +559,7 @@ class TelegramView:
                 if hasattr(config, 'get_avwap_hybrid_mode'):
                     is_avwap_on = config.get_avwap_hybrid_mode(t)
                     avwap_status_txt = "실전 가동 중 🔥" if is_avwap_on else "대기 중 ⚪"
-                    msg += f"▫️ 딥-레스큐: <b>{avwap_status_txt}</b>\n"
+                    msg += f"▫️ 프리장 스캘퍼: <b>{avwap_status_txt}</b>\n"
                     
                     # 🚨 MODIFIED: [V85.00 딥-레스큐 UI 다이어트] 다중 출격(Sortie) 텍스트 100% 소각
                     if is_avwap_on:
@@ -575,11 +578,11 @@ class TelegramView:
 
             if ver == "V_REV":
                 is_avwap = config.get_avwap_hybrid_mode(t) if hasattr(config, 'get_avwap_hybrid_mode') else False
-                keyboard.append([InlineKeyboardButton(f"⚔️ 딥-레스큐 암살자 [ {'가동중' if is_avwap else 'OFF'} ]", callback_data=f"MODE:AVWAP_{'OFF' if is_avwap else 'WARN'}:{t}")])
+                keyboard.append([InlineKeyboardButton(f"🔫 새벽 수금원(스캘퍼) [ {'가동중' if is_avwap else 'OFF'} ]", callback_data=f"MODE:AVWAP_{'OFF' if is_avwap else 'WARN'}:{t}")])
                 
                 # 🚨 MODIFIED: [V85.00 딥-레스큐 UI 다이어트] 다중 출격(Sortie) 스위칭 버튼 100% 영구 소각
 
-                if t == "SOXL": keyboard.append([InlineKeyboardButton(f"🔫 {safe_t} 딥-레스큐 관제탑", callback_data=f"AVWAP:MENU:{t}")])
+                if t == "SOXL": keyboard.append([InlineKeyboardButton(f"🔫 {safe_t} 스캘퍼 관제탑", callback_data=f"AVWAP:MENU:{t}")])
         
                 keyboard.append([InlineKeyboardButton(f"💸 {safe_t} 복리", callback_data=f"INPUT:COMPOUND:{t}"), InlineKeyboardButton(f"💳 {safe_t} 수수료", callback_data=f"INPUT:FEE:{t}")])
                 keyboard.append([InlineKeyboardButton(f"✂️ {safe_t} 액면보정", callback_data=f"INPUT:STOCK_SPLIT:{t}")])
