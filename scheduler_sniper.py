@@ -2,6 +2,7 @@
 # FILE: scheduler_sniper.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 34대 엣지 케이스 완벽 결속 교차 검증 완료
+# 🚨 MODIFIED: [Indentation 붕괴 수술] V14 상방 감시 스나이퍼 매수/매도 체결 검증 파이프라인의 들여쓰기 붕괴(IndentationError) 완벽 팩트 교정 완료.
 # 🚨 MODIFIED: [딥-레스큐 V85.00 프리장 스캘퍼 리빌딩] 암살자 올인 매수(PLACE_TRAP) 및 단독 구출(VERIFY_TRAP_FILL) 투트랙 팩트 락온
 # 🚨 MODIFIED: [절대 앵커링 단독 탈출] KIS 평단가(kis_avg) 기반 목표가 산출 로직 100% 영구 소각. Strategy 엔진에서 하달받은 '프리장 시가 - 0.5% (placed_target_th)' 고정 좌표로 100% 단독 구출 덫 락온.
 # 🚨 MODIFIED: [Queue Unification 소각] 암살자 체결 시 LIFO 큐 장부 1층 대통합을 100% 영구 소각하여 오리지널 본진 탈출 지층 절대 보존 락온.
@@ -617,38 +618,38 @@ async def scheduled_sniper_monitor(context):
                             if order_res and order_res.get('rt_cd') == '0' and odno:
                                 ccld_qty = 0
                                 for _ in range(4):
-                                     await asyncio.sleep(2.0)
-                                     try:
-                                         await asyncio.sleep(0.06) 
-                                         unfilled_check = await asyncio.wait_for(asyncio.to_thread(broker.get_unfilled_orders_detail, t), timeout=10.0)
-                                     except Exception: unfilled_check = []
-                                     safe_unfilled = unfilled_check if isinstance(unfilled_check, list) else []
+                                    await asyncio.sleep(2.0)
+                                    try:
+                                        await asyncio.sleep(0.06) 
+                                        unfilled_check = await asyncio.wait_for(asyncio.to_thread(broker.get_unfilled_orders_detail, t), timeout=10.0)
+                                    except Exception: unfilled_check = []
+                                    safe_unfilled = unfilled_check if isinstance(unfilled_check, list) else []
                     
-                                     my_order = next((ox for ox in safe_unfilled if isinstance(ox, dict) and str(ox.get('odno', '')) == odno), None)
-                                     if my_order:
-                                         ccld_qty = int(_safe_float(my_order.get('tot_ccld_qty')))
-                                         if ccld_qty >= qty: break
-                                     else:
-                                         # 🚨 [Phantom Fill 방어] 체결 원장 교차 검증
-                                         try:
-                                             await asyncio.sleep(0.06)
-                                             exec_hist = await asyncio.wait_for(asyncio.to_thread(broker.get_execution_history, t, today_est_str, today_est_str), timeout=10.0)
-                                             safe_exec = exec_hist if isinstance(exec_hist, list) else []
-                                             filled_rec = next((ex for ex in safe_exec if isinstance(ex, dict) and str(ex.get('odno', '')) == odno), None)
-                                             if filled_rec:
-                                                 ccld_qty = int(_safe_float(filled_rec.get('ft_ccld_qty')))
-                                             else:
-                                                 ccld_qty = 0
-                                         except Exception:
-                                             ccld_qty = 0
-                                         break
+                                    my_order = next((ox for ox in safe_unfilled if isinstance(ox, dict) and str(ox.get('odno', '')) == odno), None)
+                                    if my_order:
+                                        ccld_qty = int(_safe_float(my_order.get('tot_ccld_qty')))
+                                        if ccld_qty >= qty: break
+                                    else:
+                                        # 🚨 [Phantom Fill 방어] 체결 원장 교차 검증
+                                        try:
+                                            await asyncio.sleep(0.06)
+                                            exec_hist = await asyncio.wait_for(asyncio.to_thread(broker.get_execution_history, t, today_est_str, today_est_str), timeout=10.0)
+                                            safe_exec = exec_hist if isinstance(exec_hist, list) else []
+                                            filled_rec = next((ex for ex in safe_exec if isinstance(ex, dict) and str(ex.get('odno', '')) == odno), None)
+                                            if filled_rec:
+                                                ccld_qty = int(_safe_float(filled_rec.get('ft_ccld_qty')))
+                                            else:
+                                                ccld_qty = 0
+                                        except Exception:
+                                            ccld_qty = 0
+                                        break
 
-                                 if ccld_qty < qty:
-                                     try:
-                                         await asyncio.sleep(0.06) 
-                                         await asyncio.wait_for(asyncio.to_thread(broker.cancel_order, t, odno), timeout=10.0)
-                                         await asyncio.sleep(1.0)
-                                     except: pass
+                                if ccld_qty < qty:
+                                    try:
+                                        await asyncio.sleep(0.06) 
+                                        await asyncio.wait_for(asyncio.to_thread(broker.cancel_order, t, odno), timeout=10.0)
+                                        await asyncio.sleep(1.0)
+                                    except: pass
 
                                 if ccld_qty > 0:
                                     if hasattr(cfg, 'set_sniper_buy_locked'):
