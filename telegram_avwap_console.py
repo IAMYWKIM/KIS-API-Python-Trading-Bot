@@ -2,14 +2,14 @@
 # FILE: telegram_avwap_console.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 3중 딥다이브 교차 검증(Async I/O 족쇄, State Mismatch 방어, Float 정밀도 사수) 통과 완료.
-# 🚨 MODIFIED: [딥-레스큐 V84.00 전면 리빌딩] 100% 자율주행 헌법에 따라 팻핑거 개입을 유발하는 "수동 요격", "수동 취소" 버튼, 그리고 다중 출격(Sortie) 스위치를 시스템에서 100% 영구 소각.
-# 🚨 MODIFIED: [뷰포트 팩트 교정 및 다이어트] 프리장 앵커링(PM_H, PM_L, T_L) 고스트 참조 레거시를 완벽히 소각하고, 당일 시가(Open) 및 45% 고정 오프셋 기반의 딥-매수 타점(T_H)만을 정밀 렌더링.
+# 🚨 MODIFIED: [딥-레스큐 V85.00 프리장 스캘퍼 전면 리빌딩] 기존 정규장 기반의 "실시간 딥-레스큐" 텍스트를 "프리장 스캘핑 모드"로 전면 교체.
+# 🚨 MODIFIED: [뷰포트 팩트 교정] 당일 시가(Open) 및 Amp5 오프셋 기반의 타점 렌더링을 100% 소각. 오직 04:00 기준 "프리장 시가(Pre_Open)"를 추출하여 "-1.0% 딥-매수", "-0.5% 단독구출가" 절대 앵커링 좌표만 정밀 렌더링.
+# 🚨 MODIFIED: [진입 게이트 동기화] 본진 평단가(main_actual_avg) 비교 로직 UI 소각. 오직 "전일 종가 > 프리장 시가" (순수 갭 하락) 여부만 직관적으로 표출.
 # 🚨 MODIFIED: [Fire & Forget 락온] 타임스탑 청산 대기 메시지를 폐기하고, "🎯 0.5% 단독 구출 덫 가동 중 (Fire & Forget)" 상태 메시지 락온.
-# 🚨 MODIFIED: [사후 하락장 게이트 동기화] 본진 평단가(main_actual_avg)를 시뮬레이션 엔진에 주입하여 UI 상에서도 하락장 게이트 통과 여부가 정확히 렌더링되도록 팩트 배선 연결 완료.
-# 🚨 MODIFIED: [AttributeError 궁극 수술] 상위 모듈에서 `app_data`를 `None`으로 전달할 경우 발생하는 `setdefault` 런타임 붕괴(Silent Death)를 방어하기 위해 최상단 타입 강제화 쉴드 주입 완료.
+# 🚨 MODIFIED: [Type-Safety 궁극 수술] 상위 모듈에서 `app_data`가 None 또는 List로 오염 유입 시 발생하는 `setdefault` 런타임 붕괴를 방어하기 위해 isinstance 타입 쉴드 강제 주입.
 # 🚨 MODIFIED: [Insight 14, 25] API String-Float 및 NaN/Inf 맹독성 포맷팅 쉴드. `_safe_float` 코어 래핑 전면 결속 완료.
-# 🚨 MODIFIED: [Case 26 절대 헌법 준수] 텔레그램 HTML 파서 붕괴 방어를 위한 html.escape 쉴드 전역 강제 주입
-# 🚨 MODIFIED: [Case 32 & 33 절대 규칙] TPS 캡핑(0.06s) 및 3단 지수 백오프, 타임아웃(10s) 샌드위치 락온
+# 🚨 MODIFIED: [Case 26 절대 헌법 준수] 텔레그램 HTML 파서 붕괴 방어를 위한 html.escape 쉴드 전역 강제 주입.
+# 🚨 MODIFIED: [Case 32 & 33 절대 규칙] TPS 캡핑(0.06s) 및 3단 지수 백오프, 타임아웃(10s) 샌드위치 락온.
 # ==========================================================
 import logging
 import datetime
@@ -42,8 +42,8 @@ class AvwapConsolePlugin:
             return 0.0
 
     async def get_console_message(self, app_data):
-        # 🚨 [AttributeError 궁극 수술] app_data가 None일 경우 발생하는 setdefault 붕괴 원천 차단
-        if app_data is None:
+        # 🚨 [Type-Safety 궁극 수술] app_data가 None이거나 List/Tuple로 오염 유입 시 발생하는 setdefault 붕괴 원천 차단
+        if not isinstance(app_data, dict):
             app_data = {}
 
         est = ZoneInfo('America/New_York')
@@ -99,14 +99,15 @@ class AvwapConsolePlugin:
             else:
                 status_code = "CLOSE"
 
+        # 🚨 MODIFIED: [V85.00 헤더 팩트 롤오버] 프리장 스캘핑 모드로 텍스트 정밀 교정
         if status_code == "HOLIDAY":
             header_status = "💤 <b>[ 미국 증시 휴장일 / 관망 모드 ]</b>"
         elif status_code in ["AFTER", "CLOSE"]:
             header_status = "🌙 <b>[ 애프터마켓 / 감시 종료 ]</b>"
         elif status_code == "PRE":
-            header_status = "🌅 <b>[ 프리장 관망 모드 (정규장 시가 및 하락장 확정 대기) ]</b>"
+            header_status = "🌅 <b>[ 프리장 스캘핑 모드 (순수 갭 하락 스캔 중) ]</b>"
         else:
-            header_status = "🔥 <b>[ 정규장 실시간 딥-레스큐 모드 (V84.00 자율주행 락온) ]</b>"
+            header_status = "🔥 <b>[ 정규장 진입 (프리장 스캘퍼 퇴근 대기) ]</b>"
         
         # 🚨 [제1헌법] File I/O 코루틴 타임아웃 족쇄 래핑
         try:
@@ -118,7 +119,7 @@ class AvwapConsolePlugin:
         avwap_tickers = [t for t in active_tickers if t == "SOXL"]
        
         if not avwap_tickers:
-            return "⚠️ <b>[AVWAP 딥-레스큐 오프라인]</b>\n▫️ 딥-레스큐 지원 종목이 없습니다.", None
+            return "⚠️ <b>[프리장 스캘퍼 오프라인]</b>\n▫️ 딥-레스큐 지원 종목이 없습니다.", None
            
         active_avwap = avwap_tickers
         
@@ -145,7 +146,7 @@ class AvwapConsolePlugin:
         
         available_cash = self._safe_float(cash_val)
         
-        msg = f"🔫 <b>[ 딥-레스큐 V84.00 관제탑 ]</b>\n{header_status}\n\n"
+        msg = f"🔫 <b>[ 딥-레스큐 V85.00 관제탑 ]</b>\n{header_status}\n\n"
         keyboard = []
 
         async def _get_with_retry(func, *args):
@@ -194,28 +195,22 @@ class AvwapConsolePlugin:
                 res_batch = await asyncio.gather(
                     _get_with_retry(self.broker.get_current_price, t),
                     _get_with_retry(self.broker.get_previous_close, t),
-                    _get_with_retry(self.broker.get_amp_5d_data, t),
-                    _get_with_retry(self.broker.get_1min_candles_df, t),
-                    _get_with_retry(self.broker.get_5day_ma, t)
+                    _get_with_retry(self.broker.get_1min_candles_df, t)
                 )
            
                 curr_p = self._safe_float(res_batch[0])
                 prev_c = self._safe_float(res_batch[1])
-                amp5 = self._safe_float(res_batch[2])
-                df_1m = res_batch[3]
-                ma_5day = self._safe_float(res_batch[4]) if len(res_batch) > 4 else 0.0
+                df_1m = res_batch[2]
                
             except Exception as e:
-                curr_p, prev_c, amp5, df_1m, ma_5day = 0.0, 0.0, 0.0, None, 0.0
+                curr_p, prev_c, df_1m = 0.0, 0.0, None
 
-            # 🚨 MODIFIED: [시가 추출] 당일 정규장 시가(Open) 추출 및 오프셋 연산 락온
-            day_open = 0.0
+            # 🚨 MODIFIED: [프리장 시가 추출] 당일 프리장 시가(04:00 Open) 정밀 렌더링 락온
+            pre_open = 0.0
             if df_1m is not None and not df_1m.empty and 'time_est' in df_1m.columns:
-                df_reg = df_1m[(df_1m['time_est'] >= '093000') & (df_1m['time_est'] <= '155959')]
-                if not df_reg.empty:
-                    day_open = self._safe_float(df_reg['open'].iloc[0])
-
-            offset = day_open * amp5 * 0.45 if day_open > 0 else 0.0
+                df_pre = df_1m[(df_1m['time_est'] >= '040000') & (df_1m['time_est'] <= '092959')]
+                if not df_pre.empty:
+                    pre_open = self._safe_float(df_pre['open'].iloc[0])
 
             avwap_qty = int(self._safe_float(tracking_cache.get(f"AVWAP_QTY_{t}")))
             avwap_avg = self._safe_float(tracking_cache.get(f"AVWAP_AVG_{t}"))
@@ -230,6 +225,12 @@ class AvwapConsolePlugin:
             main_actual_avg = self._safe_float(h_t.get('avg', 0.0))
             actual_qty = int(self._safe_float(h_t.get('qty', 0)))
             
+            # 🚨 [절대 앵커링 뷰포트 오버라이드] 미장전 상태일지라도 시뮬레이션 값을 표출
+            if t_h == 0.0 and pre_open > 0.0:
+                t_h = round(pre_open * 0.990, 2)
+            if placed_target_th == 0.0 and pre_open > 0.0:
+                placed_target_th = round(pre_open * 0.995, 2)
+            
             # 🚨 [UI Rendering 무결성 수술] 통신 타임아웃 대비 사전 캐시 상태 평가로 Fallback 락온
             if is_holiday:
                 status_txt = f"💤 미국 증시 휴장일 (관측 오프라인)"
@@ -237,10 +238,10 @@ class AvwapConsolePlugin:
                 status_txt = "🛑 당일 영구동결 (SHUTDOWN 퇴근)"
             elif avwap_qty > 0:
                 status_txt = "🎯 0.5% 단독 구출 덫 가동 중 (Fire & Forget)"
-            elif limit_order_placed and placed_target_th > 0:
-                status_txt = f"⚡ 요격 조건 100% 충족 ➡️ [지정가 매수 덫 장전 집행: ${placed_target_th:.2f}]"
+            elif limit_order_placed and t_h > 0:
+                status_txt = f"⚡ 갭 하락 조건 100% 충족 ➡️ [프리장 -1.0% 지정가 매수 덫 장전 집행: ${t_h:.2f}]"
             else:
-                status_txt = "⚡ 사후 하락장 판별 및 T_H 타점 대기 중"
+                status_txt = "⚡ 프리장 갭 하락 판별 대기 중"
             
             try:
                 avwap_state_dict = {
@@ -249,13 +250,13 @@ class AvwapConsolePlugin:
                     "avg_price": avwap_avg,
                     "trap_odno": trap_odno,
                     "buy_odno": str(tracking_cache.get(f"AVWAP_BUY_ODNO_{t}") or ""),
-                    "T_H": t_h,
+                    "T_H": tracking_cache.get(f"AVWAP_T_H_{t}", 0.0),
                     "limit_order_placed": limit_order_placed,
-                    "placed_target_th": placed_target_th,
+                    "placed_target_th": tracking_cache.get(f"AVWAP_PLACED_TARGET_TH_{t}", 0.0),
                     "trap_placed_time": str(tracking_cache.get(f"AVWAP_TRAP_PLACED_TIME_{t}") or "")
                 }
                 
-                # 🚨 [사후 하락장 게이트 동기화] 본진 평단가를 시뮬레이션 엔진에 주입하여 하락장 통과 여부 정확히 표출
+                # 🚨 [의사결정 엔진 동기화] 시뮬레이션 가동으로 실시간 상태 텍스트 정밀 도출
                 avwap_base_ticker = 'SOXX' if t == 'SOXL' else ('QQQ' if t == 'TQQQ' else t)
                 decision = await asyncio.wait_for(
                     asyncio.to_thread(
@@ -267,9 +268,7 @@ class AvwapConsolePlugin:
                         now_est=now_est, avwap_state=avwap_state_dict,
                         context_data=None,
                         is_simulation=True,
-                        amp5=amp5,
                         prev_close=prev_c,
-                        ma_5day=ma_5day,
                         main_actual_avg=main_actual_avg, 
                         is_holiday=is_holiday 
                     ),
@@ -280,15 +279,16 @@ class AvwapConsolePlugin:
                     action = decision.get('action')
                     reason = html.escape(str(decision.get('reason', '')))
                     
-                    # 🚨 [State Mismatch 궁극 수술] 고스트 참조 파라미터 소각 및 필수 팩트만 업데이트 락온
                     v_t_h = decision.get('T_H')
-                    t_h = self._safe_float(v_t_h) if v_t_h is not None else t_h
+                    if v_t_h and self._safe_float(v_t_h) > 0:
+                        t_h = self._safe_float(v_t_h)
                     
                     v_limit_order_placed = decision.get('limit_order_placed')
                     limit_order_placed = bool(v_limit_order_placed) if v_limit_order_placed is not None else limit_order_placed
                     
                     v_placed_target_th = decision.get('placed_target_th')
-                    placed_target_th = self._safe_float(v_placed_target_th) if v_placed_target_th is not None else placed_target_th
+                    if v_placed_target_th and self._safe_float(v_placed_target_th) > 0:
+                        placed_target_th = self._safe_float(v_placed_target_th)
                     
                     tracking_cache[f"AVWAP_T_H_{t}"] = t_h
                     tracking_cache[f"AVWAP_LIMIT_ORDER_PLACED_{t}"] = limit_order_placed
@@ -300,11 +300,11 @@ class AvwapConsolePlugin:
                         status_txt = f"🛑 셧다운 격발 ({reason})" if reason and action == 'SHUTDOWN' else "🛑 당일 영구동결 (SHUTDOWN 퇴근)"
                     elif avwap_qty > 0:
                         status_txt = "🎯 0.5% 단독 구출 덫 가동 중 (Fire & Forget)"
-                    elif limit_order_placed and placed_target_th > 0:
-                        status_txt = f"⚡ 요격 조건 100% 충족 ➡️ [지정가 매수 덫 장전 집행: ${placed_target_th:.2f}]"
+                    elif limit_order_placed and t_h > 0:
+                        status_txt = f"⚡ 갭 하락 확정 ➡️ [지정가 매수 덫 장전 중: ${t_h:.2f}]"
                     else:
                         if action == "PLACE_TRAP":
-                            status_txt = f"⚡ 요격 조건 100% 충족 ➡️ [지정가 매수 덫 장전 집행]"
+                            status_txt = f"⚡ 갭 하락 확정 ➡️ [지정가 매수 덫 장전 집행]"
                         elif action == "VERIFY_TRAP_FILL":
                             status_txt = f"🔥 덫 하향 관통 ➡️ [실체결 무결성 검증 격발]"
                         elif action == "TRAP_WAIT":
@@ -312,31 +312,25 @@ class AvwapConsolePlugin:
                         elif action == 'SHUTDOWN':
                             status_txt = f"🛑 셧다운 격발 ({reason})"
                         elif reason:
-                            if "사후 하락장 조건 미달" in reason:
-                                status_txt = f"⛔ 사후 하락장 게이트 미통과 (대기)"
-                            elif "동적_순수타격선_도달_감시중" in reason or "스캔" in status_txt:
-                                status_txt = "⚡ T_H 선제 지정가 덫 장전 대기 중"
-                            else:
-                                status_txt = f"⏳ 대기 ({reason})"
+                            status_txt = f"⏳ 대기 ({reason})"
                             
             except Exception as e:
                 pass
 
-            # 🚨 [뷰포트 상태 메시지 팩트 교정] 프리장 지표 소각 및 시가 앵커링 렌더링 락온
-            msg += f"🎯 <b>[ {ticker_clean} 딥-레스큐 관제탑 - {active_str} ]</b>\n"
-            msg += f"▫️ 당일 시가 (Open): <b>${day_open:.2f}</b>\n"
-            msg += f"▫️ 5일 평균선 (MA5): <b>${ma_5day:.2f}</b>\n"
-            msg += f"▫️ 5일 진폭 (Amp5): <b>{amp5*100:.2f}%</b>\n"
-            msg += f"▫️ 오프셋 (Open*Amp5*0.45): <b>${offset:.2f}</b>\n"
-            msg += f"▫️ 딥-매수 타점 (T_H): <b>${t_h:.2f}</b>\n\n"
+            # 🚨 [V85.00 뷰포트 상태 메시지 팩트 교정] 가변 오프셋 지표 소각 및 절대 앵커링 좌표 렌더링 락온
+            msg += f"🎯 <b>[ {ticker_clean} 프리장 스캘퍼 관제탑 - {active_str} ]</b>\n"
+            msg += f"▫️ 프리장 시가(04:00): <b>${pre_open:.2f}</b>\n"
+            msg += f"▫️ 전일 종가(Prev): <b>${prev_c:.2f}</b>\n"
+            msg += f"▫️ 딥-매수 덫(-1.0%): <b>${t_h:.2f}</b>\n"
+            msg += f"▫️ 단독 구출가(-0.5%): <b>${placed_target_th:.2f}</b>\n\n"
 
-            msg += f"📊 <b>[ 실시간 현재가 스프레드 ]</b>\n"
+            msg += f"📊 <b>[ 실시간 잔고 스프레드 ]</b>\n"
             msg += f"▫️ 현재가격: <b>${curr_p:.2f}</b>\n"
             msg += f"▫️ 본진평단: <b>${main_actual_avg:.2f}</b> ({actual_qty}주)\n"
 
             if avwap_qty > 0:
-                trap_price = round(avwap_avg * 1.005, 2)
-                msg += f"\n🛡️ <b>[ 암살자 구출 현황 ]</b>\n"
+                trap_price = placed_target_th if placed_target_th > 0 else round(avwap_avg * 1.005, 2)
+                msg += f"\n🛡️ <b>[ 프리장 스캘퍼 매수 현황 ]</b>\n"
                 msg += f"▫️ 매수평단: <b>${avwap_avg:.2f}</b> ({avwap_qty}주)\n"
                 msg += f"▫️ 단독탈출(+0.5%): <b>${trap_price:.2f}</b>\n"
 

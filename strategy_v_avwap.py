@@ -1,19 +1,16 @@
 # ==========================================================
 # FILE: strategy_v_avwap.py
 # ==========================================================
-# 🚨 MODIFIED: [딥-레스큐 아키텍처 V84.00 전면 리빌딩]
-# 🚨 MODIFIED: [사후 하락장 절대 판별 락온] main_actual_avg(본진 평단가) > Open(시가) 일 때만 100% 자율 개방.
-# 🚨 MODIFIED: [시가 앵커링 덫 산출] PM_H, 가변 오프셋 등 데드코드 전면 소각. 오직 `Open - (Open * Amp5 * 0.45)` 고정 타점(T_H) 도출.
-# 🚨 NEW: [Kwargs Overwrite 붕괴 수술] Named Parameter로 전달된 amp5가 내부 kwargs 탐색에 의해 0.0으로 강제 덮어쓰기되어 T_H가 시가(Open)로 고정되던 치명적 파이썬 문법 맹점 원천 교정.
-# 🚨 NEW: [Amp5 결측 붕괴 절대 방어] API 지연으로 Amp5가 0.0으로 유입될 경우, 딥-매수 타점(T_H)이 하방 버퍼 없이 시가(Open)로 직결되는 치명적 버그를 원천 차단하기 위해 조기 반환(Early Return) 쉴드 결속.
-# 🚨 MODIFIED: [100% 자율 격발] 시가 확정 및 하락장 판별 즉시 T_H 타점에 100% 잉여 현금 지정가 매수(PLACE_TRAP) 즉각 반환.
-# 🚨 MODIFIED: [Fire & Forget 락온] 암살자 체결 물량(avwap_qty > 0) 존재 시 더 이상 개입하지 않고 즉시 'HOLD(퇴근)' 반환. 타임스탑 시장가 덤핑 영구 소각.
-# 🚨 MODIFIED: [상태 다이어트] 다중 출격(sortie_mode), PM_H, PM_L, T_L, offset, dump_jitter_sec 등 불필요한 레거시 파라미터 100% 진공 압축.
-# 🚨 MODIFIED: [Case 08 절대 헌법 준수] 스냅샷 멱등성 훼손 방어를 위해 os.path.exists 레이스 컨디션 유발 코드를 100% 소각하고 EAFP(try-except)로 락온
-# 🚨 MODIFIED: [Case 16 위반 교정] 원자적 쓰기(Atomic Write) 실패 시 스코프 붕괴를 막기 위한 임시 파일 식별자 전진 배치(Hoisting)
+# 🚨 MODIFIED: [딥-레스큐 V85.00 프리장 스캘퍼 완전 개조]
+# 🚨 MODIFIED: [타임라인 팩트 롤오버] 정규장 스캔을 전면 소각하고 04:00~09:29 EST 프리장(Pre-market) 시간대 전용 작동 락온. 09:30 도달 시 미체결 덫 강제 파기(SHUTDOWN).
+# 🚨 MODIFIED: [진입 게이트 순수성] 본진 평단가 비교 로직 100% 영구 소각. 오직 "전일 종가 > 프리장 시가" (순수 갭 하락) 시에만 무조건 100% 개방.
+# 🚨 MODIFIED: [절대 앵커링 타점] Amp5, 오프셋 등 가변 데드코드 전면 소각. 오직 프리장 시가 기준 "-1.0% 지정가 매수" ➔ "-0.5% 지정가 매도" 타점 고정 연산 락온.
+# 🚨 MODIFIED: [Fire & Forget 락온] 매수 체결(avwap_qty > 0) 확인 즉시 단독 탈출망(-0.5%) 장전 상태로 판단하여 추가 개입 없이 영구 동결(HOLD) 퇴근.
+# 🚨 MODIFIED: [State Mismatch 수술] 덫 산출 즉시 로컬 변수(placed_target_th)에도 최신 타겟가를 오버라이드하여 1틱 지연 패러독스 원천 차단.
+# 🚨 MODIFIED: [Case 08 절대 헌법 준수] 스냅샷 멱등성 훼손 방어를 위해 os.path.exists 레이스 컨디션 유발 코드를 100% 소각하고 EAFP(try-except)로 락온.
+# 🚨 MODIFIED: [Case 16 위반 교정] 원자적 쓰기(Atomic Write) 실패 시 스코프 붕괴를 막기 위한 임시 파일 식별자 전진 배치(Hoisting).
 # 🚨 MODIFIED: [Insight 14] NaN/Inf 및 콤마(,) 맹독성 데이터를 0.0으로 깎아내는 `_safe_float` 코어 래퍼 100% 결속.
 # 🚨 MODIFIED: [YF MultiIndex 붕괴 방어] `_flatten_columns` 전단 이식으로 pandas KeyError 즉사 버그 완벽 차단.
-# 🚨 MODIFIED: [ZeroDivision 궁극 방어] T_H 타점이 극단적 변동성에 의해 0.0 이하로 산출될 경우 발생하는 연산 마비를 막기 위한 수학적 쉴드 락온.
 # ==========================================================
 import logging
 import datetime
@@ -29,7 +26,7 @@ import tempfile
 
 class VAvwapHybridPlugin:
     def __init__(self):
-        self.plugin_name = "DEEP_RESCUE_V84.00_AUTONOMOUS"
+        self.plugin_name = "DEEP_RESCUE_V85.00_PREMARKET_SCALPER"
 
     # 🚨 [Case 05, Insight 14] NaN, Infinity 및 String-Comma 맹독성 데이터 정밀 필터링 락온
     def _safe_float(self, value):
@@ -260,19 +257,17 @@ class VAvwapHybridPlugin:
         if avwap_alloc_cash == 0.0:
             avwap_alloc_cash = self._safe_float(kwargs.get('alloc_cash', kwargs.get('avwap_alloc_cash', 0.0)))
         
-        # 🚨 MODIFIED: [Kwargs Overwrite 붕괴 수술] Named Parameter로 전달된 amp5가 내부 kwargs.get 탐색에 의해 0.0으로 덮어쓰여져 T_H가 시가(Open)로 고정되던 치명적 맹점 원천 교정.
-        safe_amp5 = self._safe_float(amp5)
-        if safe_amp5 == 0.0:
-            safe_amp5 = self._safe_float(kwargs.get('amp5', 0.0))
-        
-        # 🚨 MODIFIED: [사후 하락장 게이트] 본진(V-REV)의 KIS 실제 평단가를 kwargs에서 정밀 추출
-        main_actual_avg = self._safe_float(kwargs.get('main_actual_avg', 0.0))
+        # 🚨 MODIFIED: 본진 평단가 조건 완전 소각 (순수 갭 하락 팩트만 남김)
+        prev_close_val = self._safe_float(prev_close)
+        if prev_close_val == 0.0:
+            prev_close_val = self._safe_float(kwargs.get('prev_close', 0.0))
 
         curr_l = 0.0
         curr_candle_time_str = "" 
-        exec_day_open = 0.0
+        pre_open = 0.0
         
         curr_time = now_est.time()
+        time_0400 = datetime.time(4, 0)
         time_0930 = datetime.time(9, 30)
 
         persistent_state = self.load_state(exec_ticker, now_est)
@@ -301,48 +296,57 @@ class VAvwapHybridPlugin:
 
         if is_holiday:
             if avwap_qty > 0:
-                return _build_res('HOLD', '미국_증시_휴장일(암살자퇴근_이월대기)')
+                return _build_res('HOLD', '미국_증시_휴장일(단독구출장전_이월대기)')
             return _build_res('WAIT', '미국_증시_휴장일(관측_중지)')
 
-        # 🚨 MODIFIED: [Fire & Forget 락온] 체결된 물량(avwap_qty > 0)이 존재하면 무조건 퇴근 모드(HOLD) 반환.
-        # 시장가 덤핑 등 추가 개입을 완벽히 차단하고 애프터마켓 종료 시점까지 스케줄러(단독 구출 덫)에 위임.
+        # 🚨 NEW: [Fire & Forget 락온] 매수가 확인된 즉시 구출 대기 상태로 판단하여 관제 무시 (스케줄러의 단독 구출망에 위임)
         if avwap_qty > 0:
-            return _build_res('HOLD', '🎯 구출 덫 장전 완료 및 암살자 퇴근 (Fire & Forget)')
+            return _build_res('HOLD', '🎯 0.5% 단독 구출 덫 장전 완료 및 암살자 퇴근 (Fire & Forget)')
 
-        # --- 이 아래부터는 오직 딥-매수 신규 진입(Entry)을 위한 전용 로직입니다 ---
+        # --- 이 아래부터는 오직 프리장 스캘핑 딥-매수(Entry) 전용 로직입니다 ---
         if is_shutdown:
             return _build_res('WAIT', '당일영구동결_상태(신규진입금지)')
 
-        if curr_time < time_0930:
-            return _build_res('WAIT', '프리장 관망 (정규장 시가 및 하락장 확정 대기)')
+        # 🚨 MODIFIED: [타임라인 팩트 교정] 프리장 시간대만 락온. 정규장 돌입 시 미체결 덫은 즉시 파기.
+        if curr_time >= time_0930:
+            if limit_order_placed:
+                return _build_res('SHUTDOWN', '정규장 개장(09:30 EST) 도달. 프리장 스캘핑 종료 및 미체결 덫 강제 파기')
+            return _build_res('WAIT', '프리장 시간 종료')
 
-        # 🚨 MODIFIED: [시가 추출] 정규장 당일 시가(Open) 추출 락온
+        if curr_time < time_0400:
+            return _build_res('WAIT', '프리장 개장 대기 중')
+
+        # 🚨 MODIFIED: [시가 추출 롤오버] 프리장 시가(04:00 Open) 추출 락온
         if df_1min_exec is not None and not df_1min_exec.empty and 'time_est' in df_1min_exec.columns:
-            df_reg = df_1min_exec[(df_1min_exec['time_est'] >= '093000') & (df_1min_exec['time_est'] <= '155959')]
-            if not df_reg.empty:
-                exec_day_open = self._safe_float(df_reg.iloc[0]['open'])
-                curr_l = self._safe_float(df_reg.iloc[-1]['low'])
-                curr_candle_time_str = str(df_reg.iloc[-1]['time_est'])
+            df_pre = df_1min_exec[(df_1min_exec['time_est'] >= '040000') & (df_1min_exec['time_est'] <= '092959')]
+            if not df_pre.empty:
+                pre_open = self._safe_float(df_pre.iloc[0]['open'])
+                curr_l = self._safe_float(df_pre.iloc[-1]['low'])
+                curr_candle_time_str = str(df_pre.iloc[-1]['time_est'])
 
-        if exec_day_open <= 0.0:
-            return _build_res('WAIT', '정규장 시가(Open) 확정 대기중')
+        if pre_open <= 0.0:
+            return _build_res('WAIT', '프리장 시가(Pre_Open) 확정 대기중')
 
-        # 🚨 NEW: [Amp5 결측 붕괴 절대 방어] API 지연 등으로 Amp5가 0.0이 되면 버퍼 0%로 시가(Open)에 덫이 꽂히는 치명적 파괴 현상을 원천 차단.
-        if safe_amp5 <= 0.0:
-            return _build_res('WAIT', 'Amp5 데이터 결측(0.0). 비정상 타점(버퍼 0%) 산출 방어 대기')
+        if prev_close_val <= 0.0:
+            return _build_res('WAIT', '전일 종가 확정 대기중')
 
-        # 🚨 MODIFIED: [시가 앵커링 고정 덫 산출] Overwrite 붕괴 방어용 safe_amp5 맵핑
-        t_h = exec_day_open - (exec_day_open * safe_amp5 * 0.45)
+        # 🚨 MODIFIED: [사후 하락장 게이트 수술] 본진 평단가 비교 소각, 순수 갭 하락 판별 락온
+        if prev_close_val <= pre_open:
+            return _build_res('SHUTDOWN', f'갭 하락 미발생 (전일종가 ${prev_close_val:.2f} <= 프리장시가 ${pre_open:.2f}). 당일 작전 취소.')
+
+        # 🚨 NEW: [절대 앵커링 고정 덫 산출] 프리장 시가 기준 매수/매도 타점 절대 박제
+        t_h = round(pre_open * 0.990, 2)          # -1.0% 매수 덫
+        target_sell = round(pre_open * 0.995, 2)  # -0.5% 매도 덫
+
+        # 🚨 MODIFIED: [State Mismatch 수술] 덫 산출 즉시 로컬 변수(placed_target_th)에도 최신 타겟가를 덮어씌워 1틱 지연 현상 원천 봉쇄
         persistent_state['T_H'] = t_h
+        persistent_state['placed_target_th'] = target_sell 
+        placed_target_th = target_sell
+
         if not is_simulation:
             self.save_state(exec_ticker, now_est, persistent_state)
 
-        # 🚨 MODIFIED: [사후 하락장 게이트 검증]
-        # Actual_Avg(main_actual_avg)가 당일 시가(Open)보다 낮거나 같다면 암살자 투입 차단
-        if main_actual_avg <= exec_day_open:
-            return _build_res('WAIT', f'사후 하락장 조건 미달 (본진 평단가 ${main_actual_avg:.2f} <= 당일 시가 ${exec_day_open:.2f})')
-
-        # 이미 덫을 장전한 상태라면 체결 검증을 위한 분기 진행
+        # 이미 덫을 장전한 상태라면 체결 검증 분기
         if limit_order_placed:
             is_time_shield_active = False
             if trap_placed_time and curr_candle_time_str:
@@ -356,26 +360,27 @@ class VAvwapHybridPlugin:
                 except Exception:
                     pass
 
-            if curr_l > 0 and curr_l <= placed_target_th:
+            if curr_l > 0 and curr_l <= t_h:
                 if is_time_shield_active:
                     logging.info(f"🛡️ [Case 31 시차 패러독스 방어] 장전시각({trap_placed_time}) 직후 캔들({curr_candle_time_str}) 노이즈 관통 바이패스.")
-                    return _build_res('TRAP_WAIT', f'주문전송_지연방어(1분패러독스)_지정가덫({placed_target_th:.2f})_시장대기중', target_price=placed_target_th)
-                return _build_res('VERIFY_TRAP_FILL', '지정가덫_하향관통_실체결검증_및_단독구출덫_투하요청', target_price=placed_target_th)
+                    return _build_res('TRAP_WAIT', f'주문전송_지연방어(1분패러독스)_지정가덫({t_h:.2f})_시장대기중', target_price=t_h)
+                # 🚨 MODIFIED: 체결 검증 통과 시 암살자 단독 탈출가(프리장 시가 -0.5%) 스케줄러 인계
+                return _build_res('VERIFY_TRAP_FILL', '지정가덫_하향관통_실체결검증_및_단독구출덫_투하요청', target_price=target_sell)
             else:
-                reason_msg = f'선제지정가덫({placed_target_th:.2f})_시장대기중'
+                reason_msg = f'선제지정가덫({t_h:.2f})_시장대기중'
                 if is_time_shield_active:
-                    reason_msg = f'1분봉_시차패러독스_타임쉴드_가동중({placed_target_th:.2f})'
-                return _build_res('TRAP_WAIT', reason_msg, target_price=placed_target_th)
+                    reason_msg = f'1분봉_시차패러독스_타임쉴드_가동중({t_h:.2f})'
+                return _build_res('TRAP_WAIT', reason_msg, target_price=t_h)
 
-        # 🚨 MODIFIED: [수학적 붕괴 방어] T_H 타점이 0.0 이하로 산출 시 ZeroDivision 차단을 위한 쉴드 락온
+        # 🚨 MODIFIED: [수학적 붕괴 방어] T_H 타점이 0.0 이하로 산출 시 ZeroDivision 차단 쉴드
         if t_h <= 0.0:
             return _build_res('WAIT', '비정상 T_H(0.0 이하) 산출 차단 (수학적 붕괴 방어)')
 
-        # 🚨 MODIFIED: [100% 자율 격발] 조건 달성 즉시 잉여 현금 100% 딥-매수 덫 장전 지시
+        # 🚨 MODIFIED: [100% 자율 격발] 조건 달성 즉시 잉여 현금 100% 프리장 스캘핑 덫 장전 지시
         if avwap_alloc_cash / t_h < 1.0:
             return _build_res('WAIT', '예산 고갈 ZeroDivision 방어 (1주 미만 산출)')
 
         buy_qty = int(math.floor(avwap_alloc_cash / t_h))
-        logging.info(f"🚀 [V84.00 딥-레스큐 덫 장전] 사후 하락장 팩트 확정. 시가 앵커링 고정 덫 즉시 장전! (타겟가: ${t_h:.2f}, 수량: {buy_qty}주)")
+        logging.info(f"🚀 [V85.00 프리장 스캘핑] 갭 하락 확정! 시가 앵커링(-1.0%) 고정 덫 즉시 장전! (타겟가: ${t_h:.2f}, 수량: {buy_qty}주)")
         
-        return _build_res('PLACE_TRAP', '사후 하락장 판별 확정. 시가 앵커링 고정 덫 즉시 장전', qty=buy_qty, target_price=t_h, t_time=curr_candle_time_str)
+        return _build_res('PLACE_TRAP', '프리장 갭 하락 확정. 시가 앵커링(-1.0%) 고정 덫 즉시 장전', qty=buy_qty, target_price=t_h, t_time=curr_candle_time_str)
