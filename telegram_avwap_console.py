@@ -14,6 +14,9 @@
 # 🚨 MODIFIED: [Case 32 & 33 절대 규칙] TPS 캡핑(0.06s) 및 3단 지수 백오프, 타임아웃(10s) 샌드위치 락온.
 # 🚨 NEW: [타임라인 관통 추적] 프리장 최고가 및 매수/매도 덫 타점의 실제 관통(Pierce) 시각을 추적하여 UI 렌더링을 고도화.
 # 🚨 MODIFIED: [V86.00 시계열 UI 재배열] 관제탑 렌더링을 [전일종가 -> 프리장시가 -> 프리장고가 -> 매수타점 -> 매도타점] 시계열 흐름에 맞게 전면 팩트 재정렬 락온.
+# 🚨 MODIFIED: [시계열 모순(Time Paradox) 완벽 수술] 04:00 캔들에서 시가 확정과 동시에 타점을 관통하는 논리적 오류를 소각. 매수는 04:01부터, 매도는 매수 이후 시점(>)부터 스캔.
+# 🚨 NEW: [KIS ODNO 연동] KIS 서버에서 발급된 매수/매도 고유 주문번호(ODNO)를 UI 뷰포트에 정밀 렌더링 락온.
+# 🚨 MODIFIED: [메모리 오염 붕괴 방어] tracking_cache가 None으로 유입될 시 발생하는 AttributeError 붕괴를 원천 차단하기 위해 isinstance 및 재할당 쉴드 전격 주입.
 # ==========================================================
 import logging
 import datetime
@@ -129,6 +132,10 @@ class AvwapConsolePlugin:
         
         # 🚨 [메모리 멱등성 사수] get() 대신 setdefault()를 사용하여 전역 딕셔너리와 참조 연결 락온
         tracking_cache = app_data.setdefault('sniper_tracking', {})
+        # 🚨 [메모리 오염 붕괴 방어] None 타입 유입 시 발생하는 AttributeError 차단
+        if not isinstance(tracking_cache, dict):
+            tracking_cache = {}
+            app_data['sniper_tracking'] = tracking_cache
         
         cash_val = 0.0
         holdings = {}
@@ -211,7 +218,6 @@ class AvwapConsolePlugin:
                 curr_p, prev_c, df_1m = 0.0, 0.0, None
 
             # 🚨 MODIFIED: [프리장 시가 및 최고가 추출 락온]
-            # NEW: 당일 최고가를 달성한 시점 추출 및 기록
             pre_open = 0.0
             pre_high = 0.0
             pre_high_time = "미도달"
@@ -248,7 +254,8 @@ class AvwapConsolePlugin:
             if placed_target_th == 0.0 and pre_open > 0.0:
                 placed_target_th = round(pre_open * 0.995, 2)
 
-            # 🚨 NEW: [타점 관통 시각 추적 연산] 매수/매도 덫을 관통한 시각 스캔
+            # 🚨 MODIFIED: [시계열 모순(Time Paradox) 완벽 수술] 
+            # 04:00 시가 확정 캔들을 배제하고, 실제 주문이 전송된 04:01 캔들부터 관통 시각을 추적.
             pierce_buy_time = "미도달"
             pierce_sell_time = "미도달"
 
@@ -256,15 +263,16 @@ class AvwapConsolePlugin:
                 df_pre = df_1m[(df_1m['time_est'] >= '040000') & (df_1m['time_est'] <= '092959')]
                 if not df_pre.empty and t_h > 0.0:
                     try:
-                        # 매수 타점 관통(Low가 덫 가격 이하로 하락한 최초 시점)
-                        b_rows = df_pre[df_pre['low'].astype(float) <= t_h]
+                        # 매수 타점 관통 (시가 확정 이후인 04:01부터 스캔하여 룩어헤드 편향 원천 차단)
+                        df_buy_scan = df_pre[df_pre['time_est'] >= '040100']
+                        b_rows = df_buy_scan[df_buy_scan['low'].astype(float) <= t_h]
                         if not b_rows.empty:
                             raw_b_t = str(b_rows['time_est'].iloc[0]).zfill(6)
                             pierce_buy_time = f"{raw_b_t[:2]}:{raw_b_t[2:4]}"
 
-                            # 매도 타점 관통 (반드시 매수 관통 시각 이후의 데이터만 잘라내어 판단)
+                            # 매도 타점 관통 (매수가 관통된 시점보다 '무조건 나중(>)'의 캔들만 스캔)
                             if placed_target_th > 0.0:
-                                df_after = df_pre[df_pre['time_est'] >= raw_b_t]
+                                df_after = df_pre[df_pre['time_est'] > raw_b_t]
                                 s_rows = df_after[df_after['high'].astype(float) >= placed_target_th]
                                 if not s_rows.empty:
                                     raw_s_t = str(s_rows['time_est'].iloc[0]).zfill(6)
@@ -279,7 +287,6 @@ class AvwapConsolePlugin:
             elif avwap_qty > 0:
                 status_txt = "🎯 0.5% 단독 구출 덫 가동 중 (Fire & Forget)"
             elif limit_order_placed and t_h > 0:
-                # 🚨 MODIFIED: [텍스트 팩트 롤오버] 갭 하락 조건 텍스트 소각
                 status_txt = f"⚡ 시가 확정 ➡️ [지정가 매수 덫 장전 중: ${t_h:.2f}]"
             else:
                 status_txt = "⚡ 프리장 시가(Pre_Open) 확정 대기 중"
@@ -342,11 +349,9 @@ class AvwapConsolePlugin:
                     elif avwap_qty > 0:
                         status_txt = "🎯 0.5% 단독 구출 덫 가동 중 (Fire & Forget)"
                     elif limit_order_placed and t_h > 0:
-                        # 🚨 MODIFIED: [텍스트 팩트 롤오버] 갭 하락 조건 텍스트 소각
                         status_txt = f"⚡ 시가 확정 ➡️ [지정가 매수 덫 장전 중: ${t_h:.2f}]"
                     else:
                         if action == "PLACE_TRAP":
-                            # 🚨 MODIFIED: [텍스트 팩트 롤오버] 갭 하락 텍스트 소각
                             status_txt = f"⚡ 시가 확정 ➡️ [지정가 매수 덫 장전 집행]"
                         elif action == "VERIFY_TRAP_FILL":
                             status_txt = f"🔥 덫 하향 관통 ➡️ [실체결 무결성 검증 격발]"
@@ -373,11 +378,20 @@ class AvwapConsolePlugin:
             msg += f"▫️ 현재가격: <b>${curr_p:.2f}</b>\n"
             msg += f"▫️ 본진평단: <b>${main_actual_avg:.2f}</b> ({actual_qty}주)\n"
 
+            # 🚨 NEW: [KIS ODNO 연동] 발급된 KIS 고유 주문번호(ODNO)를 UI 뷰포트에 직접 렌더링
+            buy_odno_txt = str(tracking_cache.get(f"AVWAP_BUY_ODNO_{t}") or "")
+            trap_odno_txt = str(tracking_cache.get(f"AVWAP_TRAP_ODNO_{t}") or "")
+
             if avwap_qty > 0:
                 trap_price = placed_target_th if placed_target_th > 0 else round(avwap_avg * 1.005, 2)
                 msg += f"\n🛡️ <b>[ 프리장 스캘퍼 매수 현황 ]</b>\n"
+                msg += f"▫️ 매수주문(ODNO): <b>{buy_odno_txt if buy_odno_txt else '기록없음'}</b>\n"
                 msg += f"▫️ 매수평단: <b>${avwap_avg:.2f}</b> ({avwap_qty}주)\n"
                 msg += f"▫️ 단독탈출(+0.5%): <b>${trap_price:.2f}</b>\n"
+                msg += f"▫️ 매도주문(ODNO): <b>{trap_odno_txt if trap_odno_txt else '발급대기'}</b>\n"
+            elif limit_order_placed:
+                msg += f"\n🛡️ <b>[ 프리장 스캘퍼 매수 대기 ]</b>\n"
+                msg += f"▫️ 매수주문(ODNO): <b>{buy_odno_txt if buy_odno_txt else '발급대기'}</b>\n"
 
             msg += f"\n🚨 <b>[ 작전 수행 현황 ]</b>\n"
             msg += f"▫️ 현재상태: <b>{status_txt}</b>\n"
