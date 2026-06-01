@@ -2,8 +2,9 @@
 # FILE: strategy_v_avwap.py
 # ==========================================================
 # 🚨 MODIFIED: [딥-레스큐 V85.00 프리장 스캘퍼 완전 개조]
-# 🚨 MODIFIED: [타임라인 팩트 롤오버] 정규장 스캔을 전면 소각하고 04:00~09:29 EST 프리장(Pre-market) 시간대 전용 작동 락온. 09:30 도달 시 미체결 덫 강제 파기(SHUTDOWN).
-# 🚨 MODIFIED: [진입 게이트 순수성] 갭하락 필터 완벽 폐기. 본진 평단가 및 전일 종가 비교 로직을 100% 영구 소각. 매일 프리장 개장 시 무조건 100% 개방(무제한 타격 모드).
+# 🚨 MODIFIED: [Bad Print 맹독성 방어] 04:00 개장 직후 YF 시장 조성자 잔여 노이즈 데이터 유입을 막기 위해 엔진 진입 게이트를 04:01 EST로 1분 지연 락온.
+# 🚨 MODIFIED: [타임라인 팩트 롤오버] 정규장 스캔을 전면 소각하고 04:01~09:29 EST 프리장(Pre-market) 시간대 전용 작동 락온. 09:30 도달 시 미체결 덫 강제 파기(SHUTDOWN).
+# 🚨 MODIFIED: [진입 게이트 순수성] 갭하락 필터 완벽 폐기. 본진 평단가 및 전일 종가 비교 로직을 100% 영구 소각. 매일 프리장 1분 캔들 확정 시 무조건 100% 개방(무제한 타격 모드).
 # 🚨 MODIFIED: [절대 앵커링 타점] Amp5, 오프셋 등 가변 데드코드 전면 소각. 오직 프리장 시가 기준 "-1.0% 지정가 매수" ➔ "-0.5% 지정가 매도" 타점 고정 연산 락온.
 # 🚨 MODIFIED: [Fire & Forget 락온] 매수 체결(avwap_qty > 0) 확인 즉시 단독 탈출망(-0.5%) 장전 상태로 판단하여 추가 개입 없이 영구 동결(HOLD) 퇴근.
 # 🚨 MODIFIED: [State Mismatch 수술] 덫 산출 즉시 로컬 변수(placed_target_th)에도 최신 타겟가를 오버라이드하여 1틱 지연 패러독스 원천 차단.
@@ -262,7 +263,8 @@ class VAvwapHybridPlugin:
         pre_open = 0.0
         
         curr_time = now_est.time()
-        time_0400 = datetime.time(4, 0)
+        # 🚨 MODIFIED: [Bad Print 맹독성 방어] 04:01 EST 진입 게이트 락온 (04:00 잔여 노이즈 데이터 배제)
+        time_0401 = datetime.time(4, 1)
         time_0930 = datetime.time(9, 30)
 
         persistent_state = self.load_state(exec_ticker, now_est)
@@ -308,8 +310,9 @@ class VAvwapHybridPlugin:
                 return _build_res('SHUTDOWN', '정규장 개장(09:30 EST) 도달. 프리장 스캘핑 종료 및 미체결 덫 강제 파기')
             return _build_res('WAIT', '프리장 시간 종료')
 
-        if curr_time < time_0400:
-            return _build_res('WAIT', '프리장 개장 대기 중')
+        # 🚨 MODIFIED: [Bad Print 맹독성 방어] YF 04:00 잔여 찌꺼기 데이터 유입 차단을 위해 진입 게이트 04:01 락온
+        if curr_time < time_0401:
+            return _build_res('WAIT', '프리장 1분봉(04:00) 캔들 확정 및 YF 데이터 안정화 대기 중')
 
         # 🚨 MODIFIED: [시가 추출 롤오버] 프리장 시가(04:00 Open) 추출 락온
         if df_1min_exec is not None and not df_1min_exec.empty and 'time_est' in df_1min_exec.columns:
@@ -327,7 +330,7 @@ class VAvwapHybridPlugin:
         t_h = round(pre_open * 0.990, 2)  # -1.0% 매수 덫
         target_sell = round(pre_open * 0.995, 2)  # -0.5% 매도 덫
 
-        # 🚨 MODIFIED: [State Mismatch 수술] 덫 산출 즉시 로컬 변수(placed_target_th)에도 최신 타겟가를 덮어씌워 1틱 지연 현상 원천 봉쇄
+        # 🚨 MODIFIED: [State Mismatch 수술] 덫 산출 즉시 로컬 변수(placed_target_th)에도 최신 타겟가를 오버라이드하여 1틱 지연 현상 원천 봉쇄
         persistent_state['T_H'] = t_h
         persistent_state['placed_target_th'] = target_sell 
         placed_target_th = target_sell

@@ -2,6 +2,7 @@
 # FILE: telegram_avwap_console.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 3중 딥다이브 교차 검증(Async I/O 족쇄, State Mismatch 방어, Float 정밀도 사수) 통과 완료.
+# 🚨 MODIFIED: [Bad Print 맹독성 방어] 04:00 YF 잔여 노이즈 데이터 차단을 위해 UI 관제탑 시뮬레이션(가상 타점) 및 시가 추출 진입 게이트를 04:01 EST로 1분 지연 락온.
 # 🚨 MODIFIED: [V86.00 텍스트 팩트 롤오버] '딥-레스큐' 및 '암살자' 레거시 명칭 영구 소각. '새벽 수금원' 및 '프리장 스캘퍼' 퀀트 네이밍으로 100% 팩트 교정 완료.
 # 🚨 MODIFIED: [프리장 스캘퍼 전면 리빌딩] 기존 정규장 기반의 "실시간 딥-레스큐" 텍스트를 "프리장 스캘핑 모드"로 전면 교체.
 # 🚨 MODIFIED: [텍스트 팩트 롤오버] 갭 하락 게이트웨이가 소각됨에 따라 '순수 갭 하락 스캔 중', '갭 하락 조건 충족' 등의 텍스트를 전면 소각하고 '무제한 딥-매수 타격 스캔 중', '시가 확정' 포맷으로 100% 교정 락온.
@@ -59,6 +60,8 @@ class AvwapConsolePlugin:
         curr_time = now_est.time()
         
         time_0400 = datetime.time(4, 0)
+        # 🚨 MODIFIED: [Bad Print 맹독성 방어] 진입 게이트 04:01 EST 락온
+        time_0401 = datetime.time(4, 1)
         time_0930 = datetime.time(9, 30)
         
         def _fetch_schedule():
@@ -223,18 +226,20 @@ class AvwapConsolePlugin:
             pre_high = 0.0
             pre_high_time = "미도달"
 
-            if df_1m is not None and not df_1m.empty and 'time_est' in df_1m.columns:
-                df_pre = df_1m[(df_1m['time_est'] >= '040000') & (df_1m['time_est'] <= '092959')]
-                if not df_pre.empty:
-                    pre_open = self._safe_float(df_pre['open'].iloc[0])
-                    pre_high = self._safe_float(df_pre['high'].max())
-                    try:
-                        # 최고가를 기록한 행 필터링
-                        h_row = df_pre[df_pre['high'].astype(float) >= pre_high]
-                        if not h_row.empty:
-                            raw_h_t = str(h_row['time_est'].iloc[0]).zfill(6)
-                            pre_high_time = f"{raw_h_t[:2]}:{raw_h_t[2:4]}"
-                    except Exception: pass
+            # 🚨 MODIFIED: [Bad Print 맹독성 방어] 04:01부터 시가/고가 뷰포트 시뮬레이션 추출 락온 (04:00 노이즈 렌더링 원천 차단)
+            if curr_time >= time_0401:
+                if df_1m is not None and not df_1m.empty and 'time_est' in df_1m.columns:
+                    df_pre = df_1m[(df_1m['time_est'] >= '040000') & (df_1m['time_est'] <= '092959')]
+                    if not df_pre.empty:
+                        pre_open = self._safe_float(df_pre['open'].iloc[0])
+                        pre_high = self._safe_float(df_pre['high'].max())
+                        try:
+                            # 최고가를 기록한 행 필터링
+                            h_row = df_pre[df_pre['high'].astype(float) >= pre_high]
+                            if not h_row.empty:
+                                raw_h_t = str(h_row['time_est'].iloc[0]).zfill(6)
+                                pre_high_time = f"{raw_h_t[:2]}:{raw_h_t[2:4]}"
+                        except Exception: pass
 
             avwap_qty = int(self._safe_float(tracking_cache.get(f"AVWAP_QTY_{t}")))
             avwap_avg = self._safe_float(tracking_cache.get(f"AVWAP_AVG_{t}"))
@@ -249,7 +254,7 @@ class AvwapConsolePlugin:
             main_actual_avg = self._safe_float(h_t.get('avg', 0.0))
             actual_qty = int(self._safe_float(h_t.get('qty', 0)))
             
-            # 🚨 [절대 앵커링 뷰포트 오버라이드] 미장전 상태일지라도 시뮬레이션 값을 표출
+            # 🚨 [절대 앵커링 뷰포트 오버라이드] 미장전 상태일지라도 시뮬레이션 값을 표출 (04:01 이후에만 pre_open이 0보다 큼)
             if t_h == 0.0 and pre_open > 0.0:
                 t_h = round(pre_open * 0.990, 2)
             if placed_target_th == 0.0 and pre_open > 0.0:
@@ -289,6 +294,8 @@ class AvwapConsolePlugin:
                 status_txt = "🎯 0.5% 단독 구출 덫 가동 중 (Fire & Forget)"
             elif limit_order_placed and t_h > 0:
                 status_txt = f"⚡ 시가 확정 ➡️ [지정가 매수 덫 장전 중: ${t_h:.2f}]"
+            elif curr_time < time_0401:
+                status_txt = "⚡ 프리장 1분봉(04:00) 캔들 확정 및 YF 데이터 안정화 대기 중"
             else:
                 status_txt = "⚡ 프리장 시가(Pre_Open) 확정 대기 중"
             
@@ -351,6 +358,8 @@ class AvwapConsolePlugin:
                         status_txt = "🎯 0.5% 단독 구출 덫 가동 중 (Fire & Forget)"
                     elif limit_order_placed and t_h > 0:
                         status_txt = f"⚡ 시가 확정 ➡️ [지정가 매수 덫 장전 중: ${t_h:.2f}]"
+                    elif curr_time < time_0401:
+                        status_txt = "⚡ 프리장 1분봉(04:00) 캔들 확정 및 YF 데이터 안정화 대기 중"
                     else:
                         if action == "PLACE_TRAP":
                             status_txt = f"⚡ 시가 확정 ➡️ [지정가 매수 덫 장전 집행]"
@@ -362,7 +371,7 @@ class AvwapConsolePlugin:
                             status_txt = f"🛑 셧다운 격발 ({reason})"
                         elif reason:
                             status_txt = f"⏳ 대기 ({reason})"
-                            
+                        
             except Exception as e:
                 pass
 
