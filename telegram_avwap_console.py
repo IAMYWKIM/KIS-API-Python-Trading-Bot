@@ -17,6 +17,7 @@
 # 🚨 MODIFIED: [시계열 모순(Time Paradox) 완벽 수술] 04:00 캔들에서 시가 확정과 동시에 타점을 관통하는 논리적 오류를 소각. 매수는 04:01부터, 매도는 매수 이후 시점(>)부터 스캔.
 # 🚨 NEW: [KIS ODNO 연동] KIS 서버에서 발급된 매수/매도 고유 주문번호(ODNO)를 UI 뷰포트에 정밀 렌더링 락온.
 # 🚨 MODIFIED: [메모리 오염 붕괴 방어] tracking_cache가 None으로 유입될 시 발생하는 AttributeError 붕괴를 원천 차단하기 위해 isinstance 및 재할당 쉴드 전격 주입.
+# 🚨 MODIFIED: [UI 렌더링 팩트 교정] 스마트폰 가독성 극대화를 위해 프리장 고가 및 타점 관통 시각 정보를 두 줄로 명시적 분리(개행 및 들여쓰기) 완료.
 # ==========================================================
 import logging
 import datetime
@@ -370,9 +371,11 @@ class AvwapConsolePlugin:
             msg += f"▫️ 전일 종가(Prev): <b>${prev_c:.2f}</b>\n"
             msg += f"▫️ 프리장 시가(04:00): <b>${pre_open:.2f}</b>\n"
             if pre_high > 0:
-                msg += f"▫️ 프리장 고가(High): <b>${pre_high:.2f}</b> (달성: {pre_high_time})\n"
-            msg += f"▫️ 딥-매수 덫(-1.0%): <b>${t_h:.2f}</b> (관통: {pierce_buy_time})\n"
-            msg += f"▫️ 단독 구출가(-0.5%): <b>${placed_target_th:.2f}</b> (관통: {pierce_sell_time})\n\n"
+                # 🚨 MODIFIED: [UI 렌더링 팩트 교정] 스마트폰 가독성 향상을 위한 두 줄 분리 및 들여쓰기 락온
+                msg += f"▫️ 프리장 고가(High): <b>${pre_high:.2f}</b>\n      (달성: {pre_high_time})\n"
+            # 🚨 MODIFIED: [UI 렌더링 팩트 교정] 스마트폰 가독성 향상을 위한 두 줄 분리 및 들여쓰기 락온
+            msg += f"▫️ 딥-매수 덫(-1.0%): <b>${t_h:.2f}</b>\n      (관통: {pierce_buy_time})\n"
+            msg += f"▫️ 단독 구출가(-0.5%): <b>${placed_target_th:.2f}</b>\n      (관통: {pierce_sell_time})\n\n"
 
             msg += f"📊 <b>[ 실시간 잔고 스프레드 ]</b>\n"
             msg += f"▫️ 현재가격: <b>${curr_p:.2f}</b>\n"
