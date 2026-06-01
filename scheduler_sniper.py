@@ -2,9 +2,12 @@
 # FILE: scheduler_sniper.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 34대 엣지 케이스 완벽 결속 교차 검증 완료
-# 🚨 MODIFIED: [텍스트 팩트 롤오버] 갭 하락 게이트웨이가 코어에서 소각됨에 따라, 텔레그램 타전망의 '갭 하락 타격 덫', '프리장 갭 하락 스캘핑' 등의 레거시 텍스트를 '프리장 시가 기준 무제한 덫' 포맷으로 전면 교정 완료.
-# 🚨 MODIFIED: [Indentation 붕괴 수술] V14 상방 감시 스나이퍼 매수/매도 체결 검증 파이프라인의 들여쓰기 붕괴(IndentationError) 완벽 팩트 교정 완료.
-# 🚨 MODIFIED: [딥-레스큐 V85.00 프리장 스캘퍼 리빌딩] 암살자 올인 매수(PLACE_TRAP) 및 단독 구출(VERIFY_TRAP_FILL) 투트랙 팩트 락온
+# 🚨 MODIFIED: [Indentation 붕괴 궁극 수술] V14 스나이퍼 및 프리장 스캘퍼 로직 내부에 침투한 1칸~3칸 단위의 불규칙 들여쓰기(Odd Spacing)를 4의 배수로 전면 팩트 교정하여 컴파일 즉사 에러(IndentationError) 원천 소각.
+# 🚨 MODIFIED: [HTML Parser 붕괴 원천 봉쇄] 의사결정 엔진에서 반환된 `reason` 텍스트 내 특수기호로 인한 텔레그램 파서 즉사(Silent Death)를 막기 위해 `html.escape` 쉴드 100% 래핑 완료.
+# 🚨 MODIFIED: [Phantom Pierce (No Fill) Paradox 원천 차단] 캔들 저가가 타점을 터치하여 실체결 검증(VERIFY_TRAP_FILL)이 격발되었으나, 호가창 우선순위 밀림으로 0주 체결된 경우 봇이 영원히 마비되는 기억상실증 완벽 수술. 미체결 덫 파기 후 RAM/Disk 캐시를 즉시 초기화하여 다음 1분봉에 덫을 재장전하도록 멱등성 사수.
+# 🚨 MODIFIED: [RAM 캐시 갱신 누락 수술] 매수 덫(PLACE_TRAP) 성공 직후 디스크(JSON)에는 저장되나 RAM 캐시(`tracking_cache`)에 `limit_order_placed=True`가 누락되어 1분 뒤 예산 고갈 방어로 튕겨나가는 State Mismatch 패러독스 완벽 교정 완료.
+# 🚨 MODIFIED: [텍스트 팩트 롤오버] 갭 하락 게이트웨이가 코어에서 소각됨에 따라, 텔레그램 타전망의 '갭 하락 타격 덫', '프리장 갭 하락 스캘핑' 등의 레거시 텍스트를 '프리장 시가 기준 무제한 덫' 및 '새벽 수금원' 포맷으로 전면 교정 완료.
+# 🚨 MODIFIED: [딥-레스큐 V85.00 프리장 스캘퍼 리빌딩] 암살자 올인 매수(PLACE_TRAP) 및 단독 구출(VERIFY_TRAP_FILL) 투트랙 팩트 락온.
 # 🚨 MODIFIED: [절대 앵커링 단독 탈출] KIS 평단가(kis_avg) 기반 목표가 산출 로직 100% 영구 소각. Strategy 엔진에서 하달받은 '프리장 시가 - 0.5% (placed_target_th)' 고정 좌표로 100% 단독 구출 덫 락온.
 # 🚨 MODIFIED: [Queue Unification 소각] 암살자 체결 시 LIFO 큐 장부 1층 대통합을 100% 영구 소각하여 오리지널 본진 탈출 지층 절대 보존 락온.
 # 🚨 MODIFIED: [Fire & Forget 락온] 단독 구출 덫 장전 즉시 `shutdown = True`를 새겨 추가 개입(덤핑)을 영구 차단.
@@ -177,7 +180,7 @@ async def scheduled_sniper_monitor(context):
                             continue
                 
                     # ==============================================================
-                    # 1. 딥-레스큐 V85.00 (프리장 스캘퍼) 본진 구출 로직 시작
+                    # 1. 딥-레스큐 V86.00 (프리장 스캘퍼) 본진 구출 로직 시작
                     # ==============================================================
                     if (version == "V_REV" and is_avwap_hybrid) or is_avwap_hybrid:
                         if not tracking_cache.get(f"AVWAP_INIT_{t}"):
@@ -276,8 +279,9 @@ async def scheduled_sniper_monitor(context):
                         if not isinstance(decision, dict): decision = {} 
              
                         action = decision.get("action")
-                        reason = decision.get("reason", "")
-                        
+                        # 🚨 MODIFIED: [HTML Parser 붕괴 방어] reason 텍스트 맹독성 쉴드 락온
+                        reason = html.escape(str(decision.get("reason", "")))
+                  
                         tracking_cache[f"AVWAP_T_H_{t}"] = decision.get("T_H", tracking_cache.get(f"AVWAP_T_H_{t}", 0.0))
                     
                         if decision.get("limit_order_placed") is not None:
@@ -306,8 +310,13 @@ async def scheduled_sniper_monitor(context):
                                     tracking_cache[f"AVWAP_BUY_ODNO_{t}"] = odno
                                     tracking_cache[f"AVWAP_TRAP_QTY_{t}"] = qty 
                                     
+                                    # 🚨 MODIFIED: [RAM 캐시 갱신 누락 수술] 1분 스케줄러의 기억상실(State Mismatch)을 막기 위해 디스크 저장 전 RAM 캐시 100% 락온
+                                    tracking_cache[f"AVWAP_LIMIT_ORDER_PLACED_{t}"] = True
+                                    tracking_cache[f"AVWAP_PLACED_TARGET_TH_{t}"] = decision.get("placed_target_th", 0.0)
+                                    tracking_cache[f"AVWAP_TRAP_PLACED_TIME_{t}"] = decision.get("trap_placed_time", "")
+                                    
                                     # 🚨 MODIFIED: [텍스트 팩트 롤오버] 갭 하락 텍스트 소각 및 무제한 덫 텍스트로 교체
-                                    msg = f"🎯 <b>[프리장 스캘퍼 V85.00] 프리장 시가 기준 무제한 덫 장전 완료!</b>\n"
+                                    msg = f"🎯 <b>[프리장 스캘퍼 V86.00] 프리장 시가 기준 무제한 덫 장전 완료!</b>\n"
                                     msg += f"▫️ 타겟: {html.escape(str(t))}\n"
                                     msg += f"▫️ 절대 앵커링(-1.0%) 덫 타점: <b>${exec_price:.2f}</b>\n"
                                     msg += f"▫️ 목표 수량: {qty}주 (단일 지갑 예산 100% 딥-다이브)\n"
@@ -385,14 +394,14 @@ async def scheduled_sniper_monitor(context):
                                             ccld_qty = 0 
                                         break
                                        
-                                if ccld_qty > 0:
-                                    if ccld_qty < target_qty:
-                                        try:
-                                            await asyncio.sleep(0.06)
-                                            await asyncio.wait_for(asyncio.to_thread(broker.cancel_order, t, buy_odno), timeout=10.0)
-                                            await asyncio.sleep(0.5)
-                                        except: pass
+                                if ccld_qty < target_qty:
+                                    try:
+                                        await asyncio.sleep(0.06)
+                                        await asyncio.wait_for(asyncio.to_thread(broker.cancel_order, t, buy_odno), timeout=10.0)
+                                        await asyncio.sleep(0.5)
+                                    except: pass
 
+                                if ccld_qty > 0:
                                     kis_avg = 0.0
                                     total_kis_qty = 0
                                     for attempt in range(5):
@@ -407,7 +416,7 @@ async def scheduled_sniper_monitor(context):
                                             if kis_avg > 0: break
                                         except Exception:
                                             await asyncio.sleep(2.0)
-                                     
+                                    
                                     # 🚨 [Case 30 쉴드] KIS API 평단가 응답 지연 (Zero-Price Paradox) 방어 (평단가는 로깅 기록용도로만 확보)
                                     if kis_avg <= 0.0:
                                         logging.warning(f"🚨 [{t}] Case 30 Shield: KIS API 평단가 응답 지연 (Zero-Price Paradox). 다음 분기로 바이패스하여 멱등성 사수.")
@@ -433,9 +442,12 @@ async def scheduled_sniper_monitor(context):
                                                 break
                                         except Exception as e:
                                             logging.error(f"🚨 [{t}] 프리장 스캘핑 탈출 덫 장전 에러: {e}")
+                                        
+                                        if attempt < 2:
                                             await asyncio.sleep(1.0 * (2**attempt))
                                      
-                                    msg = f"⚔️ <b>[프리장 스캘퍼 V85.00] 심해 매수 명중 완료!</b>\n"
+                                    # 🚨 MODIFIED: [V86.00 텍스트 롤오버] 스캘퍼 명칭 적용
+                                    msg = f"⚔️ <b>[프리장 스캘퍼 V86.00] 심해 매수 명중 완료!</b>\n"
                                     msg += f"▫️ 타겟: {html.escape(str(t))}\n"
                                     msg += f"▫️ 팩트 체결수량: {ccld_qty}주 (요청 {target_qty}주)\n"
                                     msg += f"▫️ LIFO 큐(Queue): <b>원본 지층 100% 절대 보존 (본진 디커플링)</b>\n\n"
@@ -444,7 +456,7 @@ async def scheduled_sniper_monitor(context):
                                         tracking_cache[f"AVWAP_TRAP_ODNO_{t}"] = trap_odno
                                         msg += f"🎯 <b>[-0.5% 절대 앵커링 단독 구출 덫 장전 완료]</b>\n"
                                         msg += f"▫️ 구출가: <b>${trap_price:.2f}</b>\n"
-                                        msg += f"▫️ 상태: Fire & Forget 락온. 암살자 퇴근 및 정규장 애프터마켓 종료 시점까지 추가 개입 100% 영구 동결."
+                                        msg += f"▫️ 상태: Fire & Forget 락온. 스캘퍼 퇴근 및 정규장 애프터마켓 종료 시점까지 추가 개입 100% 영구 동결."
                                     else:
                                         msg += f"⚠️ <b>[구출 덫 장전 실패]</b> KIS 서버 통신 오류. 수동 매도 관제 요망."
                                     
@@ -475,6 +487,33 @@ async def scheduled_sniper_monitor(context):
                                         )
                                     except Exception as e:
                                         logging.error(f"🚨 [{t}] VERIFY_TRAP_FILL 상태 저장 통신 에러: {e}")
+                                        
+                                else:
+                                    # 🚨 MODIFIED: [Phantom Pierce (No Fill) Paradox 원천 차단]
+                                    tracking_cache[f"AVWAP_LIMIT_ORDER_PLACED_{t}"] = False
+                                    tracking_cache[f"AVWAP_PLACED_TARGET_TH_{t}"] = 0.0
+                                    tracking_cache[f"AVWAP_TRAP_PLACED_TIME_{t}"] = ""
+                                    tracking_cache[f"AVWAP_BUY_ODNO_{t}"] = ""
+                                    
+                                    state_data = avwap_state_dict.copy()
+                                    state_data.update({
+                                        "limit_order_placed": False,
+                                        "placed_target_th": 0.0,
+                                        "trap_placed_time": "",
+                                        "buy_odno": ""
+                                    })
+                                    
+                                    try:
+                                        await asyncio.wait_for(
+                                            asyncio.to_thread(strategy.v_avwap_plugin.save_state, t, now_est, state_data),
+                                            timeout=5.0
+                                        )
+                                    except Exception as e:
+                                        logging.error(f"🚨 [{t}] VERIFY_TRAP_FILL (No Fill) 상태 저장 통신 에러: {e}")
+                                        
+                                    msg = f"⚠️ <b>[{html.escape(str(t))}] 프리장 스캘퍼 덫 관통 실패 (No Fill)</b>\n▫️ 타점(${t_h:.2f})을 터치했으나 대기열 우선순위 밀림으로 체결되지 않았습니다.\n▫️ 미체결 덫을 회수하였으며, 다음 스캔 시 재장전을 시도합니다."
+                                    try: await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
+                                    except: pass
 
                         elif action == "TRAP_WAIT":
                             pass
@@ -515,6 +554,7 @@ async def scheduled_sniper_monitor(context):
                                 except Exception as e:
                                     logging.error(f"🚨 [{t}] SHUTDOWN 상태 저장 통신 에러: {e}")
                                 
+                                # 🚨 MODIFIED: [V86.00 텍스트 롤오버] 프리장 스캘퍼 명칭 락온
                                 msg = f"🛡️ <b>[프리장 스캘퍼] 당일 작전 종료 (SHUTDOWN)</b>\n▫️ 타겟: {html.escape(str(t))}\n▫️ 사유: {reason}{msg_trap}"
                                 try:
                                     await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
@@ -547,7 +587,7 @@ async def scheduled_sniper_monitor(context):
                         except Exception:
                             if attempt == 2: curr_p = 0.0
                             else: await asyncio.sleep(1.0 * (2**attempt))
-                         
+                        
                     if curr_p <= 0: continue
 
                     sniper_func = getattr(strategy, 'check_sniper_condition', None)
@@ -560,11 +600,12 @@ async def scheduled_sniper_monitor(context):
                             res = {"action": "HOLD", "reason": "스나이퍼 모듈 타임아웃", "limit_price": 0.0}
                     else: 
                         res = {"action": "HOLD", "reason": "스나이퍼 모듈 누락(Bypass)", "limit_price": 0.0}
-                        
+                    
                     if not isinstance(res, dict): res = {} 
              
                     action = res.get("action")
-                    reason = res.get("reason", "")
+                    # 🚨 MODIFIED: [HTML Parser 붕괴 방어] reason 텍스트 맹독성 쉴드 락온
+                    reason = html.escape(str(res.get("reason", "")))
                     limit_p = res.get("limit_price", 0.0)
 
                     # 🚨 [제1헌법] config I/O 타임아웃 래핑 강제
@@ -601,12 +642,12 @@ async def scheduled_sniper_monitor(context):
                      
                             ask_price = 0.0
                             for attempt in range(3):
-                                 try:
+                                try:
                                     await asyncio.sleep(0.06) 
                                     bid_price_val = await asyncio.wait_for(asyncio.to_thread(broker.get_ask_price, t), timeout=10.0)
                                     ask_price = _safe_float(bid_price_val)
                                     break
-                                 except Exception: 
+                                except Exception: 
                                     if attempt == 2: ask_price = 0.0
                                     else: await asyncio.sleep(1.0 * (2**attempt))
                             exec_price = ask_price if ask_price > 0 else limit_p
@@ -648,7 +689,7 @@ async def scheduled_sniper_monitor(context):
                                         except Exception:
                                             ccld_qty = 0
                                         break
-
+    
                                 if ccld_qty < qty:
                                     try:
                                         await asyncio.sleep(0.06) 
@@ -661,7 +702,6 @@ async def scheduled_sniper_monitor(context):
                                         # 🚨 [제1헌법] 비동기 파일 I/O 타임아웃 래핑
                                         try: await asyncio.wait_for(asyncio.to_thread(cfg.set_sniper_buy_locked, t, True), timeout=5.0)
                                         except Exception: pass
-                                    
                                     try:
                                         await asyncio.sleep(0.06) 
                                         exec_history = await asyncio.wait_for(asyncio.to_thread(broker.get_execution_history, t, today_est_str, today_est_str), timeout=15.0)
@@ -770,7 +810,7 @@ async def scheduled_sniper_monitor(context):
                                 order_res = None
                                 
                             odno = order_res.get('odno', '') if isinstance(order_res, dict) else ''
-            
+        
                             if order_res and order_res.get('rt_cd') == '0' and odno:
                                 ccld_qty = 0
                                 for _ in range(4):
@@ -780,7 +820,7 @@ async def scheduled_sniper_monitor(context):
                                         unfilled_check = await asyncio.wait_for(asyncio.to_thread(broker.get_unfilled_orders_detail, t), timeout=10.0)
                                     except Exception: unfilled_check = []
                                     safe_unfilled = unfilled_check if isinstance(unfilled_check, list) else []
-                           
+                      
                                     my_order = next((ox for ox in safe_unfilled if isinstance(ox, dict) and str(ox.get('odno', '')) == odno), None)
                                     if my_order:
                                         ccld_qty = int(_safe_float(my_order.get('tot_ccld_qty')))
@@ -801,11 +841,11 @@ async def scheduled_sniper_monitor(context):
                                         break
     
                                 if ccld_qty < qty:
-                                     try:
-                                         await asyncio.sleep(0.06) 
-                                         await asyncio.wait_for(asyncio.to_thread(broker.cancel_order, t, odno), timeout=10.0)
-                                         await asyncio.sleep(1.0)
-                                     except: pass
+                                    try:
+                                        await asyncio.sleep(0.06) 
+                                        await asyncio.wait_for(asyncio.to_thread(broker.cancel_order, t, odno), timeout=10.0)
+                                        await asyncio.sleep(1.0)
+                                    except: pass
 
                                 if ccld_qty > 0:
                                     if hasattr(cfg, 'set_sniper_sell_locked'): 
