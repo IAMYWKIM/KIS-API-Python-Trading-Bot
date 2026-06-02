@@ -5,12 +5,12 @@
 # 🚨 MODIFIED: [SyntaxError 붕괴 수술] V14 졸업 정산 로직 내부의 else: 구문 들여쓰기(Indentation) 오류로 인한 컴파일 붕괴 원천 교정.
 # 🚨 MODIFIED: [실시간 수동 개입 동기화 팩트 락온] process_auto_sync 호출 시, 무조건 is_snapshot_mode=True를 코어에 전송하여 /record 또는 지층 수정 시 스냅샷이 실시간 덮어써지도록 강제 락온.
 # 🚨 MODIFIED: [타점 역전 UI Illusion 수술] V-REV 가이던스 렌더링 시 actual_qty == 0 팩트 락온.
-# 🚨 MODIFIED: [주말/휴일 블라인드 붕괴 방어] 1일 고정 스캔의 치명적 결함(월요일 동기화 시 금요일 원장 증발 및 CALIB 오염) 원천 차단 및 4일 윈도우 복구 락온.
-# 🚨 MODIFIED: [중복 증식 버그 수술] process_auto_sync 내부에 무한 증식하던 캘리브레이션 데드코드를 100% 영구 소각.
+# 🚨 NEW: [0주 오인 패러독스 소각 & Fact Override] 실제 잔고가 존재함에도 불구하고 새벽 스냅샷의 0주(is_zero_start=True) 상태를 맹신하던 로직을 전면 파기하고, KIS 실잔고 및 큐 장부를 최우선으로 오버라이드하여 Fact Mismatch 원천 차단.
+# 🚨 NEW: [Ghost Balance (유령 잔고) 방어막 주입] KIS 서버 오류로 실잔고가 0주로 반환되었을 때, 실제 당일 매도 체결(sold_today) 내역이 없다면 장부 소각(자동 졸업)을 원천 차단하여 Phantom Graduation 붕괴 완벽 방어.
+# 🚨 NEW: [제1헌법 100% 준수] cfg.overwrite_incremental_ledger, queue_ledger.overwrite_queue 등 파일 I/O 동기화 로직 전역에 wait_for(timeout=10.0) 족쇄를 래핑하여 이벤트 루프 교착 완벽 차단.
 # 🚨 NEW: [Blueprint 4] V-REV 자체 슬라이싱 엔진(15:27~15:56 EST) 다분할 체결 내역 가중평균(VWAP) 합산 로직 정밀 락온.
 # 🚨 MODIFIED: [메모리 오염 뇌관 궁극 소각] context.bot_data 오염 시 발생하는 AttributeError 즉사 버그 방어.
 # 🚨 MODIFIED: [NaN 맹독 전이 및 JSON 직렬화 붕괴 원천 차단] 졸업 정산 시 모든 재무 데이터에 self._safe_float() 정화 필터 강제 락온.
-# ==========================================================
 import logging
 import datetime
 from zoneinfo import ZoneInfo
@@ -72,19 +72,30 @@ class TelegramSyncEngine:
                 if split_ratio > 0.0 and split_date != "":
                     est = ZoneInfo('America/New_York')
                     now_est = datetime.datetime.now(est)
-                    await asyncio.to_thread(self.cfg.apply_stock_split, ticker, split_ratio)
+                    
+                    # 🚨 [제1헌법] 파일 I/O 타임아웃 래핑
+                    try:
+                        await asyncio.wait_for(asyncio.to_thread(self.cfg.apply_stock_split, ticker, split_ratio), timeout=10.0)
+                    except Exception as e: logging.error(f"🚨 액면분할 cfg 반영 타임아웃: {e}")
                      
                     if not getattr(self, 'queue_ledger', None):
                         from queue_ledger import QueueLedger
                         self.queue_ledger = await asyncio.to_thread(QueueLedger)
                         
                     if getattr(self, 'queue_ledger', None):
-                        await asyncio.to_thread(self.queue_ledger.apply_stock_split, ticker, split_ratio)
+                        try:
+                            await asyncio.wait_for(asyncio.to_thread(self.queue_ledger.apply_stock_split, ticker, split_ratio), timeout=10.0)
+                        except Exception as e: logging.error(f"🚨 액면분할 queue_ledger 반영 타임아웃: {e}")
                         
                     if hasattr(self.strategy, 'v_avwap_plugin'):
-                        await asyncio.to_thread(self.strategy.v_avwap_plugin.apply_stock_split, ticker, split_ratio, now_est)
+                        try:
+                            await asyncio.wait_for(asyncio.to_thread(self.strategy.v_avwap_plugin.apply_stock_split, ticker, split_ratio, now_est), timeout=10.0)
+                        except Exception as e: logging.error(f"🚨 액면분할 avwap 상태 반영 타임아웃: {e}")
                      
-                    await asyncio.to_thread(self.cfg.set_last_split_date, ticker, split_date)
+                    try:
+                        await asyncio.wait_for(asyncio.to_thread(self.cfg.set_last_split_date, ticker, split_date), timeout=5.0)
+                    except Exception: pass
+                    
                     split_type = "액면분할" if split_ratio > 1.0 else "액면병합(역분할)"
                     await context.bot.send_message(chat_id, f"✂️ <b>[{html.escape(str(ticker))}] 야후 파이낸스 {split_type} 자동 감지!</b>\n▫️ 감지된 비율: <b>{split_ratio}배</b> (발생일: {html.escape(str(split_date))})\n▫️ 봇이 기존 V14 장부, V-REV 큐 장부, AVWAP 상태 캐시의 수량과 평단가를 100% 무인 자동 소급 조정 완료했습니다.", parse_mode='HTML')
                  
@@ -220,9 +231,12 @@ class TelegramSyncEngine:
                     target_execs = filter_to_est(raw_execs)
 
                 if target_execs:
-                    calibrated_count = await asyncio.to_thread(self.cfg.calibrate_ledger_prices, ticker, target_ledger_str, target_execs)
-                    if calibrated_count > 0:
-                        logging.info(f"🔧 [{ticker}] LOC/MOC 주문 {calibrated_count}건에 대해 실제 체결 단가 소급 업데이트를 완료했습니다.")
+                    try:
+                        calibrated_count = await asyncio.wait_for(asyncio.to_thread(self.cfg.calibrate_ledger_prices, ticker, target_ledger_str, target_execs), timeout=10.0)
+                        if calibrated_count > 0:
+                            logging.info(f"🔧 [{ticker}] LOC/MOC 주문 {calibrated_count}건에 대해 실제 체결 단가 소급 업데이트를 완료했습니다.")
+                    except Exception as e:
+                        logging.error(f"🚨 체결단가 소급 캘리브레이션 타임아웃: {e}")
 
                 full_ledger = await asyncio.to_thread(self.cfg.get_ledger)
                 recs = [r for r in (full_ledger or []) if isinstance(r, dict) and r.get('ticker') == ticker]
@@ -242,7 +256,7 @@ class TelegramSyncEngine:
                 avwap_daily_sell = 0
                 try:
                     if hasattr(self.strategy, 'v_avwap_plugin'):
-                        avwap_state_sync = await asyncio.to_thread(self.strategy.v_avwap_plugin.load_state, ticker, now_est)
+                        avwap_state_sync = await asyncio.wait_for(asyncio.to_thread(self.strategy.v_avwap_plugin.load_state, ticker, now_est), timeout=5.0)
                         if isinstance(avwap_state_sync, dict):
                             avwap_daily_buy = int(self._safe_float(avwap_state_sync.get('daily_bought_qty')))
                             avwap_daily_sell = int(self._safe_float(avwap_state_sync.get('daily_sold_qty')))
@@ -254,8 +268,11 @@ class TelegramSyncEngine:
                 needs_reconstruction = (diff != 0) or (ledger_today_buy != exec_today_buy) or (ledger_today_sell != exec_today_sell)
 
                 if not needs_reconstruction and price_diff >= 0.01:
-                    await asyncio.to_thread(self.cfg.calibrate_avg_price, ticker, actual_avg)
-                    await context.bot.send_message(chat_id, f"🔧 <b>[{html.escape(str(ticker))}] 장부 평단가 미세 오차({price_diff:.4f}) 교정 완료!</b>", parse_mode='HTML')
+                    try:
+                        await asyncio.wait_for(asyncio.to_thread(self.cfg.calibrate_avg_price, ticker, actual_avg), timeout=10.0)
+                        await context.bot.send_message(chat_id, f"🔧 <b>[{html.escape(str(ticker))}] 장부 평단가 미세 오차({price_diff:.4f}) 교정 완료!</b>", parse_mode='HTML')
+                    except Exception as e:
+                        logging.error(f"🚨 장부 평단가 교정 타임아웃: {e}")
                 elif needs_reconstruction:
                     temp_recs = [r for r in recs if r.get('date') != target_ledger_str or 'INIT' in str(r.get('exec_id', ''))]
                     temp_qty, temp_avg, _, _ = await asyncio.to_thread(self.cfg.calculate_holdings, ticker, temp_recs)
@@ -317,8 +334,11 @@ class TelegramSyncEngine:
                             if actual_qty > 0:
                                 for r in new_target_records: r['avg_price'] = actual_avg
                 
-                    await asyncio.to_thread(self.cfg.overwrite_incremental_ledger, ticker, temp_recs, new_target_records)
-                    if gap_qty != 0: await context.bot.send_message(chat_id, f"🔧 <b>[{html.escape(str(ticker))}] 통합 메인 장부(MAIN LEDGER) 비파괴 보정 완료!</b>\n▫️ KIS 실잔고 오차 수량({gap_qty}주)을 역사 보존 상태로 안전하게 교정했습니다.", parse_mode='HTML')
+                    try:
+                        await asyncio.wait_for(asyncio.to_thread(self.cfg.overwrite_incremental_ledger, ticker, temp_recs, new_target_records), timeout=10.0)
+                        if gap_qty != 0: await context.bot.send_message(chat_id, f"🔧 <b>[{html.escape(str(ticker))}] 통합 메인 장부(MAIN LEDGER) 비파괴 보정 완료!</b>\n▫️ KIS 실잔고 오차 수량({gap_qty}주)을 역사 보존 상태로 안전하게 교정했습니다.", parse_mode='HTML')
+                    except Exception as e:
+                        logging.error(f"🚨 증분 장부 덮어쓰기 타임아웃: {e}")
 
                 if is_rev:
                     q_data_before = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) or []
@@ -344,14 +364,19 @@ class TelegramSyncEngine:
 
                         if avwap_qty_global == 0:
                             if hasattr(self.strategy, 'v_avwap_plugin'):
-                                avwap_state = await asyncio.to_thread(self.strategy.v_avwap_plugin.load_state, ticker, now_est)
+                                avwap_state = await asyncio.wait_for(asyncio.to_thread(self.strategy.v_avwap_plugin.load_state, ticker, now_est), timeout=5.0)
                                 if isinstance(avwap_state, dict):
                                     avwap_qty_global = int(self._safe_float(avwap_state.get('qty', 0)))
                     except Exception: pass
                     
                     adjusted_actual_qty = max(0, actual_qty - avwap_qty_global)
                     
+                    # 🚨 [Case 35: Ghost Balance - Phantom Graduation 방어막]
                     if adjusted_actual_qty == 0 and (vrev_ledger_qty > 0 or sold_today_vrev > 0):
+                        if sold_today_vrev == 0 and vrev_ledger_qty > 0:
+                            await context.bot.send_message(chat_id, f"🚨 <b>[{html.escape(str(ticker))} 유령 잔고 방어 가동]</b>\nKIS 실잔고가 0주로 조회되었으나, 당일 매도 체결 내역이 0건입니다. 통신 오류(Ghost Balance)일 가능성이 매우 높아 장부 강제 소각(자동 졸업)을 차단합니다.\n▫️ HTS 등을 통해 수동으로 100% 전량 매도한 상태라면 <code>/reset</code> 명령어를 사용하여 봇을 초기화하십시오.", parse_mode='HTML')
+                            return "GHOST_BALANCE_BLOCKED"
+
                         if actual_qty == 0 and avwap_qty_global > 0:
                             try:
                                 if tracking_cache_global and isinstance(tracking_cache_global, dict):
@@ -365,7 +390,7 @@ class TelegramSyncEngine:
                                         'strikes': int(self._safe_float(tracking_cache_global.get(f"AVWAP_STRIKES_{ticker}", 0))) if tracking_cache_global else 0,
                                         'buy_odno': "", 'trap_odno': "", 'T_H': 0.0, 'limit_order_placed': False, 'placed_target_th': 0.0, 'trap_placed_time': ""
                                     }
-                                    await asyncio.to_thread(self.strategy.v_avwap_plugin.save_state, ticker, now_est, state_data)
+                                    await asyncio.wait_for(asyncio.to_thread(self.strategy.v_avwap_plugin.save_state, ticker, now_est, state_data), timeout=5.0)
                             except Exception: pass
 
                         added_seed = 0.0
@@ -411,7 +436,7 @@ class TelegramSyncEngine:
                               
                                 q_data_before.append({"date": now_est.strftime('%Y-%m-%d %H:%M:%S'), "qty": missing_qty, "price": missing_price, "exec_id": "MANUAL_SYNC"})
                                 vrev_ledger_qty = tot_q
-                                await asyncio.to_thread(self.queue_ledger.overwrite_queue, ticker, q_data_before)
+                                await asyncio.wait_for(asyncio.to_thread(self.queue_ledger.overwrite_queue, ticker, q_data_before), timeout=10.0)
 
                             total_invested = sum(self._safe_float(item.get("qty")) * self._safe_float(item.get("price")) for item in q_data_before if isinstance(item, dict))
                             q_avg_price = total_invested / vrev_ledger_qty if vrev_ledger_qty > 0 else 0.0
@@ -428,7 +453,7 @@ class TelegramSyncEngine:
                                     else: await asyncio.sleep(1.0 * (2**attempt))
                             
                             clear_price = actual_clear_price if actual_clear_price > 0.0 else (curr_p if curr_p and curr_p > 0 else q_avg_price * 1.006)
-                            snapshot = await asyncio.to_thread(self.strategy.capture_vrev_snapshot, ticker, clear_price, q_avg_price, vrev_ledger_qty)
+                            snapshot = await asyncio.wait_for(asyncio.to_thread(self.strategy.capture_vrev_snapshot, ticker, clear_price, q_avg_price, vrev_ledger_qty), timeout=10.0)
                             
                             if snapshot and isinstance(snapshot, dict):
                                 realized_pnl = self._safe_float(snapshot.get('realized_pnl', 0.0))
@@ -438,7 +463,7 @@ class TelegramSyncEngine:
                                 if realized_pnl > 0 and compound_rate > 0:
                                     added_seed = realized_pnl * compound_rate
                                     current_seed = self._safe_float(await asyncio.to_thread(self.cfg.get_seed, ticker))
-                                    await asyncio.to_thread(self.cfg.set_seed, ticker, current_seed + added_seed)
+                                    await asyncio.wait_for(asyncio.to_thread(self.cfg.set_seed, ticker, current_seed + added_seed), timeout=10.0)
                                     
                                 cap_dt = snapshot.get('captured_at', now_est)
                                 cap_dt_str = cap_dt if isinstance(cap_dt, str) else cap_dt.strftime('%Y-%m-%d')
@@ -454,7 +479,7 @@ class TelegramSyncEngine:
                                     "profit": realized_pnl, "yield": yield_pct, "trades": q_data_before 
                                 }
                                 hist_data.append(new_hist)
-                                await asyncio.to_thread(self.cfg._save_json, self.cfg.FILES["HISTORY"], hist_data)
+                                await asyncio.wait_for(asyncio.to_thread(self.cfg._save_json, self.cfg.FILES["HISTORY"], hist_data), timeout=10.0)
                                 _vrev_snap_ok = True
                                 
                         except Exception as e:
@@ -462,7 +487,7 @@ class TelegramSyncEngine:
                             snapshot = None
                              
                         if getattr(self, 'queue_ledger', None):
-                            await asyncio.to_thread(self.queue_ledger.sync_with_broker, ticker, 0)
+                            await asyncio.wait_for(asyncio.to_thread(self.queue_ledger.sync_with_broker, ticker, 0), timeout=10.0)
                          
                         if _vrev_snap_ok:
                             msg = f"🎉 <b>[{html.escape(str(ticker))} V-REV 잭팟 스윕(전량 익절) 감지!]</b>\n▫️ 잔고가 0주가 되어 LIFO 큐 지층을 100% 소각(초기화)했습니다."
@@ -470,7 +495,7 @@ class TelegramSyncEngine:
                             await context.bot.send_message(chat_id, msg, parse_mode='HTML')
                             if snapshot and isinstance(snapshot, dict):
                                 try:
-                                    img_path = await asyncio.to_thread(
+                                    img_path = await asyncio.wait_for(asyncio.to_thread(
                                         self.view.create_profit_image, 
                                         ticker=ticker, 
                                         profit=self._safe_float(snapshot.get('realized_pnl', 0.0)), 
@@ -478,7 +503,7 @@ class TelegramSyncEngine:
                                         invested=self._safe_float(snapshot.get('avg_price', 0.0)) * self._safe_float(snapshot.get('cleared_qty', 0)), 
                                         revenue=self._safe_float(snapshot.get('clear_price', 0.0)) * self._safe_float(snapshot.get('cleared_qty', 0)), 
                                         end_date=cap_dt_str[:10]
-                                    )
+                                    ), timeout=15.0)
                                     if img_path:
                                         def _read_img2(p):
                                             with open(p, 'rb') as f_in: return f_in.read()
@@ -487,7 +512,7 @@ class TelegramSyncEngine:
                                             if str(img_path).lower().endswith('.gif'): await context.bot.send_animation(chat_id=chat_id, animation=img_bytes2)
                                             else: await context.bot.send_photo(chat_id=chat_id, photo=img_bytes2)
                                         except OSError: pass
-                                except Exception: pass
+                                except Exception as img_e: logging.error(f"🚨 수익 이미지 생성 에러: {img_e}")
                         else:
                             await context.bot.send_message(chat_id, f"⚠️ <b>[{html.escape(str(ticker))} V-REV 0주 강제 정산 완료]</b>\n▫️ 0주를 확인하여 큐를 안전하게 비웠으나 통신 지연으로 졸업 카드는 생략되었습니다.", parse_mode='HTML')
                             
@@ -528,7 +553,7 @@ class TelegramSyncEngine:
                                         except OSError: pass
                                     raise write_err
 
-                            await asyncio.to_thread(_write_v_state, v_state, vwap_state_file)
+                            await asyncio.wait_for(asyncio.to_thread(_write_v_state, v_state, vwap_state_file), timeout=10.0)
                         except OSError: pass
                         except Exception: pass
 
@@ -542,7 +567,7 @@ class TelegramSyncEngine:
                         
                         calibrated = False
                         if getattr(self, 'queue_ledger', None):
-                            calibrated = await asyncio.to_thread(self.queue_ledger.sync_with_broker, ticker, adjusted_actual_qty, 0.0, actual_clear_price_for_sync)
+                            calibrated = await asyncio.wait_for(asyncio.to_thread(self.queue_ledger.sync_with_broker, ticker, adjusted_actual_qty, 0.0, actual_clear_price_for_sync), timeout=10.0)
                         
                         if calibrated: await context.bot.send_message(chat_id, f"🔧 <b>[{html.escape(str(ticker))}] V-REV 큐(Queue) 비파괴 보정 및 리앵커링 완료!</b>\n▫️ 수동 매도 물량(<b>{gap_qty}주</b>)을 LIFO 큐에서 안전하게 차감하고, 수익금만큼 잔여 지층의 평단가를 일괄 차감했습니다.", parse_mode='HTML')
                          
@@ -578,7 +603,7 @@ class TelegramSyncEngine:
                         if not isinstance(q_data, list): q_data = []
                         q_data.append({"date": now_est.strftime('%Y-%m-%d %H:%M:%S'), "qty": gap_qty, "price": real_buy_price, "exec_id": f"MANUAL_BUY_{int(time.time())}"})
                         try:
-                            await asyncio.to_thread(self.queue_ledger.overwrite_queue, ticker, q_data)
+                            await asyncio.wait_for(asyncio.to_thread(self.queue_ledger.overwrite_queue, ticker, q_data), timeout=10.0)
                             await context.bot.send_message(chat_id, f"🔧 <b>[{html.escape(str(ticker))}] V-REV 큐(Queue) 수동 매수 편입 완료!</b>\n▫️ KIS 실잔고에 맞춰 신규 지층(<b>{gap_qty}주</b>, 추정단가 ${real_buy_price})을 정밀 추가했습니다.", parse_mode='HTML')
                         except Exception: pass
 
@@ -586,7 +611,12 @@ class TelegramSyncEngine:
                     sold_today_v14 = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01") if target_execs else 0
                     sold_today_v14 = max(0, sold_today_v14 - avwap_daily_sell)
                     
+                    # 🚨 [Case 35: Ghost Balance - Phantom Graduation 방어막]
                     if actual_qty == 0 and (ledger_qty > 0 or sold_today_v14 > 0):
+                        if sold_today_v14 == 0 and ledger_qty > 0:
+                            await context.bot.send_message(chat_id, f"🚨 <b>[{html.escape(str(ticker))} 유령 잔고 방어 가동]</b>\nKIS 실잔고가 0주로 조회되었으나, 당일 매도 체결 내역이 0건입니다. 통신 오류(Ghost Balance)일 가능성이 매우 높아 장부 강제 소각(자동 졸업)을 차단합니다.\n▫️ HTS 등을 통해 수동으로 100% 전량 매도한 상태라면 <code>/reset</code> 명령어를 사용하여 봇을 초기화하십시오.", parse_mode='HTML')
+                            return "GHOST_BALANCE_BLOCKED"
+
                         today_est_str = now_est.strftime('%Y-%m-%d')
                         prev_c = 0.0
                         for attempt in range(3):
@@ -600,7 +630,7 @@ class TelegramSyncEngine:
                                 else: await asyncio.sleep(1.0 * (2**attempt))
                 
                         try:
-                            grad_res = await asyncio.to_thread(self.cfg.archive_graduation, ticker, today_est_str, prev_c)
+                            grad_res = await asyncio.wait_for(asyncio.to_thread(self.cfg.archive_graduation, ticker, today_est_str, prev_c), timeout=10.0)
                             new_hist, added_seed = grad_res if isinstance(grad_res, tuple) and len(grad_res) >= 2 else (None, 0.0)
 
                             if new_hist and isinstance(new_hist, dict):
@@ -609,7 +639,7 @@ class TelegramSyncEngine:
                                 await context.bot.send_message(chat_id, msg, parse_mode='HTML')
                                 
                                 try:
-                                    img_path = await asyncio.to_thread(
+                                    img_path = await asyncio.wait_for(asyncio.to_thread(
                                         self.view.create_profit_image,
                                         ticker=ticker, 
                                         profit=self._safe_float(new_hist.get('profit', 0.0)), 
@@ -617,7 +647,7 @@ class TelegramSyncEngine:
                                         invested=self._safe_float(new_hist.get('invested', 0.0)), 
                                         revenue=self._safe_float(new_hist.get('revenue', 0.0)), 
                                         end_date=new_hist.get('end_date', target_ledger_str)
-                                    )
+                                    ), timeout=15.0)
                                     if img_path:
                                         def _read_img3(p):
                                             with open(p, 'rb') as f_in: return f_in.read()
@@ -626,14 +656,14 @@ class TelegramSyncEngine:
                                             if str(img_path).lower().endswith('.gif'): await context.bot.send_animation(chat_id=chat_id, animation=img_bytes3)
                                             else: await context.bot.send_photo(chat_id=chat_id, photo=img_bytes3)
                                         except OSError: pass
-                                except Exception: pass
+                                except Exception as img_e: logging.error(f"🚨 수익 이미지 생성 타임아웃: {img_e}")
                             else:
                                 full_ledger2 = await asyncio.to_thread(self.cfg.get_ledger) or []
                                 if not isinstance(full_ledger2, list): full_ledger2 = []
                                 all_recs = [r for r in full_ledger2 if isinstance(r, dict) and r.get('ticker') != ticker]
-                                await asyncio.to_thread(self.cfg._save_json, self.cfg.FILES["LEDGER"], all_recs)
+                                await asyncio.wait_for(asyncio.to_thread(self.cfg._save_json, self.cfg.FILES["LEDGER"], all_recs), timeout=10.0)
                                 await context.bot.send_message(chat_id, f"⚠️ <b>[{html.escape(str(ticker))} 강제 정산 완료]</b>\n잔고가 0주이나 마이너스 수익 상태이므로 명예의 전당 박제 없이 장부를 비우고 새출발 타점을 장전합니다.", parse_mode='HTML')
-                        except Exception: pass
+                        except Exception as grad_e: logging.error(f"🚨 졸업 정산 파일 I/O 에러: {grad_e}")
 
                 return "SUCCESS"
 
@@ -868,16 +898,24 @@ class TelegramSyncEngine:
 
                 logic_qty = actual_qty
                 is_zero_start_fact = (actual_qty == 0)
+                
+                # 🚨 NEW: [0주 오인 패러독스 소각 & Fact Override 락온] UI 렌더링 시에도 실잔고/장부수량이 있다면 0주 상태를 강제 폐기
+                if ver == "V_REV":
+                    try:
+                        if getattr(self, 'queue_ledger', None):
+                            q_data_check = await asyncio.to_thread(self.queue_ledger.get_queue, t)
+                            if isinstance(q_data_check, list):
+                                vrev_ledger_qty_check = sum(int(self._safe_float(item.get("qty"))) for item in q_data_check if isinstance(item, dict))
+                                if vrev_ledger_qty_check > 0:
+                                    is_zero_start_fact = False
+                    except Exception: pass
+
                 if cached_snap:
-                    if actual_qty == 0:
-                        logic_qty = 0
-                        is_zero_start_fact = True
+                    # 🚨 [스냅샷 절대 상속의 파기] 실제 보유량이 있으면 스냅샷의 0주 상태를 오버라이드
+                    if not is_zero_start_fact:
+                        pass 
                     else:
-                        if "total_q" in cached_snap:
-                            logic_qty = int(self._safe_float(cached_snap.get("total_q", 0)))
-                        elif "initial_qty" in cached_snap:
-                             logic_qty = int(self._safe_float(cached_snap.get("initial_qty", 0)))
-                        is_zero_start_fact = bool(cached_snap.get("is_zero_start", logic_qty == 0))
+                        is_zero_start_fact = bool(cached_snap.get("is_zero_start", True))
 
                 try:
                      jobs = context.job_queue.jobs() if context.job_queue else []

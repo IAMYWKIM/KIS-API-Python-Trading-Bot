@@ -1,10 +1,10 @@
 # ==========================================================
 # FILE: strategy_reversion.py
 # ==========================================================
-# 🚨 MODIFIED: [스냅샷 절대 헌법 수복] 장중 매수로 인한 앵커 돌변을 막기 위해, 매수 앵커 산출 시 오직 스냅샷의 is_zero_start 팩트만을 '절대 상속(Inherit)' 받도록 원상 복구 및 락온.
 # 🚨 MODIFIED: [스냅샷 오염 전이 절대 방어 소각] 이전 수술에서 도입된 실잔고(actual_qty) 강제 평가 데드코드를 전면 소각하고 스냅샷 절대주의로 회귀.
 # 🚨 MODIFIED: [P-매매 오리지널 비율 롤백] 기보유 상태의 매수 타점을 P-매매 오리지널 비율(0.998, 0.993)로 팩트 교정 락온.
 # 🚨 MODIFIED: [제2헌법 준수] 사용되지 않는 유령 변수(residual) 데드코드 100% 영구 소각 및 파일 I/O 에러 로깅 강제 결속.
+# 🚨 NEW: [Fact Override 락온] 수동 개입(/record, /add_q)으로 인해 실잔고 또는 큐에 수량이 편입되었을 경우, 새벽 스냅샷의 0주(is_zero_start=True) 맹신을 파기하고 실시간 팩트(False)로 오버라이드하여 매수 타점 역전 패러독스를 원천 차단.
 import math
 import os
 import json
@@ -197,7 +197,7 @@ class ReversionStrategy:
 
         cached_plan = self.load_daily_snapshot(ticker)
         
-        # 🚨 MODIFIED: [스냅샷 절대 헌법 수복] Logic Bomb 방어막 소각. 스냅샷은 절대적입니다.
+        # 🚨 [스냅샷 절대 헌법 수복] 장중(is_snapshot_mode=False) 호출 시에는 무조건 스냅샷을 돌려줍니다.
         if not is_snapshot_mode and cached_plan:
             return cached_plan
 
@@ -226,26 +226,26 @@ class ReversionStrategy:
         else:
             trigger_upper = 0.0
 
-        # 🚨 MODIFIED: [스냅샷 절대 상속 및 실시간 동기화 결속]
-        # 장중(is_snapshot_mode=True) 스냅샷을 오버라이드 하더라도, 그날 아침(Genesis)에 박제된 is_zero_start 팩트는 100% 무조건 상속받습니다.
         if cached_plan:
             is_zero_val = cached_plan.get("is_zero_start")
             if is_zero_val is None:
-                tot_q = int(self._safe_float(cached_plan.get("snapshot_total_q", cached_plan.get("total_q", -1))))
-                is_zero_start_session = (tot_q == 0)
+                tot_q_snap = int(self._safe_float(cached_plan.get("snapshot_total_q", cached_plan.get("total_q", -1))))
+                is_zero_start_session = (tot_q_snap == 0)
             else:
                 is_zero_start_session = str(is_zero_val).lower() == 'true'
         else:
-            # 기존 스냅샷이 없다면 (e.g. 새벽 4시 첫 스캔, 또는 리셋 직후) 실잔고를 기준으로 평가
             is_zero_start_session = (actual_qty == 0)
 
-        # 🚨 [당일 지층 매수 앵커 절대 락온] (오직 상속받은 is_zero_start_session 팩트만 신뢰)
+        # 🚨 NEW: [Fact Override 방어막]
+        # 수동 개입(/record, /add_q 등)으로 인해 실잔고(actual_qty)나 큐 장부(total_q)에 실물이 편입되었다면,
+        # 과거 스냅샷의 0주(is_zero_start=True) 팩트를 즉각 파기(False)하여 기보유 앵커(0.998/0.993)를 정상 산출합니다.
+        if is_zero_start_session and (actual_qty > 0 or total_q > 0):
+            is_zero_start_session = False
+
         if is_zero_start_session:
             p1_trigger = round(prev_c * 1.15, 2)
             p2_trigger = round(prev_c * 0.999, 2)
         else:
-            # 🚨 [Reset 직후 큐 장부가 비어있을 때의 Fallback 락온]
-            # 🚨 MODIFIED: [P-매매 오리지널 비율 롤백] 기보유 상태 타점을 0.998, 0.993으로 강제 락온
             safe_anchor = l1_price if l1_price > 0.0 else (actual_avg if actual_avg > 0.0 else prev_c)
             p1_trigger = round(safe_anchor * 0.998, 2)
             p2_trigger = round(safe_anchor * 0.993, 2)
