@@ -2,16 +2,18 @@
 # FILE: scheduler_sniper.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 34대 엣지 케이스 완벽 결속 교차 검증 완료
+# 🚨 MODIFIED: [수동 매수 제어망 팩트 동기화] tracking_cache에서 manual_suspend 상태를 추출하여 avwap_state_dict 객체에 원자적으로 주입, 코어 엔진(get_decision)이 수동 관망 여부를 인지하도록 락온.
+# 🚨 MODIFIED: [스케줄러 재가동 기억상실 방어] 봇 재가동 시 JSON 상태 파일(load_state)에서 manual_suspend 팩트를 읽어 캐시에 안전하게 복원.
 # 🚨 MODIFIED: [Phantom Fill 맹독성 버그 수술] KIS 미체결 대기열 스캔 로직을 주입하여, YF 차트 관통 시 KIS 원장에 주문이 미체결로 살아있으면 가상 체결(Virtual Fill)을 보류하는 `is_buy_unfilled` 플래그 결속.
 # 🚨 MODIFIED: [API 통신 지연 Fail-Open 팩트 교정] KIS 원장 스캔 시 API가 `False`를 반환할 때 지수 백오프를 건너뛰는 논리적 허점을 소각하고, 정확히 3회 재시도 후 Fail-Open 되도록 락온.
 # 🚨 MODIFIED: [Case 34 망각 치료 및 메모리 덮어쓰기] KIS DB가 동기화되어 매도 덫 전송이 성공(Success) 시, 누락된 체결 팩트(qty, avg_price)를 state_data와 tracking_cache에 하드코딩 강제 주입하여 Virtual Fill 체결 인지망 영구 사수.
 # 🚨 MODIFIED: [Case 34 잔고 부족(DB Lag) 무한 멱등성 락온] PLACE_SELL_TRAP 거절(Reject) 시 limit_order_placed = True 상태를 보존하여 다음 1분 사이클에서 무한 재시도(Retry) 격발.
 # 🚨 MODIFIED: [Action Signal Mismatch 수술] 스케줄러 통신망 단절 방어를 위해 매도 격발 시그널을 'PLACE_SELL_TRAP'으로 정밀 교정 완료.
-# 🚨 MODIFIED: [매수 4% 동적 트레일링 락온] UPDATE_BUY_TRAP 시그널을 수신하여 기존 주문을 취소(Cancel)하고 4% 하락가에 덫을 갱신(Replace)하는 원자적 통신 이식
-# 🚨 MODIFIED: [매도 +2% 지정가 및 즉각 퇴근] PLACE_SELL_TRAP 시그널 수신 시, +2% 매도 덫을 1회 장전하고 성공 즉시 봇 상태를 영구 동결(shutdown=True)하여 퇴근(Fire & Forget)
-# 🚨 MODIFIED: [09:30 세션 리셋 및 정규장 차단] CANCEL_BUY_AND_SHUTDOWN 라우팅으로 미체결 매수 덫 강제 취소 락온 및 좀비 주문번호(buy_odno) 명시적 메모리 소각
-# 🚨 MODIFIED: [상태 다이어트] tracking_low, 16:00 대기 등 불필요해진 레거시 라우팅 전면 영구 소각
-# 🚨 MODIFIED: [HTML Parser 붕괴 방어] Telegram 타전을 위한 reason 텍스트 html.escape 100% 강제 래핑
+# 🚨 MODIFIED: [매수 4% 동적 트레일링 락온] UPDATE_BUY_TRAP 시그널을 수신하여 기존 주문을 취소(Cancel)하고 4% 하락가에 덫을 갱신(Replace)하는 원자적 통신 이식.
+# 🚨 MODIFIED: [매도 +2% 지정가 및 즉각 퇴근] PLACE_SELL_TRAP 시그널 수신 시, +2% 매도 덫을 1회 장전하고 성공 즉시 봇 상태를 영구 동결(shutdown=True)하여 퇴근(Fire & Forget).
+# 🚨 MODIFIED: [09:30 세션 리셋 및 정규장 차단] CANCEL_BUY_AND_SHUTDOWN 라우팅으로 미체결 매수 덫 강제 취소 락온 및 좀비 주문번호(buy_odno) 명시적 메모리 소각.
+# 🚨 MODIFIED: [상태 다이어트] tracking_low, 16:00 대기 등 불필요해진 레거시 라우팅 전면 영구 소각.
+# 🚨 MODIFIED: [HTML Parser 붕괴 방어] Telegram 타전을 위한 reason 텍스트 html.escape 100% 강제 래핑.
 # ==========================================================
 import logging
 import datetime
@@ -33,7 +35,7 @@ from scheduler_core import is_market_open
 def _safe_float(val):
     try:
         f_val = float(str(val or 0.0).replace(',', ''))
-        if math.isnan(f_val) or math.isinf(val):
+        if math.isnan(f_val) or math.isinf(f_val):
             return 0.0
         return f_val
     except Exception:
@@ -173,7 +175,7 @@ async def scheduled_sniper_monitor(context):
                         actual_qty = int(_safe_float(h.get('qty', 0)))
                         if not is_avwap_hybrid:
                             continue
-                 
+                  
                     # ==============================================================
                     # 1. 새벽 수금원 (동적 트레일링 & Fire & Forget 스캘퍼) 본진 구출 로직 시작
                     # ==============================================================
@@ -192,6 +194,8 @@ async def scheduled_sniper_monitor(context):
                                     tracking_cache[f"AVWAP_BUY_ODNO_{t}"] = saved_state.get('buy_odno', "")
                                     tracking_cache[f"AVWAP_TRAP_PLACED_TIME_{t}"] = saved_state.get('trap_placed_time', "")
                                     tracking_cache[f"AVWAP_TRACKING_HIGH_{t}"] = saved_state.get('tracking_high', 0.0)
+                                    # 🚨 NEW: [수동 매수 제어 상태 로드] 스케줄러 재가동 시에도 안전하게 복원
+                                    tracking_cache[f"AVWAP_MANUAL_SUSPEND_{t}"] = saved_state.get('manual_suspend', False)
                             except Exception: pass
                             tracking_cache[f"AVWAP_INIT_{t}"] = True
                         
@@ -200,7 +204,7 @@ async def scheduled_sniper_monitor(context):
                         target_base = base_map.get(t, t) 
                         avwap_qty = tracking_cache.get(f"AVWAP_QTY_{t}", 0)
                         avwap_avg = tracking_cache.get(f"AVWAP_AVG_{t}", 0.0)
-             
+              
                         exec_curr_p, base_curr_p = 0.0, 0.0
                         for attempt in range(3):
                             try:
@@ -264,7 +268,9 @@ async def scheduled_sniper_monitor(context):
                             "placed_target_th": tracking_cache.get(f"AVWAP_PLACED_TARGET_TH_{t}", 0.0),
                             "trap_placed_time": tracking_cache.get(f"AVWAP_TRAP_PLACED_TIME_{t}", ""),
                             "tracking_high": tracking_cache.get(f"AVWAP_TRACKING_HIGH_{t}", 0.0),
-                            "is_buy_unfilled": is_buy_unfilled # 🚨 NEW: 검증된 팩트 전송
+                            "is_buy_unfilled": is_buy_unfilled, # 🚨 NEW: 검증된 팩트 전송
+                            # 🚨 NEW: [수동 관망 모드 코어 주입] 팩트를 코어 엔진으로 인계
+                            "manual_suspend": tracking_cache.get(f"AVWAP_MANUAL_SUSPEND_{t}", False)
                         }
                  
                         h_t = safe_holdings.get(t) or {}
@@ -289,7 +295,7 @@ async def scheduled_sniper_monitor(context):
                             decision = {}
 
                         if not isinstance(decision, dict): decision = {} 
-             
+              
                         action = decision.get("action")
                         reason = html.escape(str(decision.get("reason", "")))
                         target_price = _safe_float(decision.get("target_price", 0.0))
@@ -501,7 +507,7 @@ async def scheduled_sniper_monitor(context):
                                 await asyncio.sleep(2.0)
                             
                             if has_unfilled: continue
-                            
+                           
                             ask_price = 0.0
                             for attempt in range(3):
                                 try:
@@ -613,7 +619,7 @@ async def scheduled_sniper_monitor(context):
                         upward_mode = await asyncio.wait_for(asyncio.to_thread(getattr(cfg, 'get_upward_sniper_mode', lambda x: False), t), timeout=5.0)
                     except Exception:
                         upward_mode = False
-                        
+                    
                     is_upward_active = upward_mode and not is_rev and not sniper_sell_locked and master_switch != "DOWN_ONLY"
                     if is_zero_start_session: is_upward_active = False
 

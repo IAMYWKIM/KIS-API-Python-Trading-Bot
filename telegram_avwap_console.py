@@ -2,6 +2,7 @@
 # FILE: telegram_avwap_console.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 3중 딥다이브 교차 검증(Async I/O 족쇄, State Mismatch 방어, Float 정밀도 사수) 통과 완료.
+# 🚨 MODIFIED: [수동 매수 제어망 UI 결속] manual_suspend 팩트를 스키마에서 추출하여, 매수 전(0주) 상태일 때 '주문하기 ↔ 취소하기' 토글 버튼을 조건부 렌더링하는 로직 100% 락온.
 # 🚨 MODIFIED: [Time Paradox UI 렌더링 붕괴 수술] 관제탑(UI)에서 야후 파이낸스 1분봉 관통 시간을 연산할 때, 전일(Yesterday) 데이터 혼입을 막기 위해 무조건 `now_est.date()` 로 슬라이싱하도록 100% 팩트 교정 완료.
 # 🚨 MODIFIED: [UI 관통 시점 추적 팩트 롤오버] 매수 덫 관통 시점을 스캔할 때 04:01부터 전부 스캔하던 오류를 고치고, '실제 매수 덫이 장전/갱신된 시점(trap_placed_time)' 이후부터 스캔하도록 논리 팩트 락온.
 # 🚨 MODIFIED: [고성능 클라우드 TPS 방어] asyncio.gather 로 인한 동시 격발 폭주(Rate Limit)를 막기 위해 순차적(Sequential) await 및 0.06초 샌드위치 지연 강제 락온.
@@ -180,6 +181,8 @@ class AvwapConsolePlugin:
                         tracking_cache[f"AVWAP_BUY_ODNO_{t}"] = str(saved_state.get('buy_odno') or "")
                         tracking_cache[f"AVWAP_T_H_{t}"] = self._safe_float(saved_state.get('buy_target')) 
                         tracking_cache[f"AVWAP_TRACKING_HIGH_{t}"] = self._safe_float(saved_state.get('tracking_high'))
+                        # NEW: [수동 제어 플래그 추출] 저장된 상태에서 manual_suspend 팩트를 동기화하여 UI 상태 렌더링에 이식
+                        tracking_cache[f"AVWAP_MANUAL_SUSPEND_{t}"] = bool(saved_state.get('manual_suspend', False))
                         
                     tracking_cache[f"AVWAP_INIT_{t}"] = True
                 except Exception as e:
@@ -237,6 +240,9 @@ class AvwapConsolePlugin:
             t_h = self._safe_float(tracking_cache.get(f"AVWAP_T_H_{t}"))
             tracking_high_cache = self._safe_float(tracking_cache.get(f"AVWAP_TRACKING_HIGH_{t}"))
             
+            # NEW: [상태 메시지 렌더링 락온] 수동 관망 중인지 판별 플래그 추출
+            is_manual_suspend = tracking_cache.get(f"AVWAP_MANUAL_SUSPEND_{t}", False)
+            
             h_t = holdings.get(t) or {}
             main_actual_avg = self._safe_float(h_t.get('avg', 0.0))
             actual_qty = int(self._safe_float(h_t.get('qty', 0)))
@@ -283,6 +289,9 @@ class AvwapConsolePlugin:
                 status_txt = "🛑 당일 영구동결 (SHUTDOWN 퇴근)"
             elif avwap_qty > 0:
                 status_txt = "🎯 +2% 단독 구출 덫 장전 완료 및 봇 조기 퇴근 (Fire & Forget)"
+            # NEW: [수동 관망 모드 표출]
+            elif is_manual_suspend:
+                status_txt = "⏸️ 수동 관망 중 (매수 덫 일시 정지)"
             elif limit_order_placed and t_h > 0:
                 status_txt = f"⚡ 동적 추적 ➡️ [지정가 매수 덫 갱신 중: ${t_h:.2f}]"
             elif curr_time < time_0401:
@@ -301,7 +310,9 @@ class AvwapConsolePlugin:
                     "limit_order_placed": limit_order_placed,
                     "placed_target_th": tracking_cache.get(f"AVWAP_PLACED_TARGET_TH_{t}", 0.0),
                     "trap_placed_time": str(tracking_cache.get(f"AVWAP_TRAP_PLACED_TIME_{t}") or ""),
-                    "tracking_high": tracking_high_cache
+                    "tracking_high": tracking_high_cache,
+                    # NEW: [수동 매수 제어 상태 인계] 퀀트 코어가 타점 장전을 바이패스할 수 있도록 상태 주입
+                    "manual_suspend": is_manual_suspend
                 }
                 
                 avwap_base_ticker = 'SOXX' if t == 'SOXL' else ('QQQ' if t == 'TQQQ' else t)
@@ -347,6 +358,9 @@ class AvwapConsolePlugin:
                         status_txt = f"🛑 셧다운 격발 ({reason})" if reason and action == 'SHUTDOWN' else "🛑 당일 영구동결 (SHUTDOWN 퇴근)"
                     elif avwap_qty > 0:
                         status_txt = "🎯 +2% 단독 구출 덫 장전 완료 및 봇 조기 퇴근 (Fire & Forget)"
+                    # NEW: [수동 관망 모드 표출]
+                    elif is_manual_suspend:
+                        status_txt = "⏸️ 수동 관망 중 (매수 덫 일시 정지)"
                     elif limit_order_placed and t_h > 0:
                         status_txt = f"⚡ 동적 추적 ➡️ [지정가 매수 덫 갱신 중: ${t_h:.2f}]"
                     elif curr_time < time_0401:
@@ -400,7 +414,13 @@ class AvwapConsolePlugin:
             if is_holiday:
                 keyboard.append([InlineKeyboardButton(f"💤 [{ticker_clean}] 증시 휴장일", callback_data="AVWAP_SET:REFRESH:NONE")])
             elif status_code in ["PRE", "REG"]:
-                if avwap_qty > 0:
+                # NEW: [수동 매수 제어망 토글 렌더링] 0주 대기 상태일 때만 수동 주문/취소 버튼 표출
+                if avwap_qty == 0 and not is_shutdown:
+                    if is_manual_suspend:
+                        keyboard.append([InlineKeyboardButton(f"▶️ {ticker_clean} 수동으로 주문하기", callback_data=f"AVWAP_SET:RESUME_BUY:{t}")])
+                    else:
+                        keyboard.append([InlineKeyboardButton(f"⏸️ {ticker_clean} 주문 취소하기", callback_data=f"AVWAP_SET:PAUSE_BUY:{t}")])
+                elif avwap_qty > 0:
                     keyboard.append([InlineKeyboardButton(f"🧯 {ticker_clean} 스캘퍼 수동 청산 (0주 락온)", callback_data=f"AVWAP_SET:SYNC_ZERO:{t}")])
             else:
                 keyboard.append([InlineKeyboardButton(f"⛔ [{ticker_clean}] 장마감 (수동 제어 불가)", callback_data="AVWAP_SET:REFRESH:NONE")])

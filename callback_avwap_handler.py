@@ -2,6 +2,7 @@
 # FILE: callback_avwap_handler.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 3중 딥다이브 교차 검증(Async I/O 족쇄, State Mismatch 방어, Float 정밀도 사수) 통과 완료.
+# 🚨 NEW: [수동 매수 제어망 이식] PAUSE_BUY(주문 취소하기) 및 RESUME_BUY(수동으로 주문하기) 콜백 라우팅을 신규 락온하여 매수 덫을 원자적으로 일시 정지(Cancel)하고 관망 상태로 전환하는 기능 결속 완료.
 # 🚨 MODIFIED: [V86.00 텍스트 팩트 롤오버 궁극 수술] 하위 알림 메시지에 잔존하던 '딥-레스큐 암살자' 및 '암살자 물량' 레거시 명칭을 100% 영구 소각하고 '새벽 수금원(스캘퍼)' 퀀트 네이밍으로 팩트 교정 완료.
 # 🚨 MODIFIED: [딥-레스큐 V84.00 전면 리빌딩] 100% 자율주행 아키텍처 도입에 따른 데드코드 영구 소각.
 # 🚨 MODIFIED: [수동 제어망 완전 소각] MANUAL_FIRE_REQ, MANUAL_FIRE_EXEC, MANUAL_CANCEL_REQ 등 팻핑거 개입을 유발하는 모든 라우팅과 연계 로직을 100% 진공 압축(제거).
@@ -104,7 +105,107 @@ class CallbackAvwapHandler:
         elif action == "AVWAP_SET":
             if not ticker: return
             
-            if sub == "SYNC_ZERO":
+            # 🚨 NEW: [수동 매수 제어망 - 주문 취소 및 관망 모드 돌입]
+            if sub == "PAUSE_BUY":
+                status_code, _ = await controller._get_market_status()
+                if status_code not in ["PRE", "REG"]:
+                    try: await query.answer("❌ [격발 차단] 현재 장운영시간(정규장/프리장)이 아닙니다.", show_alert=True)
+                    except Exception: pass
+                    return
+
+                try: await query.answer("⏳ 주문 취소 및 관망 모드 전환 중...", show_alert=False)
+                except Exception: pass
+
+                async with self.tx_lock:
+                    app_data_root = (context.bot_data or {})
+                    if not isinstance(app_data_root, dict): app_data_root = {}
+                    app_data = app_data_root.get('app_data') or {}
+                    if not isinstance(app_data, dict): app_data = {}
+                    
+                    tracking_cache = app_data.get('sniper_tracking') or {}
+                    if not isinstance(tracking_cache, dict): tracking_cache = {}
+                    
+                    # 🚨 [Case 1] TOCTOU 레이스 컨디션 방어: 이미 매수가 체결되었는지 교차 검증
+                    current_qty = int(self._safe_float(tracking_cache.get(f"AVWAP_QTY_{ticker}", 0)))
+                    if current_qty > 0:
+                        try: await query.edit_message_text(f"⚠️ <b>[{html.escape(str(ticker))}] 이미 스캘퍼 매수가 체결되어 취소가 불가능합니다.</b>", parse_mode='HTML')
+                        except Exception: pass
+                        return
+                    
+                    buy_odno = str(tracking_cache.get(f"AVWAP_BUY_ODNO_{ticker}") or "")
+                    
+                    # 🚨 [제1헌법 & Case 32] KIS API 비동기 취소 전송 및 TPS 캡핑
+                    if buy_odno:
+                        for attempt in range(3):
+                            try:
+                                await asyncio.sleep(0.06)
+                                await asyncio.wait_for(asyncio.to_thread(self.broker.cancel_order, ticker, buy_odno), timeout=10.0)
+                                break
+                            except Exception as e:
+                                if attempt == 2: logging.error(f"🚨 [{ticker}] 스캘퍼 수동 매수 취소 실패 (이미 체결되었거나 증발): {e}")
+                                else: await asyncio.sleep(1.0 * (2 ** attempt))
+
+                    # 🚨 [Case 3] 상태 스키마 오염 방어: 캐시 및 로컬 상태 파일 원자적 동기화
+                    tracking_cache[f"AVWAP_MANUAL_SUSPEND_{ticker}"] = True
+                    tracking_cache[f"AVWAP_LIMIT_ORDER_PLACED_{ticker}"] = False
+                    tracking_cache[f"AVWAP_BUY_ODNO_{ticker}"] = ""
+
+                    est = ZoneInfo('America/New_York')
+                    now_est = datetime.datetime.now(est)
+
+                    if hasattr(self.strategy, 'v_avwap_plugin'):
+                        try:
+                            state_data = await asyncio.wait_for(asyncio.to_thread(self.strategy.v_avwap_plugin.load_state, ticker, now_est), timeout=5.0)
+                            if isinstance(state_data, dict):
+                                state_data['manual_suspend'] = True
+                                state_data['limit_order_placed'] = False
+                                state_data['buy_odno'] = ""
+                                await asyncio.wait_for(asyncio.to_thread(self.strategy.v_avwap_plugin.save_state, ticker, now_est, state_data), timeout=5.0)
+                        except Exception as e:
+                            logging.error(f"🚨 [{ticker}] 수동 관망(Pause) 상태 파일 저장 에러: {e}")
+
+                if hasattr(controller, 'cmd_avwap'):
+                    await controller.cmd_avwap(update, context)
+
+            # 🚨 NEW: [수동 매수 제어망 - 주문 재개 및 관망 모드 해제]
+            elif sub == "RESUME_BUY":
+                status_code, _ = await controller._get_market_status()
+                if status_code not in ["PRE", "REG"]:
+                    try: await query.answer("❌ [격발 차단] 현재 장운영시간(정규장/프리장)이 아닙니다.", show_alert=True)
+                    except Exception: pass
+                    return
+
+                try: await query.answer("⏳ 매수 감시 재개 중...", show_alert=False)
+                except Exception: pass
+
+                # 🚨 [동시성 충돌 방어] 실제 주문은 쏘지 않고 플래그만 해제하여 1분 스케줄러 코어 엔진에 타격 위임(Delegate)
+                async with self.tx_lock:
+                    app_data_root = (context.bot_data or {})
+                    if not isinstance(app_data_root, dict): app_data_root = {}
+                    app_data = app_data_root.get('app_data') or {}
+                    if not isinstance(app_data, dict): app_data = {}
+                    
+                    tracking_cache = app_data.get('sniper_tracking') or {}
+                    if not isinstance(tracking_cache, dict): tracking_cache = {}
+                    
+                    tracking_cache[f"AVWAP_MANUAL_SUSPEND_{ticker}"] = False
+
+                    est = ZoneInfo('America/New_York')
+                    now_est = datetime.datetime.now(est)
+
+                    if hasattr(self.strategy, 'v_avwap_plugin'):
+                        try:
+                            state_data = await asyncio.wait_for(asyncio.to_thread(self.strategy.v_avwap_plugin.load_state, ticker, now_est), timeout=5.0)
+                            if isinstance(state_data, dict):
+                                state_data['manual_suspend'] = False
+                                await asyncio.wait_for(asyncio.to_thread(self.strategy.v_avwap_plugin.save_state, ticker, now_est, state_data), timeout=5.0)
+                        except Exception as e:
+                            logging.error(f"🚨 [{ticker}] 수동 관망 해제(Resume) 상태 파일 저장 에러: {e}")
+
+                if hasattr(controller, 'cmd_avwap'):
+                    await controller.cmd_avwap(update, context)
+
+            elif sub == "SYNC_ZERO":
                 status_code, _ = await controller._get_market_status()
                 if status_code not in ["PRE", "REG"]:
                     try: await query.answer("❌ [격발 차단] 현재 장운영시간(정규장/프리장)이 아닙니다.", show_alert=True)
@@ -118,15 +219,13 @@ class CallbackAvwapHandler:
                 async with self.tx_lock:
                     try:
                         # 🚨 [메모리 참조 증발 패러독스 수술] 명시적 딕셔너리 할당으로 Ghost Dict 차단 및 전역 봇 상태 100% 멱등성 락온
-                        app_data = context.bot_data.get('app_data')
-                        if not isinstance(app_data, dict):
-                            app_data = {}
-                            context.bot_data['app_data'] = app_data
+                        app_data_root = (context.bot_data or {})
+                        if not isinstance(app_data_root, dict): app_data_root = {}
+                        app_data = app_data_root.get('app_data') or {}
+                        if not isinstance(app_data, dict): app_data = {}
                             
-                        tracking_cache = app_data.get('sniper_tracking')
-                        if not isinstance(tracking_cache, dict):
-                            tracking_cache = {}
-                            app_data['sniper_tracking'] = tracking_cache
+                        tracking_cache = app_data.get('sniper_tracking') or {}
+                        if not isinstance(tracking_cache, dict): tracking_cache = {}
                         
                         tracking_cache[f"AVWAP_QTY_{ticker}"] = 0
                         tracking_cache[f"AVWAP_AVG_{ticker}"] = 0.0
@@ -140,6 +239,7 @@ class CallbackAvwapHandler:
                         tracking_cache[f"AVWAP_PLACED_TARGET_TH_{ticker}"] = 0.0
                         tracking_cache[f"AVWAP_T_H_{ticker}"] = 0.0
                         tracking_cache[f"AVWAP_TRAP_QTY_{ticker}"] = 0
+                        tracking_cache[f"AVWAP_MANUAL_SUSPEND_{ticker}"] = False # 수동 제어망 초기화
 
                         est = ZoneInfo('America/New_York')
                         now_est = datetime.datetime.now(est)
@@ -157,6 +257,7 @@ class CallbackAvwapHandler:
                                 'placed_target_th': 0.0,
                                 'trap_placed_time': "",
                                 'trap_qty': 0,
+                                'manual_suspend': False,
                                 'strikes': int(self._safe_float(tracking_cache.get(f"AVWAP_STRIKES_{ticker}", 0)))
                             }
                         
