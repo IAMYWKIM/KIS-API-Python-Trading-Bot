@@ -7,6 +7,7 @@
 # 🚨 MODIFIED: [Phantom Fill 맹독성 버그 소각] KIS 미체결 대기열 스캔 로직(is_buy_unfilled) 및 Zero-Price Paradox 대기 방어막 등 매매에 종속된 엣지 케이스 완전 폐기.
 # 🚨 MODIFIED: [V14 스나이퍼 생태계 보존] AVWAP 소각과 독립적으로 V14 상방 스나이퍼(Upward Sniper) 로직은 100% 원본 팩트 사수.
 # 🚨 MODIFIED: [HTML Parser 붕괴 방어] Telegram 타전을 위한 reason 텍스트 html.escape 100% 강제 래핑 유지.
+# 🚨 MODIFIED: [변수 Semantic 무결성 교정] 매수 호가 변수명을 bid_price_val에서 ask_price_val로 팩트 교정 완료.
 # ==========================================================
 import logging
 import datetime
@@ -25,6 +26,7 @@ import time
 
 from scheduler_core import is_market_open
 
+# 🚨 [Insight 14, 25] API String-Float 콤마 맹독성 및 NaN/Inf 런타임 붕괴 방어막 결속
 def _safe_float(val):
     try:
         f_val = float(str(val or 0.0).replace(',', ''))
@@ -211,7 +213,7 @@ async def scheduled_sniper_monitor(context):
                                     pass
                                 else: 
                                     await asyncio.sleep(1.0 * (2 ** attempt))
-                         
+                        
                         if exec_curr_p <= 0 or base_curr_p <= 0: 
                             continue
                         
@@ -239,6 +241,7 @@ async def scheduled_sniper_monitor(context):
                         }
                  
                         try:
+                            # 🚨 [관측 렌더링 락온] 실매매 로직 파기, is_simulation=True 강제 결속
                             decision = await asyncio.wait_for(
                                 asyncio.to_thread(
                                     strategy.get_avwap_decision,
@@ -248,7 +251,7 @@ async def scheduled_sniper_monitor(context):
                                     df_1min_exec=df_1min_t, now_est=now_est, avwap_state=avwap_state_dict,
                                     prev_close=prev_c, amp5=amp5,
                                     main_actual_avg=0.0,
-                                    is_simulation=True # 실매매 100% 소각, 관측 렌더링 락온
+                                    is_simulation=True
                                 ),
                                 timeout=15.0
                             )
@@ -270,7 +273,7 @@ async def scheduled_sniper_monitor(context):
                         try: 
                             await asyncio.wait_for(asyncio.to_thread(strategy.v_avwap_plugin.save_state, t, now_est, state_data), timeout=5.0)
                         except Exception as e: 
-                            logging.error(f"🚨 [{t}] 매수 상태 저장 에러: {e}")
+                            logging.error(f"🚨 [{t}] 추적 상태 저장 에러: {e}")
 
                     # ==============================================================
                     # 2. 💎 V14 상방 스나이퍼 (오리지널 스케줄 보존망)
@@ -319,6 +322,7 @@ async def scheduled_sniper_monitor(context):
                         res = {} 
           
                     action = res.get("action")
+                    # 🚨 MODIFIED: [HTML Parser 붕괴 방어] Telegram 타전을 위한 reason 텍스트 html.escape 강제 래핑
                     reason = html.escape(str(res.get("reason", "")))
                     limit_p = res.get("limit_price", 0.0)
 
@@ -326,7 +330,7 @@ async def scheduled_sniper_monitor(context):
                         version = await asyncio.wait_for(asyncio.to_thread(cfg.get_version, t), timeout=5.0)
                     except Exception: 
                         version = "V14"
-            
+             
                     is_rev = (version == "V_REV")
 
                     if action == "BUY" and not is_rev and not sniper_buy_locked and master_switch != "UP_ONLY":
@@ -363,8 +367,9 @@ async def scheduled_sniper_monitor(context):
                             for attempt in range(3):
                                 try:
                                     await asyncio.sleep(0.06) 
-                                    bid_price_val = await asyncio.wait_for(asyncio.to_thread(broker.get_ask_price, t), timeout=10.0)
-                                    ask_price = _safe_float(bid_price_val)
+                                    # 🚨 MODIFIED: 변수 명명(Semantic) 무결성 교정 (bid -> ask)
+                                    ask_price_val = await asyncio.wait_for(asyncio.to_thread(broker.get_ask_price, t), timeout=10.0)
+                                    ask_price = _safe_float(ask_price_val)
                                     break
                                 except Exception: 
                                     if attempt == 2: 
@@ -499,7 +504,7 @@ async def scheduled_sniper_monitor(context):
                                 pass
                             
                             await asyncio.sleep(1.0)
-                        
+                            
                             has_unfilled = False
                             for _ in range(4):
                                 try:
@@ -551,7 +556,7 @@ async def scheduled_sniper_monitor(context):
                                         unfilled_check = await asyncio.wait_for(asyncio.to_thread(broker.get_unfilled_orders_detail, t), timeout=10.0)
                                     except Exception: 
                                         unfilled_check = []
-                                        
+                                    
                                     safe_unfilled = unfilled_check if isinstance(unfilled_check, list) else []
                                     my_order = next((ox for ox in safe_unfilled if isinstance(ox, dict) and str(ox.get('odno', '')) == odno), None)
                                     if my_order:
@@ -586,6 +591,7 @@ async def scheduled_sniper_monitor(context):
                                             await asyncio.wait_for(asyncio.to_thread(cfg.set_sniper_sell_locked, t, True), timeout=5.0)
                                         except Exception: 
                                             pass
+        
                                     try:
                                         await asyncio.sleep(0.06) 
                                         exec_history = await asyncio.wait_for(asyncio.to_thread(broker.get_execution_history, t, today_est_str, today_est_str), timeout=15.0)

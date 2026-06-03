@@ -33,6 +33,7 @@ class AvwapConsolePlugin:
         self.strategy = strategy
         self.tx_lock = tx_lock
 
+    # NEW: [Insight 14, 25] API String-Float 및 NaN/Inf 맹독성 런타임 붕괴 방어막 결속
     def _safe_float(self, val):
         try:
             f_val = float(str(val or 0.0).replace(',', ''))
@@ -43,6 +44,7 @@ class AvwapConsolePlugin:
             return 0.0
 
     async def get_console_message(self, app_data):
+        # MODIFIED: [Type-Safety 궁극 수술] app_data 오염(None/List) 유입 방어
         if not isinstance(app_data, dict):
             app_data = {}
 
@@ -51,6 +53,7 @@ class AvwapConsolePlugin:
         curr_time = now_est.time()
         today_est_date = now_est.date()
         
+        # MODIFIED: [Case 32, 33] 달력 API 호출 시 TPS 캡핑 및 지수 백오프 주입
         def _fetch_schedule():
             time.sleep(0.06) 
             nyse = mcal.get_calendar('NYSE')
@@ -112,15 +115,16 @@ class AvwapConsolePlugin:
             active_tickers = []
             
         avwap_tickers = [t for t in active_tickers if t == "SOXL"]
-       
+        
         if not avwap_tickers:
             return "⚠️ <b>[관측망 오프라인]</b>\n▫️ 감시 대상(SOXL) 종목이 없습니다.", None
-           
+            
         active_avwap = avwap_tickers
         
         msg = f"📡 <b>[ 실시간 퀀트 인텔리전스 관제탑 ]</b>\n{header_status}\n\n"
         keyboard = []
 
+        # MODIFIED: [Case 31, 32] 고성능 클라우드 TPS 방어 및 지수 백오프 비동기 헬퍼
         async def _get_with_retry(func, *args):
             for attempt in range(3):
                 try:
@@ -132,6 +136,7 @@ class AvwapConsolePlugin:
 
         for t in active_avwap:
             await asyncio.sleep(0.06)
+            # MODIFIED: [Case 26] 텔레그램 HTML 파서 붕괴 방어용 html.escape 쉴드
             ticker_clean = html.escape(str(t)) 
             base_t = 'SOXX' if t == 'SOXL' else ('QQQ' if t == 'TQQQ' else t)
             base_t_clean = html.escape(str(base_t))
@@ -165,16 +170,18 @@ class AvwapConsolePlugin:
             base_vwap = 0.0
             base_gap_pct = 0.0
             if df_base is not None and not df_base.empty:
+                # MODIFIED: [Time Paradox UI 렌더링 붕괴 수술] 당일 데이터만 강제 슬라이싱
                 df_b_today = df_base[df_base.index.date == today_est_date].copy()
                 if 'time_est' in df_b_today.columns:
                     # VWAP은 정규장(09:30~16:00) 기준 누적 연산이 표준
                     df_b_reg = df_b_today[(df_b_today['time_est'] >= '093000') & (df_b_today['time_est'] <= '155959')].copy()
                     if not df_b_reg.empty:
-                        # 🚨 NEW: [Quant Logic] 정통 퀀트 트레이딩 표준 연산으로 교정 (High+Low+Close)/3.0
+                        # MODIFIED: [Quant Logic 교정] 정통 퀀트 트레이딩 표준 연산으로 교정 (High+Low+Close)/3.0
                         df_b_reg['tp'] = (df_b_reg['high'].astype(float) + df_b_reg['low'].astype(float) + df_b_reg['close'].astype(float)) / 3.0
                         df_b_reg['vol'] = df_b_reg['volume'].astype(float)
                         df_b_reg['vol_tp'] = df_b_reg['tp'] * df_b_reg['vol']
                         
+                        # MODIFIED: [ZeroDivision 붕괴 수술] 거래량 결측 보호
                         c_vol = df_b_reg['vol'].sum()
                         if c_vol > 0:
                             base_vwap = df_b_reg['vol_tp'].sum() / c_vol
@@ -184,6 +191,7 @@ class AvwapConsolePlugin:
             # ==============================================================
             # 3️⃣~8️⃣ 지표 3-8: 프리장/정규장 H/L 슬라이싱 및 타점 연산
             # ==============================================================
+            # MODIFIED: [Vectorization 연산 락온] time_est 기반 정밀 슬라이싱
             df_today = df_1m[df_1m.index.date == today_est_date].copy() if (df_1m is not None and not df_1m.empty) else pd.DataFrame()
             
             df_pre = pd.DataFrame()
@@ -207,6 +215,7 @@ class AvwapConsolePlugin:
                     pre_amp = (pre_h - pre_l) / pre_l * 100.0
                     
                     try:
+                        # MODIFIED: [Series Stringification 붕괴 방어] idxmax() 대신 불리언 마스킹 강제
                         h_row = df_pre[safe_high_pre >= pre_h]
                         if not h_row.empty:
                             raw_h_t = str(h_row['time_est'].iloc[0]).zfill(6)
@@ -232,6 +241,7 @@ class AvwapConsolePlugin:
                     reg_amp = (reg_h - reg_l) / reg_l * 100.0
                     
                     try:
+                        # MODIFIED: [Series Stringification 붕괴 방어] 불리언 마스킹 락온
                         h_row_r = df_reg[safe_high_reg >= reg_h]
                         if not h_row_r.empty:
                             raw_h_t_r = str(h_row_r['time_est'].iloc[0]).zfill(6)
@@ -278,6 +288,7 @@ class AvwapConsolePlugin:
             else:
                 msg += "▫️ 정규장 개장 대기 중...\n"
 
+            # MODIFIED: [관측 전용 아키텍처 전환] 수동 매수/매도 제어 버튼 영구 삭제
             if is_holiday:
                 keyboard.append([InlineKeyboardButton(f"💤 [{ticker_clean}] 증시 휴장일", callback_data="AVWAP_SET:REFRESH:NONE")])
             elif status_code in ["CLOSE"]:

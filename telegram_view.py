@@ -2,9 +2,8 @@
 # FILE: telegram_view.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 34대 엣지 케이스 완벽 결속 교차 검증 완료
-# 🚨 MODIFIED: [V86.00 텍스트 팩트 롤오버] '딥-레스큐' 및 '암살자' 레거시 명칭 영구 소각. '새벽 수금원' 및 '프리장 스캘퍼' 퀀트 네이밍으로 100% 팩트 교정 완료.
-# 🚨 MODIFIED: [V85.00 딥-레스큐 UI 팩트 교정] 다중 출격(Sortie) 스위치 버튼 및 관련 텍스트 100% 영구 소각 (단일 구출 후 무조건 퇴근 락온)
-# 🚨 MODIFIED: [경고문 무제한 타격 롤오버] get_avwap_warning_menu 내의 '사후 하락장 확정 시' 문구를 '전일 종가 및 갭하락 조건 영구 소각, 매일 프리장 개장 시 무조건 100% 개방' 팩트로 전면 재작성
+# 🚨 MODIFIED: [UI 텍스트 맹독성 하드코딩 소각] 과거 암살자/스캘퍼 실전 매매 시절의 환영(Ghost Text)을 전면 파기하고 순수 관제탑 팩트로 100% 롤오버 완료.
+# 🚨 MODIFIED: [V86.00 텍스트 팩트 롤오버] '딥-레스큐' 및 '암살자' 레거시 명칭 영구 소각. '새벽 수금원' 및 '프리장 스캘퍼' 퀀트 네이밍을 거쳐 '초고도화 인텔리전스 관제탑'으로 100% 팩트 교정 완료.
 # 🚨 MODIFIED: [UI 팩트 동기화 궁극 수술] 뷰어에서 0.998, 0.993을 중복 계산하던 하드코딩 맹점을 소각하고, 코어 엔진(SSOT)에서 생성된 plan_dict의 팩트 타점을 다이렉트로 추출하여 UI에 완벽 렌더링 락온. (Walrus 연산자 붕괴 에러 동시 소각)
 # 🚨 MODIFIED: [Float 정밀도 붕괴 원천 차단] 뷰어 클래스 내에 `_safe_float` 래퍼를 전격 이식하여 파편화된 인라인 캐스팅을 통합하고 NaN/Inf 맹독성 붕괴 원천 차단
 # 🚨 MODIFIED: [Python 딕셔너리 평가 맹독성 수술] dict.get(key, default)에서 값이 None일 때 default가 무시되고 None이 반환되어 _safe_float(None) -> 0.0 으로 오염되는 치명적 버그를 `or default` 단락 평가로 완벽 교정
@@ -120,7 +119,6 @@ class TelegramView:
         msg += "▫️ 사용자가 직접 수정한 파이버 코드는 <b>전부 초기화</b>됩니다.\n"
         msg += "▫️ 단, 개인 설정(.env)과 장부 데이터(data/ 폴더)는 완벽히 <b>보존</b>됩니다.\n\n"
         msg += "포트폴리오 매니저의 최종 승인을 대기합니다."
-
         keyboard = [
             [InlineKeyboardButton("🔥 네, 즉시 업데이트를 강행합니다", callback_data="UPDATE:CONFIRM")],
             [InlineKeyboardButton("❌ 아니오, 취소합니다", callback_data="UPDATE:CANCEL")]
@@ -150,8 +148,7 @@ class TelegramView:
         safe_t = html.escape(str(ticker))
         msg = f"🚨 <b>[{safe_t} 삼위일체 소각 최종 확인]</b>\n\n"
         msg += f"정말 <b>{safe_t}</b>의 모든 퀀트 장부 데이터를 영구 삭제하시겠습니까?\n"
-        msg += "이 작업은 되돌릴 수 없습니다!"
-        
+        msg += "이 작업은 되돌릴 수 정 없습니다!"
         keyboard = [
             [InlineKeyboardButton("🔥 네, 즉시 영구 소각합니다", callback_data=f"RESET:CONFIRM:{ticker}")],
             [InlineKeyboardButton("❌ 아니오, 취소합니다", callback_data="RESET:CANCEL")]
@@ -203,7 +200,6 @@ class TelegramView:
         msg += "-"*30 + "</code>\n\n"
         msg += "🚨 <b>[ 비상 수혈 통제소 ]</b>\n"
         msg += "최근 매수한 <b>1지층</b>을 시장가(MOC)로 강제 덤핑하여 가용 예산을 확보합니다."
-
         keyboard.append([InlineKeyboardButton("🩸 1지층 수동 긴급 수혈 (MOC)", callback_data=f"EMERGENCY_REQ:{ticker}")])
         keyboard.append([InlineKeyboardButton("🔄 대시보드 새로고침", callback_data=f"QUEUE:VIEW:{ticker}")])
         
@@ -216,7 +212,6 @@ class TelegramView:
         msg += f"선택하신 <b>[{short_date}]</b> 지층 (<b>{qty}주 / ${price:.2f}</b>) 데이터를 장부에서 도려내시겠습니까?\n"
         msg += "▫️ 실제 KIS 계좌의 주식은 매도되지 않습니다.\n"
         msg += "▫️ 계좌 수량과 장부가 어긋날 경우 /sync 시 비파괴 보정(CALIB)이 발동됩니다."
-        
         keyboard = [
             [InlineKeyboardButton("🔥 네, 도려냅니다", callback_data=f"DEL_Q:{ticker}:{target_date}")],
             [InlineKeyboardButton("❌ 취소 (돌아가기)", callback_data=f"QUEUE:VIEW:{ticker}")]
@@ -238,21 +233,20 @@ class TelegramView:
         ]
         return msg, InlineKeyboardMarkup(keyboard)
 
-    # 🚨 MODIFIED: [V86.00 텍스트 팩트 롤오버] 새벽 수금원(스캘퍼) 명칭으로 100% 진공 압축 교체
+    # 🚨 MODIFIED: [UI 텍스트 맹독성 하드코딩 소각] 실전 매매 관련 환영(Ghost Text) 전면 파기 및 순수 관제탑 팩트 롤오버
     def get_avwap_warning_menu(self, ticker):
         safe_t = html.escape(str(ticker))
-        msg = f"🛑 <b>[{safe_t}] 새벽 수금원(스캘퍼) 무장 해제 및 경고</b>\n\n"
-        msg += "현재 <b>새벽 수금원(프리장 스캘핑) 모드</b> 가동을 지시하셨습니다.\n"
-        msg += "이 전술은 전일 종가 및 본진 상태와 무관하게 매일 프리장 개장 시 잉여 현금 100%를 동원해 무조건 출격하는 무제한 타격 특수 용병 옵션입니다.\n\n"
-        msg += "⚠️ <b>[ 스캘퍼 가동 제약 사항 (V86.00 락온) ]</b>\n"
-        msg += "1. 갭 하락 조건이 100% 영구 소각되었으며, 프리장 개장(04:00 EST) 시 무조건 지정가 덫(-1.0%)을 장전합니다.\n"
-        msg += "2. 100% 완전 자율주행(Fire & Forget)으로 작동하며, 일체의 수동 개입이 차단됩니다.\n"
-        msg += "3. LIFO 큐 장부 대통합은 영구 소각되었으며, 본진 지층을 100% 보존한 상태로 단독 구출가(-0.5%) 덫을 장전합니다.\n"
-        msg += "4. 장막판 손절 덤핑은 영구 소각되었으며, 미체결 시 당일 덫을 폐기하고 퇴근합니다(이월 없음).\n\n"
-        msg += "포트폴리오 매니저의 최종 승인을 대기합니다."
+        msg = f"👁️ <b>[{safe_t}] 초고도화 인텔리전스 관제탑 가동 승인</b>\n\n"
+        msg += "⚠️ <b>[ 실전 매매 100% 소각 완료 ]</b>\n"
+        msg += "과거 프리장 스캘퍼(새벽 수금원)의 모든 KIS API 실전 매수/매도 전송 로직은 시스템 전역에서 영구 소각되었습니다.\n\n"
+        msg += "본 모드는 <b>8대 팩트 퀀트 지표</b>를 실시간으로 스캔하여 텔레그램으로 브리핑하는 <b>순수 관측 전용 인텔리전스 관제탑</b>으로 가동됩니다.\n\n"
+        msg += "▫️ 기초지수(SOXX/QQQ) 진폭 및 VWAP 이격도 정밀 추적\n"
+        msg += "▫️ 프리장/정규장 H/L (고/저점) 팩트 타임라인 슬라이싱\n"
+        msg += "▫️ 3%, 6%, 9% 마디가 하락/상승 타점 벡터화 연산\n\n"
+        msg += "포트폴리오 매니저의 관제탑 가동 승인을 대기합니다."
         
         keyboard = [
-            [InlineKeyboardButton("🔥 리스크 확인. 스캘퍼 락온(Lock-on) 승인", callback_data=f"MODE:AVWAP_ON:{ticker}")],
+            [InlineKeyboardButton("👁️ 관제탑 락온(Lock-on) 가동 승인", callback_data=f"MODE:AVWAP_ON:{ticker}")],
             [InlineKeyboardButton("❌ 작전 취소 (안전 모드 유지)", callback_data="RESET:CANCEL")]
         ]
         return msg, InlineKeyboardMarkup(keyboard)
@@ -271,7 +265,8 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V86.00 새벽 수금원(스캘퍼) 무제한 타격 에디션</code>\n\n"
+        # 🚨 MODIFIED: 버전에 맞는 팩트 텍스트 렌더링
+        msg += "▫️ 현재 시스템: <code>V86.00 초고도화 인텔리전스 관제탑 에디션</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -511,10 +506,10 @@ class TelegramView:
                                         price_str = f"${min_price:.2f}"
                                     else:
                                         price_str = f"(${min_price:.2f}~${max_price:.2f})"
-                                     
+                                    
                                     body_msg += f" 🔴 🧲줍줍: <b>{price_str} x {total_jub_shares}주</b> (LOC)\n"
                                 rendered_jubjub = True
-                        continue
+                            continue
                      
                         ico = "🔴" if str(o.get('side', '')) == 'BUY' else "🔵"
                         safe_desc = html.escape(str(o.get('desc', ''))).replace("🩸", "")
@@ -580,12 +575,9 @@ class TelegramView:
                 
                 if hasattr(config, 'get_avwap_hybrid_mode'):
                     is_avwap_on = config.get_avwap_hybrid_mode(t)
-                    avwap_status_txt = "실전 가동 중 🔥" if is_avwap_on else "대기 중 ⚪"
-                    msg += f"▫️ 프리장 스캘퍼: <b>{avwap_status_txt}</b>\n"
-                    
-                    # 🚨 MODIFIED: [V85.00 딥-레스큐 UI 다이어트] 다중 출격(Sortie) 텍스트 100% 소각
-                    if is_avwap_on:
-                        msg += f"▫️ 작전 궤도: <b>단일 구출 (Fire & Forget)</b>\n"
+                    # 🚨 MODIFIED: [UI 팩트 교정] 실전 가동 중 -> 관측 가동 중 팩트 변경
+                    avwap_status_txt = "관측 가동 중 👁️" if is_avwap_on else "대기 중 ⚪"
+                    msg += f"▫️ 초고도화 관제탑: <b>{avwap_status_txt}</b>\n"
                 
                 msg += "⚖️ <b>엔진 스탠바이:</b> 15:26 EST 예약 덫 관측 ➔ 15:27 로컬 자체 슬라이싱 가동\n\n" 
             else:
@@ -600,11 +592,9 @@ class TelegramView:
 
             if ver == "V_REV":
                 is_avwap = config.get_avwap_hybrid_mode(t) if hasattr(config, 'get_avwap_hybrid_mode') else False
-                keyboard.append([InlineKeyboardButton(f"🔫 새벽 수금원(스캘퍼) [ {'가동중' if is_avwap else 'OFF'} ]", callback_data=f"MODE:AVWAP_{'OFF' if is_avwap else 'WARN'}:{t}")])
+                keyboard.append([InlineKeyboardButton(f"👁️ 인텔리전스 관제탑 [ {'가동중' if is_avwap else 'OFF'} ]", callback_data=f"MODE:AVWAP_{'OFF' if is_avwap else 'WARN'}:{t}")])
                 
-                # 🚨 MODIFIED: [V85.00 딥-레스큐 UI 다이어트] 다중 출격(Sortie) 스위칭 버튼 100% 영구 소각
-
-                if t == "SOXL": keyboard.append([InlineKeyboardButton(f"🔫 {safe_t} 스캘퍼 관제탑", callback_data=f"AVWAP:MENU:{t}")])
+                if t == "SOXL": keyboard.append([InlineKeyboardButton(f"🔫 {safe_t} 실시간 레이더망", callback_data=f"AVWAP:MENU:{t}")])
         
                 keyboard.append([InlineKeyboardButton(f"💸 {safe_t} 복리", callback_data=f"INPUT:COMPOUND:{t}"), InlineKeyboardButton(f"💳 {safe_t} 수수료", callback_data=f"INPUT:FEE:{t}")])
                 keyboard.append([InlineKeyboardButton(f"✂️ {safe_t} 액면보정", callback_data=f"INPUT:STOCK_SPLIT:{t}")])

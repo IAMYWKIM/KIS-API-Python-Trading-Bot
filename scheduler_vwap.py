@@ -2,19 +2,20 @@
 # FILE: scheduler_vwap.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 34대 엣지 케이스 완벽 결속 교차 검증 완료
-# 🚨 MODIFIED: [SyntaxError 붕괴 수술] KIS 실원장 덫 스캔 파이프라인의 logging.info 들여쓰기 오류(Indentation)를 정밀 교정하여 컴파일 즉사 및 좀비 셧다운 완벽 차단
-# 🚨 MODIFIED: [NameError 붕괴 방어] vwap_cache 딕셔너리 할당 시 존재하던 치명적 오타(vvwap_cache)를 즉각 교정하여 런타임 즉사 원천 차단
-# 🚨 MODIFIED: [제1헌법 절대 준수] 로컬 슬라이싱 상태 파일(vrev_slice_state_*.json)을 읽고 쓰는 로직에 잔존하던 동기 I/O(json.load/dump)를 _read_json_sync, _atomic_write_json_sync 헬퍼로 분리하고 asyncio.to_thread 래핑을 강제하여 이벤트 루프 교착(Deadlock) 원천 차단
-# 🚨 MODIFIED: [최후의 통신 맹점 팩트 수술] 잔고 조회(get_account_balance) 루프 내부에도 누락되어 있던 TPS 캡핑(0.06s)을 주입하여 동시 스케줄 격발 시 발생 가능한 서버 Rate Limit 밴 원천 차단
-# 🚨 MODIFIED: [Case 32 & 33 절대 규칙 수술] Gap Hijack 격발 시 수행되는 덫 조회, 취소, 및 최종 매수 API 호출 전역에 3단 지수 백오프와 TPS 캡핑(0.06s) 100% 샌드위치 락온
-# 🚨 MODIFIED: [Insight 12/15 튜플 언패킹 붕괴 차단] get_budget_allocation 반환값 결측치(None) 유입 시 발생하는 튜플 언패킹(ValueError/TypeError) 즉사 버그를 isinstance 인덱싱으로 원천 봉쇄
-# 🚨 MODIFIED: [Cascade Failure 방어 궁극 수술] 다중 종목 순회 루프 내부에 개별 `try-except` 샌드박스를 주입하여 단일 종목 에러가 전체 섀도우 엔진을 파괴하는 연쇄 붕괴 원천 차단
-# 🚨 MODIFIED: [Insight 27 런타임 즉사 방어] context.job.data가 None이거나 비정상 객체(List/Tuple)로 유입 시 발생하는 AttributeError(.setdefault 붕괴)를 원천 차단하기 위해 isinstance 딕셔너리 강제 폴백 쉴드 락온
-# 🚨 NEW: [맹점 1 수술] 슬라이싱-지정가 패러독스(Phantom Miss) 방어 - 목표가 관통 시 가중치 제한을 파괴하고 전량 지정가 요격 락온
-# 🚨 NEW: [V-REV 일시불 요격 패러독스 방어] 0주 새출발 매수처럼 목표가(+15%)가 현재가 대비 +2%를 초과하여 터무니없이 높을 경우, 스윕(Sweep)을 강제 해제하고 정상적인 1분 슬라이싱 궤도로 복구 락온
-# 🚨 NEW: [맹점 2 수술] Amnesia Bug 방어 - 자체 1분 엔진 체결 확인 시 장부(queue_ledger, v_rev_plugin) 100% 원자적 동기화 및 odno 캐싱으로 Double Spending 원천 차단
-# 🚨 NEW: [맹점 3 수술] Gap Hijack 셧다운(Double-Nuke) 방어 - 갭 발생 시 매수(BUY)만 차단하고 매도(SELL) 구출망은 장 마감까지 끝까지 생존하도록 엣지 라우팅 구조화
-# 🚨 MODIFIED: [무덤핑 절대 헌법 사수] 막판 덤핑(is_dumping) 데드코드를 전면 소각하여 타점 미충족 시 1주도 훼손하지 않고 철저한 관망세 유지 락온
+# 🚨 MODIFIED: [V-REV 엔진 독립(Decoupling) 락온] AVWAP_BOUGHT 등 암살자(aVWAP) 매매 상태와 얽혀있던 의존성을 100% 영구 삭제하여, 15:27 EST부터 본진이 어떠한 간섭 없이 독자적으로 1분 슬라이싱 타격을 집행하도록 팩트 교정 완료.
+# 🚨 MODIFIED: [SyntaxError 붕괴 수술] KIS 실원장 덫 스캔 파이프라인의 logging.info 들여쓰기 오류(Indentation)를 정밀 교정하여 컴파일 즉사 및 좀비 셧다운 완벽 차단.
+# 🚨 MODIFIED: [NameError 붕괴 방어] vwap_cache 딕셔너리 할당 시 존재하던 치명적 오타(vvwap_cache)를 즉각 교정하여 런타임 즉사 원천 차단.
+# 🚨 MODIFIED: [제1헌법 절대 준수] 로컬 슬라이싱 상태 파일(vrev_slice_state_*.json)을 읽고 쓰는 로직에 잔존하던 동기 I/O(json.load/dump)를 _read_json_sync, _atomic_write_json_sync 헬퍼로 분리하고 asyncio.to_thread 래핑을 강제하여 이벤트 루프 교착(Deadlock) 원천 차단.
+# 🚨 MODIFIED: [최후의 통신 맹점 팩트 수술] 잔고 조회(get_account_balance) 루프 내부에도 누락되어 있던 TPS 캡핑(0.06s)을 주입하여 동시 스케줄 격발 시 발생 가능한 서버 Rate Limit 밴 원천 차단.
+# 🚨 MODIFIED: [Case 32 & 33 절대 규칙 수술] Gap Hijack 격발 시 수행되는 덫 조회, 취소, 및 최종 매수 API 호출 전역에 3단 지수 백오프와 TPS 캡핑(0.06s) 100% 샌드위치 락온.
+# 🚨 MODIFIED: [Insight 12/15 튜플 언패킹 붕괴 차단] get_budget_allocation 반환값 결측치(None) 유입 시 발생하는 튜플 언패킹(ValueError/TypeError) 즉사 버그를 isinstance 인덱싱으로 원천 봉쇄.
+# 🚨 MODIFIED: [Cascade Failure 방어 궁극 수술] 다중 종목 순회 루프 내부에 개별 `try-except` 샌드박스를 주입하여 단일 종목 에러가 전체 섀도우 엔진을 파괴하는 연쇄 붕괴 원천 차단.
+# 🚨 MODIFIED: [Insight 27 런타임 즉사 방어] context.job.data가 None이거나 비정상 객체(List/Tuple)로 유입 시 발생하는 AttributeError(.setdefault 붕괴)를 원천 차단하기 위해 isinstance 딕셔너리 강제 폴백 쉴드 락온.
+# 🚨 NEW: [맹점 1 수술] 슬라이싱-지정가 패러독스(Phantom Miss) 방어 - 목표가 관통 시 가중치 제한을 파괴하고 전량 지정가 요격 락온.
+# 🚨 NEW: [V-REV 일시불 요격 패러독스 방어] 0주 새출발 매수처럼 목표가(+15%)가 현재가 대비 +2%를 초과하여 터무니없이 높을 경우, 스윕(Sweep)을 강제 해제하고 정상적인 1분 슬라이싱 궤도로 복구 락온.
+# 🚨 NEW: [맹점 2 수술] Amnesia Bug 방어 - 자체 1분 엔진 체결 확인 시 장부(queue_ledger, v_rev_plugin) 100% 원자적 동기화 및 odno 캐싱으로 Double Spending 원천 차단.
+# 🚨 NEW: [맹점 3 수술 완수] Gap Hijack 셧다운(Double-Nuke) 방어 - 갭 발생 시 매수(BUY) 덫만 정밀 차단하고, 매도(SELL) 구출망은 장 마감까지 끝까지 생존하도록 sll_buy_dvsn_cd 필터링 로직 100% 락온.
+# 🚨 MODIFIED: [무덤핑 절대 헌법 사수] 막판 덤핑(is_dumping) 데드코드를 전면 소각하여 타점 미충족 시 1주도 훼손하지 않고 철저한 관망세 유지 락온.
 # ==========================================================
 import logging
 import datetime
@@ -366,7 +367,7 @@ async def scheduled_vwap_trade(context):
                                             if gap_pct <= gap_thresh:
                                                 logging.info(f"⚡ [{t}] Gap Hijack Triggered! gap: {gap_pct:.2f}%, thresh: {gap_thresh}%")
                                                 nuked_count = 0
-                                                
+                                               
                                                 try:
                                                     est_now = datetime.datetime.now(ZoneInfo('America/New_York'))
                                                     d_str = est_now.strftime('%Y%m%d')
@@ -380,10 +381,16 @@ async def scheduled_vwap_trade(context):
                                                         except Exception as e:
                                                             if r_attempt == 2: logging.error(f"🚨 [{t}] 예약 덫 조회 에러: {e}")
                                                             else: await asyncio.sleep(1.0 * (2 ** r_attempt))
-                                                            
+                                                    
                                                     safe_resv_orders = resv_orders if isinstance(resv_orders, list) else []
                                                     for req in safe_resv_orders:
                                                         if not isinstance(req, dict): continue
+                                                        
+                                                        # 🚨 MODIFIED: [맹점 3 수술] SELL 구출망 생존 락온 (예약 주문)
+                                                        side_cd = str(req.get('sll_buy_dvsn_cd') or req.get('sll_buy_dvsn') or '')
+                                                        if side_cd == '01': 
+                                                            continue 
+                                                            
                                                         odno = str(req.get('ovrs_rsvn_odno') or req.get('odno') or '')
                                                         ord_dt = str(req.get('rsvn_ord_rcit_dt') or req.get('ord_dt') or d_str)
                                                         if odno:
@@ -411,6 +418,12 @@ async def scheduled_vwap_trade(context):
                                                     safe_unfilled = unfilled if isinstance(unfilled, list) else []
                                                     for uo in safe_unfilled:
                                                         if not isinstance(uo, dict): continue
+                                                        
+                                                        # 🚨 MODIFIED: [맹점 3 수술] SELL 구출망 생존 락온 (일반 미체결 주문)
+                                                        side_cd = str(uo.get('sll_buy_dvsn_cd') or uo.get('sll_buy_dvsn') or '')
+                                                        if side_cd == '01': 
+                                                            continue
+                                                            
                                                         dvsn = str(uo.get('ord_dvsn_cd') or uo.get('ord_dvsn') or '').strip().zfill(2)
                                                         if dvsn in ['36', '00']:
                                                             u_odno = str(uo.get('odno') or '')
@@ -426,8 +439,8 @@ async def scheduled_vwap_trade(context):
                                                                         if c_attempt == 2: logging.error(f"🚨 [{t}] 일반 덫(VWAP/LOC) 취소 실패: {e}")
                                                                         else: await asyncio.sleep(1.0 * (2 ** c_attempt))
                                                     
-                                                    # 🚨 MODIFIED: [SyntaxError 붕괴 수술] 들여쓰기 48칸 -> 52칸 교정 완료
-                                                    logging.info(f"⚡ [{t}] KIS 실원장 스캔: 예약 및 일반 덫 {nuked_count}건 팩트 파기 완료.")
+                                                    # 🚨 MODIFIED: [SyntaxError 붕괴 수술] 들여쓰기 정밀 교정
+                                                    logging.info(f"⚡ [{t}] KIS 실원장 스캔: 예약 및 일반 매수(BUY) 덫 {nuked_count}건 팩트 파기 완료 (SELL 구출망 보존).")
                                                 except Exception as e:
                                                     logging.error(f"🚨 [{t}] KIS 실원장 덫 스캔 에러: {e}")
 
@@ -473,7 +486,7 @@ async def scheduled_vwap_trade(context):
                                                     except Exception:
                                                         if retry_curr == 2: curr_p = 0.0
                                                         else: await asyncio.sleep(1.0 * (2 ** retry_curr))
-                                                    
+                                                        
                                                 exec_price = ask_price if ask_price > 0 else curr_p
                                                 buy_qty = int(math.floor(rem_budget / exec_price)) if exec_price > 0 else 0
                                                
@@ -490,7 +503,7 @@ async def scheduled_vwap_trade(context):
                                                                 res = None
                                                             else:
                                                                 await asyncio.sleep(1.0 * (2 ** s_attempt))
-                                                   
+                                                    
                                                     safe_res = res if isinstance(res, dict) else {}
                                                     odno = str(safe_res.get('odno') or '')
                                                     
@@ -500,7 +513,7 @@ async def scheduled_vwap_trade(context):
                                                         
                                                         msg = f"⚡ <b>[{html.escape(str(t))}] 🤖 모멘텀 자율주행 (Gap Hijack) 섀도우 오버라이드 격발!</b>\n"
                                                         msg += f"▫️ 기초자산({html.escape(str(base_tkr))}) VWAP 이탈률(<b>{gap_pct:+.2f}%</b>)이 임계치(<b>{gap_thresh}%</b>)를 하향 돌파했습니다.\n"
-                                                        msg += f"▫️ KIS 예약/미체결 덫({nuked_count}건)을 파기 및 로컬 엔진 스톱 후, 잔여 예산 100%를 매도 1호가로 일괄 스윕(Sweep) 타격했습니다!\n"
+                                                        msg += f"▫️ KIS 예약/미체결 매수 덫({nuked_count}건)을 파기 및 로컬 엔진 스톱 후, 잔여 예산 100%를 매도 1호가로 일괄 스윕(Sweep) 타격했습니다!\n"
                                                         msg += f"▫️ 스윕 수량: <b>{buy_qty}주</b> (단가: ${exec_price:.2f})"
                                                         try:
                                                             await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
@@ -536,7 +549,7 @@ async def scheduled_vwap_trade(context):
                         curr_time_obj = now_est.time()
                         time_start = datetime.time(15, 27)
                         time_end = datetime.time(15, 57, 59)
-                         
+                        
                         if time_start <= curr_time_obj <= time_end:
                             slice_state = await asyncio.to_thread(_read_json_sync, slice_file)
                              
@@ -578,6 +591,7 @@ async def scheduled_vwap_trade(context):
                                 side = str(o.get('side', 'BUY'))
                                 last_odno = str(o.get('last_odno', ''))
                                 
+                                # 🚨 [맹점 3] Hijack 발동 시 BUY(매수)만 무효화하고 SELL(매도 구출망)은 끝까지 팩트 집행
                                 if is_state_hijacked and side == 'BUY':
                                     continue
                                 
@@ -598,7 +612,7 @@ async def scheduled_vwap_trade(context):
                                         except Exception:
                                             if attempt == 2: logging.debug(f"🚨 [{t}] 슬라이스 취소 응답 지연 (이미 체결됨: {last_odno})")
                                             else: await asyncio.sleep(1.0 * (2 ** attempt))
-                                            
+                                          
                                     is_still_open = False
                                     if not cancel_successful:
                                         for u_attempt in range(3):
@@ -635,7 +649,7 @@ async def scheduled_vwap_trade(context):
                                         logging.error(f"🚨 [{t}] 자체 슬라이싱 체결 원장 교차 검증 에러: {e}")
                                         ccld_qty_this_tick = 0
                                         real_exec_price = 0.0
-                                        
+                                         
                                     if ccld_qty_this_tick > 0:
                                         processed_odnos = vwap_cache.setdefault(f"PROCESSED_ODNOS_{t}", set())
                                         if last_odno not in processed_odnos:
@@ -759,4 +773,3 @@ async def scheduled_vwap_trade(context):
         await asyncio.wait_for(_do_vwap(), timeout=120.0)
     except Exception as e:
         logging.error(f"🚨 VWAP 섀도우 오버라이드 스케줄러 에러: {e}", exc_info=True)
-

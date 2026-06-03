@@ -102,7 +102,7 @@ class CallbackAvwapHandler:
             
             # 🚨 MODIFIED: [수동 제어망 라우팅 영구 소각] PAUSE_BUY, RESUME_BUY, SYNC_ZERO 등 팻핑거 뇌관을 파일 내에서 100% 완전 제거.
             if sub == "REFRESH":
-                try: await query.answer()
+                try: await query.answer("🔄 관제탑 레이더망 스캔 중...", show_alert=False)
                 except Exception: pass
                 if hasattr(controller, 'cmd_avwap'):
                     await controller.cmd_avwap(update, context)

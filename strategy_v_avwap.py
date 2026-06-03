@@ -96,7 +96,7 @@ class VAvwapHybridPlugin:
         merged_data = {}
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
-                 merged_data = json.load(f)
+                merged_data = json.load(f)
             if not isinstance(merged_data, dict):
                 merged_data = {}
         except OSError:
