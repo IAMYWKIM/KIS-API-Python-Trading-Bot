@@ -3,11 +3,12 @@
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 34대 엣지 케이스 완벽 결속 교차 검증 완료
 # 🚨 MODIFIED: [UI 텍스트 맹독성 하드코딩 소각] 과거 암살자/스캘퍼 실전 매매 시절의 환영(Ghost Text)을 전면 파기하고 순수 관제탑 팩트로 100% 롤오버 완료.
-# 🚨 MODIFIED: [V86.00 텍스트 팩트 롤오버] '딥-레스큐' 및 '암살자' 레거시 명칭 영구 소각. '새벽 수금원' 및 '프리장 스캘퍼' 퀀트 네이밍을 거쳐 '초고도화 인텔리전스 관제탑'으로 100% 팩트 교정 완료.
-# 🚨 MODIFIED: [UI 팩트 동기화 궁극 수술] 뷰어에서 0.998, 0.993을 중복 계산하던 하드코딩 맹점을 소각하고, 코어 엔진(SSOT)에서 생성된 plan_dict의 팩트 타점을 다이렉트로 추출하여 UI에 완벽 렌더링 락온. (Walrus 연산자 붕괴 에러 동시 소각)
+# 🚨 MODIFIED: [V86.00 텍스트 팩트 롤오버] '딥-레스큐' 및 '암살자' 레거시 명칭 영구 소각. 새벽 수금원 및 프리장 스캘퍼 퀀트 네이밍을 거쳐 '초고도화 인텔리전스 관제탑'으로 100% 팩트 교정 완료.
+# 🚨 MODIFIED: [UI 팩트 동기화 궁극 수술] 뷰어에서 0.998, 0.993을 중복 계산하던 하드코딩 맹점을 소각하고, 코어 엔진(SSOT)에서 생성된 plan_dict의 팩트 타점을 다이렉트로 추출하여 UI에 완벽 렌더링 락온.
 # 🚨 MODIFIED: [Float 정밀도 붕괴 원천 차단] 뷰어 클래스 내에 `_safe_float` 래퍼를 전격 이식하여 파편화된 인라인 캐스팅을 통합하고 NaN/Inf 맹독성 붕괴 원천 차단
 # 🚨 MODIFIED: [Python 딕셔너리 평가 맹독성 수술] dict.get(key, default)에서 값이 None일 때 default가 무시되고 None이 반환되어 _safe_float(None) -> 0.0 으로 오염되는 치명적 버그를 `or default` 단락 평가로 완벽 교정
 # 🚨 MODIFIED: [Insight 14, 18, 19, 20] String-Float 맹독성 방어 및 가상 매수 지시서 정밀도 교정 완벽 유지
+# 🚨 MODIFIED: [UI 뷰포트 진공 압축] 전원 스위치 버튼을 100% 영구 삭제하고, '관제탑 화면 열기' 단일 버튼으로 직관성을 극대화하여 팩트 교정 완료 (Phase 2).
 # ==========================================================
 import os
 import math
@@ -148,7 +149,7 @@ class TelegramView:
         safe_t = html.escape(str(ticker))
         msg = f"🚨 <b>[{safe_t} 삼위일체 소각 최종 확인]</b>\n\n"
         msg += f"정말 <b>{safe_t}</b>의 모든 퀀트 장부 데이터를 영구 삭제하시겠습니까?\n"
-        msg += "이 작업은 되돌릴 수 정 없습니다!"
+        msg += "이 작업은 되돌릴 수 없습니다!"
         keyboard = [
             [InlineKeyboardButton("🔥 네, 즉시 영구 소각합니다", callback_data=f"RESET:CONFIRM:{ticker}")],
             [InlineKeyboardButton("❌ 아니오, 취소합니다", callback_data="RESET:CANCEL")]
@@ -233,7 +234,6 @@ class TelegramView:
         ]
         return msg, InlineKeyboardMarkup(keyboard)
 
-    # 🚨 MODIFIED: [UI 텍스트 맹독성 하드코딩 소각] 실전 매매 관련 환영(Ghost Text) 전면 파기 및 순수 관제탑 팩트 롤오버
     def get_avwap_warning_menu(self, ticker):
         safe_t = html.escape(str(ticker))
         msg = f"👁️ <b>[{safe_t}] 초고도화 인텔리전스 관제탑 가동 승인</b>\n\n"
@@ -244,7 +244,6 @@ class TelegramView:
         msg += "▫️ 프리장/정규장 H/L (고/저점) 팩트 타임라인 슬라이싱\n"
         msg += "▫️ 3%, 6%, 9% 마디가 하락/상승 타점 벡터화 연산\n\n"
         msg += "포트폴리오 매니저의 관제탑 가동 승인을 대기합니다."
-        
         keyboard = [
             [InlineKeyboardButton("👁️ 관제탑 락온(Lock-on) 가동 승인", callback_data=f"MODE:AVWAP_ON:{ticker}")],
             [InlineKeyboardButton("❌ 작전 취소 (안전 모드 유지)", callback_data="RESET:CANCEL")]
@@ -265,7 +264,6 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        # 🚨 MODIFIED: 버전에 맞는 팩트 텍스트 렌더링
         msg += "▫️ 현재 시스템: <code>V86.00 초고도화 인텔리전스 관제탑 에디션</code>\n\n"
         
         for item in page_items:
@@ -326,7 +324,6 @@ class TelegramView:
             is_manual_vwap = bool(t_info.get('is_manual_vwap'))
             is_zero_start = bool(t_info.get('is_zero_start'))
             
-            # 🚨 MODIFIED: [Python 딕셔너리 평가 맹독성 수술] dict.get(key, default)에서 값이 None으로 오염 시 default가 무시되어 ZeroDivision을 유발하는 파이썬 맹점을 'or default' 단락 평가로 100% 교정 락온
             safe_seed = self._safe_float(t_info.get('seed') or 0.0)
             safe_one_portion = self._safe_float(t_info.get('one_portion') or 0.0)
             safe_curr = self._safe_float(t_info.get('curr') or 0.0)
@@ -392,7 +389,6 @@ class TelegramView:
 
             if v_mode == "V_REV":
                 body_msg += f"{main_icon} <b>[{t}] {v_mode_display}</b>{snap_tag}\n"
-                # 🚨 MODIFIED: [Null-Coalescing] t_info에서 None 유입 시 수학 에러 원천 방어 락온
                 v_rev_q_lots_safe = int(self._safe_float(t_info.get('v_rev_q_lots') or 0))
                 v_rev_q_qty_safe = int(self._safe_float(t_info.get('v_rev_q_qty') or 0))
                 body_msg += f"📈 큐(Queue): <b>{v_rev_q_lots_safe}개 지층 대기 중 (총 {v_rev_q_qty_safe}주)</b>\n"
@@ -425,7 +421,6 @@ class TelegramView:
             if is_zero_start and sniper_status_txt == "ON": sniper_status_txt = "OFF (0주 락온)"
             
             if v_mode != "V_REV":
-                # 🚨 MODIFIED: [Null-Coalescing] 단락 평가 쉴드 락온
                 safe_target = self._safe_float(t_info.get('target') or 10.0)
                 safe_star_pct = self._safe_float(t_info.get('star_pct') or 0.0)
                 safe_star_price = self._safe_float(t_info.get('star_price') or 0.0)
@@ -459,11 +454,9 @@ class TelegramView:
                 if is_zero_start:
                     raw_guidance = '\n'.join([line for line in raw_guidance.split('\n') if "잭팟" not in line and "상위층" not in line])
                 
-                # 🚨 MODIFIED: [UI 팩트 동기화 궁극 수술] 하드코딩 맹점을 소각하고, 코어 엔진(SSOT)에서 생성된 plan_dict의 팩트 타점을 다이렉트로 추출하여 UI에 완벽 렌더링 락온. (Walrus 연산자 붕괴 에러 동시 소각)
                 v_rev_q_lots_val = self._safe_float(t_info.get('v_rev_q_lots') or 0.0)
                 if not is_zero_start and fact_qty > 0 and v_rev_q_lots_val > 0:
                     try:
-                        # 🚨 [SSOT 절대 상속] 코어 엔진(strategy_reversion.py)에서 100% 팩트로 계산된 타점을 다이렉트로 추출하여 렌더링
                         b1_order = next((o for o in plan_dict.get('orders', []) if isinstance(o, dict) and 'Buy1' in str(o.get('desc', ''))), None)
                         b2_order = next((o for o in plan_dict.get('orders', []) if isinstance(o, dict) and 'Buy2' in str(o.get('desc', ''))), None)
                         
@@ -545,8 +538,6 @@ class TelegramView:
         split_cnt = 0
         target_profit = 0.0
         comp_rate = 0.0
-        is_avwap_on = False
-        avwap_status_txt = ""
         v14_mode_txt = ""
 
         tracking_cache = tracking_cache or {}
@@ -573,11 +564,8 @@ class TelegramView:
             if ver == "V_REV":
                 msg += f"▫️ 1회 예산: 총 시드의 15% (고정 할당)\n▫️ 목표: [가상1층]+0.6% / [상위층]+0.5%\n▫️ 자동복리: {comp_rate}% | 수수료: <b>{fee_rate}%</b>\n▫️ 갭 스위칭: <b>🤖 자율주행 (상승장 자동 가동)</b>\n"
                 
-                if hasattr(config, 'get_avwap_hybrid_mode'):
-                    is_avwap_on = config.get_avwap_hybrid_mode(t)
-                    # 🚨 MODIFIED: [UI 팩트 교정] 실전 가동 중 -> 관측 가동 중 팩트 변경
-                    avwap_status_txt = "관측 가동 중 👁️" if is_avwap_on else "대기 중 ⚪"
-                    msg += f"▫️ 초고도화 관제탑: <b>{avwap_status_txt}</b>\n"
+                # 🚨 MODIFIED: [UI 뷰포트 진공 압축] 동적 상태 스캔 영구 소각 및 상시 가동 텍스트 락온
+                msg += f"▫️ 초고도화 관제탑: <b>365일 상시 가동 📡</b>\n"
                 
                 msg += "⚖️ <b>엔진 스탠바이:</b> 15:26 EST 예약 덫 관측 ➔ 15:27 로컬 자체 슬라이싱 가동\n\n" 
             else:
@@ -591,10 +579,9 @@ class TelegramView:
                 keyboard.append([InlineKeyboardButton("💎 오리지널 V14 세팅", callback_data=f"SET_VER:V14:{t}")])
 
             if ver == "V_REV":
-                is_avwap = config.get_avwap_hybrid_mode(t) if hasattr(config, 'get_avwap_hybrid_mode') else False
-                keyboard.append([InlineKeyboardButton(f"👁️ 인텔리전스 관제탑 [ {'가동중' if is_avwap else 'OFF'} ]", callback_data=f"MODE:AVWAP_{'OFF' if is_avwap else 'WARN'}:{t}")])
-                
-                if t == "SOXL": keyboard.append([InlineKeyboardButton(f"🔫 {safe_t} 실시간 레이더망", callback_data=f"AVWAP:MENU:{t}")])
+                # 🚨 MODIFIED: [UI 뷰포트 진공 압축] 전원 스위치 영구 삭제 및 버튼 직관화
+                if t == "SOXL": 
+                    keyboard.append([InlineKeyboardButton(f"📡 {safe_t} 인텔리전스 관제탑 열기", callback_data=f"AVWAP:MENU:{t}")])
         
                 keyboard.append([InlineKeyboardButton(f"💸 {safe_t} 복리", callback_data=f"INPUT:COMPOUND:{t}"), InlineKeyboardButton(f"💳 {safe_t} 수수료", callback_data=f"INPUT:FEE:{t}")])
                 keyboard.append([InlineKeyboardButton(f"✂️ {safe_t} 액면보정", callback_data=f"INPUT:STOCK_SPLIT:{t}")])

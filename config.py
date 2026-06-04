@@ -13,6 +13,7 @@
 # 🚨 MODIFIED: [외부 오염 붕괴 방어] `version_history.py` 오염 시 `get_latest_version`에서 발생하는 TypeError 즉사 버그 원천 차단 (`isinstance(history, list)` 락온)
 # 🚨 MODIFIED: [Indentation 붕괴 수술] set_manual_vwap_mode 등 여러 메서드 내부의 띄어쓰기(Space) 불일치로 인한 IndentationError 즉사 버그 완벽 교정
 # 🚨 MODIFIED: [로깅 증발 뇌관 소각] 백그라운드 구동 시 증발하는 print() 구문을 logging.warning/error 체계로 전면 팩트 교체
+# 🚨 MODIFIED: [전원 스위치 영구 소각] get_avwap_hybrid_mode를 무조건 True로 하드코딩하여 관측 엔진을 365일 상시 가동(Always-ON) 상태로 락온.
 # ==========================================================
 
 import json
@@ -748,14 +749,13 @@ class ConfigManager:
             d[ticker] = bool(v)
             self._save_json(self.FILES["UPWARD_SNIPER"], d)
 
+    # 🚨 MODIFIED: [전원 스위치 영구 소각] JSON 파일 I/O 스캔을 폐기하고 365일 상시 가동(True) 하드코딩 락온
     def get_avwap_hybrid_mode(self, ticker): 
-         return bool(self._load_json(self.FILES["AVWAP_HYBRID_CFG"], {}).get(ticker, False))
+        return True
     
+    # 🚨 MODIFIED: [전원 스위치 영구 소각] 상시 가동 락온으로 인해 불필요해진 상태 변경 I/O 데드코드 무효화(Bypass)
     def set_avwap_hybrid_mode(self, ticker, v):
-        with self._io_lock:
-            d = self._load_json(self.FILES["AVWAP_HYBRID_CFG"], {})
-            d[ticker] = bool(v)
-            self._save_json(self.FILES["AVWAP_HYBRID_CFG"], d)
+        pass
 
     def get_avwap_sortie_mode(self, ticker):
         return str(self._load_json(self.FILES["AVWAP_SORTIE_CFG"], {}).get(ticker, "SINGLE"))
