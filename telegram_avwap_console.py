@@ -16,6 +16,7 @@
 # 🚨 MODIFIED: [Case 26 절대 헌법 준수] 텔레그램 HTML 파서 붕괴 방어를 위한 html.escape 쉴드 전역 강제 주입.
 # 🚨 MODIFIED: [String Lexical Comparison 보완] '160001' 대신 '160100'으로 교정하여 1분봉 time_est('%H%M00') 포맷과 시맨틱 일치화 완료.
 # 🚨 MODIFIED: [JSON Iterable 붕괴 방어] active_tickers 문자열 오염 시 봇이 오프라인되는 현상(Silent Death)을 막기 위한 isinstance 리스트 강제 캐스팅 락온.
+# 🚨 MODIFIED: [UI 텍스트 팩트 교정] SMA 5 텍스트 렌더링 시 레이아웃 통일성을 위해 헤더 텍스트를 바디로 이동 락온.
 # ==========================================================
 import logging
 import datetime
@@ -346,12 +347,12 @@ class AvwapConsolePlugin:
             else:
                 msg += "▫️ 애프터장 개장 대기 중...\n\n"
 
-            # 🚨 [9대 관측 지표] 직전 5거래일 정규장 종가의 산술 평균 가격 (SMA 5) UI 렌더링 주입
-            msg += f"📊 <b>[ 직전 5거래일 정규장 종가 평균 (SMA 5) ]</b>\n"
+            # 🚨 MODIFIED: [UI 텍스트 팩트 교정] 사용자 요청에 따라 SMA 5 텍스트 위치를 헤더에서 바디로 이동 락온
+            msg += f"📊 <b>[ 직전 5거래일 정규장 종가 평균 ]</b>\n"
             if ma_5day > 0:
-                msg += f"▫️ 5일 평균가: <b>${ma_5day:.2f}</b>\n"
+                msg += f"▫️ 5일 평균가(SMA 5): <b>${ma_5day:.2f}</b>\n"
             else:
-                msg += "▫️ 5일 평균가: 대기 중...\n"
+                msg += "▫️ 5일 평균가(SMA 5): 대기 중...\n"
 
             # 🚨 [관측 전용 아키텍처 전환] 수동 매수/매도 제어 버튼 영구 삭제 유지
             if is_holiday:
