@@ -7,11 +7,13 @@
 # 🚨 MODIFIED: [TypeError 붕괴 궁극 수술] KIS 서버에서 msg1이 None으로 반환될 때 발생하는 문자열 매칭(in) 즉사 버그 완벽 차단
 # 🚨 MODIFIED: [페이징 팩트 수술] get_execution_history 내 연속 조회(Pagination) 토큰 미갱신으로 인한 체결 내역 증발 버그 완벽 수술
 # 🚨 MODIFIED: [이벤트 루프 교착 방어] cancel_all_orders_safe 내부의 과도한 time.sleep(5)를 1.0초로 단축하여 Caller 타임아웃(10초) 폭발 원천 차단
+# 🚨 VERIFIED: [Case 36 절대 방어망 결속] MOC(시장가 매도) 주문 리젝 시 현재가 -5% 최유리 지정가(LIMIT) 덤핑 자동 폴백 100% 팩트 가동
 # ==========================================================
 
 import time
 import datetime
 import math
+import logging
 from zoneinfo import ZoneInfo
 from market_data_provider import MarketDataProvider
 
@@ -24,6 +26,7 @@ class KisOrderEngine(MarketDataProvider):
         api_success = False 
   
         params = {"CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "WCRC_FRCR_DVSN_CD": "02", "NATN_CD": "840", "TR_MKET_CD": "00", "INQR_DVSN_CD": "00"}
+       
         res = self._call_api("CTRP6504R", "/uapi/overseas-stock/v1/trading/inquire-present-balance", "GET", params=params)
    
         if res.get('rt_cd') == '0':
@@ -31,6 +34,7 @@ class KisOrderEngine(MarketDataProvider):
             # 🚨 MODIFIED: [Null-Pointer 방어] output2 결측 시 빈 딕셔너리로 폴백
             o2 = res.get('output2') or {}
             if isinstance(o2, list): o2 = o2[0] if len(o2) > 0 else {}
+     
             if not isinstance(o2, dict): o2 = {}
             
             dncl_amt = self._safe_float(o2.get('frcr_dncl_amt_2', 0))     
@@ -44,44 +48,53 @@ class KisOrderEngine(MarketDataProvider):
         for excg in target_excgs:
             fk200, nk200 = "", ""
             for attempt in range(20): 
+                
                 # 🚨 MODIFIED: [Case 32] 다중 스캔 루프 내 Rate Limit 캡핑
                 time.sleep(0.06)
                 
                 params_hold = {"CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "OVRS_EXCG_CD": excg, "TR_CRCY_CD": "USD", "CTX_AREA_FK200": fk200, "CTX_AREA_NK200": nk200}
                 headers = self._get_header("TTTS3012R")
-                
+          
                 # 🚨 MODIFIED: [페이징 팩트 수술] 다음 페이지 요청 시 "tr_cont": "N" 강제 주입
                 if fk200 or nk200: headers["tr_cont"] = "N"
                 
                 url = f"{self.base_url}/uapi/overseas-stock/v1/trading/inquire-balance"
+         
                 res_hold, resp_json = self._api_request("GET", url, headers, params=params_hold)
     
                 if res_hold and resp_json.get('rt_cd') == '0':
                     api_success = True
   
                     if cash <= 0:
+               
                         # 🚨 MODIFIED: [Null-Pointer 방어] output2 결측 시 빈 딕셔너리로 폴백
                         o2 = resp_json.get('output2') or {}
                         if isinstance(o2, list): o2 = o2[0] if len(o2) > 0 else {}
+                  
                         if not isinstance(o2, dict): o2 = {}
                         new_cash = self._safe_float(o2.get('ovrs_ord_psbl_amt', 0))
                         if new_cash > cash: cash = new_cash
                    
+            
                     for item in (resp_json.get('output1') or []):
                         if not isinstance(item, dict): continue
                         ticker = item.get('ovrs_pdno')
                         if not ticker: continue
  
+     
                         qty = int(self._safe_float(item.get('ovrs_cblc_qty', 0)))
                         ord_psbl_qty = int(self._safe_float(item.get('ord_psbl_qty', 0)))
                         avg = self._safe_float(item.get('pchs_avg_pric', 0))
                 
+        
                         if qty > 0 and ord_psbl_qty == 0: ord_psbl_qty = qty
                    
                         if qty > 0:
+                            
                             if ticker not in holdings: 
                                 holdings[ticker] = {'qty': qty, 'ord_psbl_qty': ord_psbl_qty, 'avg': avg}
                             else:
+                            
                                 # 🚨 MODIFIED: [Case 03] 유령 중복 합산 누적 무시 (영구 소각)
                                 continue 
 
@@ -100,6 +113,7 @@ class KisOrderEngine(MarketDataProvider):
     def get_unfilled_orders_detail(self, ticker):
         excg_cd = self._get_exchange_code(ticker, target_api="ORDER")
         valid_orders = []
+    
         fk200, nk200 = "", ""
      
         for attempt in range(10):
@@ -107,22 +121,26 @@ class KisOrderEngine(MarketDataProvider):
             params = {"CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "OVRS_EXCG_CD": excg_cd, "SORT_SQN": "DS", "CTX_AREA_FK200": fk200, "CTX_AREA_NK200": nk200}
             headers = self._get_header("TTTS3018R")
             
+     
             # 🚨 MODIFIED: [페이징 팩트 수술] 다음 페이지 요청 시 "tr_cont": "N" 강제 주입
             if fk200 or nk200: headers["tr_cont"] = "N"
             
             res, resp_json = self._api_request("GET", f"{self.base_url}/uapi/overseas-stock/v1/trading/inquire-nccs", headers, params=params)
     
             if res and resp_json.get('rt_cd') == '0':
+           
                 # 🚨 MODIFIED: [Iterable 붕괴 방어] None 유입 시 []로 단락 평가
                 output = resp_json.get('output') or []
             
                 if isinstance(output, dict): output = [output]
                 if not isinstance(output, list): output = []
+         
                 
                 valid_orders.extend([item for item in output if isinstance(item, dict) and item.get('pdno') == ticker])
            
                 tr_cont = res.headers.get('tr_cont', '') if hasattr(res, 'headers') else ''
                 fk200 = str(resp_json.get('ctx_area_fk200', '') or '').strip()
+          
                 nk200 = str(resp_json.get('ctx_area_nk200', '') or '').strip()
                 if tr_cont in ['M', 'F'] and nk200: time.sleep(0.3); continue
                 else: break
@@ -141,30 +159,35 @@ class KisOrderEngine(MarketDataProvider):
             params = {
                 "CANO": self.cano,
                 "ACNT_PRDT_CD": self.acnt_prdt_cd,
+             
                 "INQR_STRT_DT": start_date,
                 "INQR_END_DT": end_date,
                 "INQR_DVSN_CD": "00",
                 "OVRS_EXCG_CD": excg_cd,
                 "PRDT_TYPE_CD": "",
                 "CTX_AREA_FK200": fk200,
-                "CTX_AREA_NK200": nk200
+           
+                 "CTX_AREA_NK200": nk200
             }
             headers = self._get_header("TTTT3039R")
             
             # 🚨 MODIFIED: [페이징 팩트 수술] 다음 페이지 요청 시 "tr_cont": "N" 강제 주입
             if fk200 or nk200: headers["tr_cont"] = "N"
             
+ 
             res, resp_json = self._api_request("GET", f"{self.base_url}/uapi/overseas-stock/v1/trading/order-resv-list", headers, params=params)
             
             if res and resp_json.get('rt_cd') == '0':
                 # 🚨 MODIFIED: [Iterable 붕괴 방어] None 유입 시 []로 단락 평가
                 output = resp_json.get('output') or []
    
+    
                 if isinstance(output, dict): output = [output]
                 if not isinstance(output, list): output = []
                 
                 valid_orders.extend([item for item in output if isinstance(item, dict) and item.get('pdno') == ticker])
                 
+  
                 tr_cont = res.headers.get('tr_cont', '') if hasattr(res, 'headers') else ''
  
                 fk200 = str(resp_json.get('ctx_area_fk200', '') or '').strip()
@@ -176,6 +199,7 @@ class KisOrderEngine(MarketDataProvider):
                 else:
                     break
             else:
+         
                 break
            
         return valid_orders
@@ -185,12 +209,14 @@ class KisOrderEngine(MarketDataProvider):
             orders = self.get_unfilled_orders_detail(ticker)
             if orders is False: return False
             if not orders: return True
+        
             target_orders = orders
        
             if side == "BUY": target_orders = [o for o in orders if o.get('sll_buy_dvsn_cd') == '02']
             elif side == "SELL": target_orders = [o for o in orders if o.get('sll_buy_dvsn_cd') == '01']
             if not target_orders: return True
             for o in target_orders: 
+   
                 time.sleep(0.06)
                 self.cancel_order(ticker, o.get('odno'))
             # 🚨 MODIFIED: [이벤트 루프 교착 방어] 5.0초의 긴 대기 시간을 1.0초로 단축하여 상위 스케줄러 TimeoutError 원천 봉쇄
@@ -211,6 +237,7 @@ class KisOrderEngine(MarketDataProvider):
         for o in target_orders: 
             time.sleep(0.06)
             self.cancel_order(ticker, o.get('odno'))
+      
             time.sleep(0.3)
         return len(target_orders)
 
@@ -227,6 +254,7 @@ class KisOrderEngine(MarketDataProvider):
              if o.get('sll_buy_dvsn_cd') == sll_buy_cd:
                 o_price = 0.0
                 for rp in [o.get('ft_ord_unpr3', 0), o.get('ord_unpr', 0), o.get('ovrs_ord_unpr', 0)]:
+      
                     # 🚨 MODIFIED: [Insight 14] String-Float 맹독성 쉴드 래핑
                     try: 
                         val = self._safe_float(rp)
@@ -257,6 +285,7 @@ class KisOrderEngine(MarketDataProvider):
          
             if order_type not in ["MOC", "MOO"] and final_price <= 0.0: return {'rt_cd': '999', 'msg1': f'가격 오류: {price}'}
             
+      
             sll_type = "00" if side == "SELL" else ""
             
             body = {
@@ -268,6 +297,7 @@ class KisOrderEngine(MarketDataProvider):
             if order_type == "VWAP":
                 if start_time and end_time:
                     body["ALGO_ORD_TMD_DVSN_CD"] = "00"
+               
                     body["START_TIME"] = start_time
                     body["END_TIME"] = end_time
                 else:
@@ -276,10 +306,24 @@ class KisOrderEngine(MarketDataProvider):
             res = self._call_api(tr_id, "/uapi/overseas-stock/v1/trading/order", "POST", body=body)
             # 🚨 MODIFIED: [TypeError 붕괴 방어] msg1이 None일 경우 any() 루프에서 발생하는 예외 원천 봉쇄
             safe_msg = str(res.get('msg1') or '')
-            if res.get('rt_cd') != '0' and attempt < 2 and any(x in safe_msg for x in ["거래소", "시장", "exchange", "코드"]):
-                if ticker in self._excg_cd_cache: del self._excg_cd_cache[ticker]
-                time.sleep(1.0 * (2 ** attempt))
-                continue
+            
+            if res.get('rt_cd') != '0':
+                if attempt < 2 and any(x in safe_msg for x in ["거래소", "시장", "exchange", "코드"]):
+                    if ticker in self._excg_cd_cache: del self._excg_cd_cache[ticker]
+                    time.sleep(1.0 * (2 ** attempt))
+                    continue
+                
+                # 🚨 VERIFIED: [Case 36 절대 방어망] 리버스 모드 MOC(시장가 매도) 리젝 시 최유리 지정가(-5%) 덤핑 자동 팩트 요격
+                if order_type == "MOC":
+                    logging.warning(f"🚨 [Case 36 방어망] KIS MOC 주문 리젝 감지 ({safe_msg}). 현재가 -5% 덤핑 폴백 가동!")
+                    curr_p = self.get_current_price(ticker)
+                    if curr_p > 0:
+                        dump_price = self._ceil_2(curr_p * 0.95)
+                        logging.info(f"🔄 [{ticker}] MOC ➔ LIMIT(${dump_price:.2f}) 전환 요격 전송")
+                        # 🚨 [무한 루프 차단] LIMIT으로 재귀 호출하므로 2차 리젝 시 폴백이 중복 격발되지 않음
+                        return self.send_order(ticker, side, qty, dump_price, order_type="LIMIT")
+                
+                return {'rt_cd': str(res.get('rt_cd') or '999'), 'msg1': safe_msg or '오류', 'odno': ''}
                 
             # 🚨 MODIFIED: [AttributeError 붕괴 방어] output 객체 추출 시 안전 단락 평가
             out = res.get('output') or {}
@@ -317,6 +361,7 @@ class KisOrderEngine(MarketDataProvider):
     def cancel_daytime_order(self, ticker, order_id, qty="100", price="0"):
         time.sleep(0.06)
         excg_cd = self._get_exchange_code(ticker, target_api="ORDER")
+    
         # 🚨 MODIFIED: [최종 무결성 수술] Float 문자열 방어
         safe_qty = str(int(self._safe_float(qty)))
         safe_price = str(self._safe_float(price))
@@ -325,6 +370,7 @@ class KisOrderEngine(MarketDataProvider):
 
     def send_reservation_order(self, ticker, side, qty, price, order_type="LIMIT"):
         time.sleep(0.06)
+       
         # 🚨 MODIFIED: [Insight 14] String-Float 맹독성 쉴드 래핑
         try: order_qty = int(self._safe_float(qty))
         except: return {'rt_cd': '999', 'msg1': '수량 오류'}
@@ -369,6 +415,7 @@ class KisOrderEngine(MarketDataProvider):
        
         for attempt in range(10): 
             time.sleep(0.06)
+    
             # 🚨 MODIFIED: 갱신된 연속 조회 토큰(fk200, nk200)을 params에 정밀 주입하여 유령 루프 붕괴 차단
             params = {"CANO": self.cano, "ACNT_PRDT_CD": self.acnt_prdt_cd, "PDNO": ticker, "ORD_STRT_DT": start_date, "ORD_END_DT": end_date, "SLL_BUY_DVSN": "00", "CCLD_NCCS_DVSN": "00", "OVRS_EXCG_CD": excg_cd, "SORT_SQN": "DS", "CTX_AREA_FK200": fk200, "CTX_AREA_NK200": nk200}
             headers = self._get_header("TTTS3035R")
@@ -419,6 +466,7 @@ class KisOrderEngine(MarketDataProvider):
         curr_qty = int(self._safe_float(t_info.get('qty', 0)))
         if curr_qty == 0: return [], 0, 0.0
         ledger_records, est, target_date, loop = [], ZoneInfo('America/New_York'), datetime.datetime.now(ZoneInfo('America/New_York')), 0
+     
         while curr_qty > 0 and loop < 365:
             time.sleep(0.06)
             if target_date.weekday() < 5: loop += 1
@@ -438,9 +486,11 @@ class KisOrderEngine(MarketDataProvider):
                         if curr_qty <= eq: rq, curr_qty = curr_qty, 0
                         else: curr_qty -= eq
                     else: curr_qty += eq
+                 
                     ledger_records.append({'date': f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}", 'side': "BUY" if side=="02" else "SELL", 'qty': rq, 'price': ep})
                     if curr_qty == 0: break
-            target_date -= datetime.timedelta(days=1); time.sleep(0.1) 
+            target_date -= datetime.timedelta(days=1);
+            time.sleep(0.1) 
         
         if curr_qty > 0: ledger_records.append({'date': 'INCOMPLETE', 'side': 'UNKNOWN', 'qty': curr_qty, 'price': self._safe_float(t_info.get('avg', 0.0)), 'is_incomplete': True})
         ledger_records.reverse()
