@@ -7,15 +7,17 @@
 # 🚨 MODIFIED: [관측 타임라인 무중단 사수] 봇이 조기 퇴근하는 SHUTDOWN 락온을 소각하고, 장 마감(16:00 EST)까지 실시간 시장 데이터 스캔(Tracking High)이 무중단 유지되도록 교정.
 # 🚨 MODIFIED: [상태 스키마 100% 진공 압축] 매매에 종속된 불필요한 상태 스키마(limit_order_placed, buy_odno, trap_odno, manual_suspend, qty, avg_price 등)를 로컬 메모리 및 파일에서 영구 삭제.
 # 🚨 MODIFIED: [Quant Logic 교정] 기초지수 매크로(fetch_macro_context) 연산 시 (Open+High+Low+Close)/4.0 의 노이즈를 배제하고 정통 퀀트 표준인 (High+Low+Close)/3.0 으로 팩트 교정 완료.
-# 🚨 MODIFIED: [Time Paradox 붕괴 수술] 04:00~04:03 구간에서 전일(Yesterday)의 데이터를 불러와 RAM을 오염시키는 맹점을 차단하고 04:00 정각에 100% 당일(Today)로 롤오버되도록 팩트 락온.
+# 🚨 MODIFIED: [Time Paradox 붕괴 수술] 04:00~04:04 구간에서 전일(Yesterday)의 데이터를 불러와 RAM을 오염시키는 맹점을 차단하고 04:00 정각에 100% 당일(Today)로 롤오버되도록 팩트 락온.
 # 🚨 MODIFIED: [JSON 직렬화 붕괴 예방 락온] Numpy float64 타입 혼입으로 인한 json.dump 에러를 원천 차단하기 위해 순수 Python 타입으로 강제 캐스팅(self._safe_float) 100% 결속.
 # 🚨 MODIFIED: [Case 08, 16] os.path.exists 동기스캔 배제, EAFP 적용 및 temp_path 원자적 쓰기 스코프 전진 배치 유지.
 # 🚨 NEW: [Phase 2 암살자 코어 퀀트 브레인 복원] 무한 타격망, HA 하드 리셋 쉴드, 원화 목표가 역산 엔진 100% 팩트 이식 완료.
+# 🚨 MODIFIED: [Target 2 수술] OCO 듀얼 엑시트 원화 목표가 역산 시 매수 수수료(fee_rate) 가산 누락분을 교정하여 슬리피지 패러독스 원천 차단.
 # 🚨 MODIFIED: [타겟-앵커 붕괴 방어] 타점 연산 시 SOXX 시가가 아닌 SOXL 실매매 종목 시가를 앵커로 잡도록 듀얼 앵커 추출 팩트 교정 완료.
 # 🚨 MODIFIED: [Numpy Vectorization 락온] 하이킨 아시(HA) 연산 시 Pandas 루프를 영구 소각하고 고속 Numpy 배열 벡터화 연산으로 100% 리빌딩.
 # 🚨 MODIFIED: [Case 35 결측치 전이 방어] 1분봉 데이터의 결측치(NaN)로 인해 VWAP 및 HA 연산이 붕괴되는 현상을 막기 위해 ffill().bfill() 체인 및 np.nan_to_num 강제 락온.
 # 🚨 MODIFIED: [ZeroDivision 붕괴 방어] 원화 목표가 역산 시 수수료 오염으로 인한 분모 0 붕괴 방지용 safe_denom 팩트 결속.
 # 🚨 MODIFIED: [Case 01 절대 헌법 사수] 날짜 비교 시 '%Y-%m-%d' 시스템 표준 포맷 100% 강제 래핑 완료.
+# 🚨 MODIFIED: [AttributeError 궁극 수술] save_state 진입 시 state_data 객체의 오염(NoneType 유입)을 막기 위한 isinstance 쉴드 강제 주입 (최종 무결성 락온).
 # ==========================================================
 import logging
 import datetime
@@ -94,6 +96,10 @@ class VAvwapHybridPlugin:
         return data
 
     def save_state(self, ticker, now_est, state_data):
+        # 🚨 MODIFIED: [AttributeError 궁극 수술] 외부 오염 방어 쉴드 락온
+        if not isinstance(state_data, dict):
+            state_data = {}
+            
         file_path = self._get_state_file(ticker, now_est)
         today_str = self._get_logical_date_str(now_est)
 
@@ -170,7 +176,8 @@ class VAvwapHybridPlugin:
                 est = ZoneInfo('America/New_York')
                 now_est = datetime.datetime.now(est)
     
-                if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 5):
+                # 🚨 MODIFIED: [Time Paradox 붕괴 수술] 04:00:00 정각 100% 롤오버 팩트 교정
+                if now_est.hour < 4:
                     today_est = (now_est - datetime.timedelta(days=1)).date()
                 else:
                     today_est = now_est.date()
@@ -308,7 +315,8 @@ class VAvwapHybridPlugin:
             
             # 🚨 MODIFIED: [Zero-Division 붕괴 방어막] 수수료 오염으로 인한 분모 0 붕괴 차단
             safe_denom = avwap_qty * max(0.0001, (1.0 - fee_rate))
-            target_price_usd = ((target_krw / exchange_rate) + total_invested_usd) / safe_denom
+            # 🚨 MODIFIED: [Target 2 수술] OCO 듀얼 엑시트 원화 목표가 역산식 매수 수수료 가산 누락분(1 + fee_rate) 100% 팩트 교정
+            target_price_usd = ((target_krw / exchange_rate) + (total_invested_usd * (1.0 + fee_rate))) / safe_denom
             
             if exec_curr_p >= target_price_usd:
                 return _build_res('SHADOW_EXIT', f'원화 목표액(₩{int(target_krw):,}) 관통 스윕 격발!', tp=target_price_usd)
