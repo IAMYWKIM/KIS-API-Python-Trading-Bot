@@ -2,21 +2,17 @@
 # FILE: telegram_avwap_console.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 3중 딥다이브 교차 검증(Syntax 붕괴, Async I/O 족쇄, Float 정밀도 사수) 통과 완료.
-# 🚨 MODIFIED: [제2헌법 절대 준수] 실매매 락온 소각으로 더 이상 파일 입출력이 발생하지 않으므로, 사용되지 않는 `os`, `json` 모듈 임포트를 영구 소각하여 시스템 오버헤드 진공 압축.
-# 🚨 MODIFIED: [9대 퀀트 관측 지표 확장] 직전 5거래일 정규장 종가 평균(SMA 5) 데이터 추출 및 UI 렌더링 팩트 주입 완료.
-# 🚨 MODIFIED: [관측 전용 아키텍처 전환] 실전 매매 로직 소각에 따라 관제탑을 '초고도화 9대 퀀트 지표' 정보창으로 전면 리빌딩 (매매 현황 및 수동 개입 버튼 100% 영구 삭제).
-# 🚨 MODIFIED: [Quant Logic 교정] 기초지수 VWAP 연산 시 (Open+High+Low+Close)/4.0 의 노이즈를 배제하고 정통 퀀트 표준인 (High+Low+Close)/3.0 으로 팩트 교정 완료.
-# 🚨 MODIFIED: [Vectorization 연산 락온] 프리장(04:00~09:29) 및 정규장(09:30~16:00)에 이어 애프터장(16:01~20:00)까지 time_est 기반으로 정밀 슬라이싱 락온.
-# 🚨 MODIFIED: [ZeroDivision 및 결측치 붕괴 수술] 정규장/애프터장 미개장(empty) 시 또는 거래량(Volume)/저가(Low)가 0일 때 발생하는 치명적 수학 연산 붕괴를 단락 평가(if > 0)로 완벽 차단.
-# 🚨 MODIFIED: [UI 가독성 팩트 교정] 고가/저가 및 3/6/9% 타점 출력 문자열에 개행(\n) 및 7칸 공백 들여쓰기를 하드코딩하여 뷰포트 레이아웃 전면 리빌딩.
+# 🚨 MODIFIED: [UI 텍스트 맹독성 하드코딩 소각] 과거 암살자/스캘퍼 실전 매매 시절의 환영(Ghost Text)을 전면 파기하고 순수 관제탑 팩트로 100% 롤오버 완료.
+# 🚨 MODIFIED: [V86.00 텍스트 팩트 롤오버] '딥-레스큐' 및 '암살자' 레거시 명칭 영구 소각. 새벽 수금원 및 프리장 스캘퍼 퀀트 네이밍을 거쳐 '초고도화 인텔리전스 관제탑'으로 100% 팩트 교정 완료.
+# 🚨 MODIFIED: [Quant Logic 팩트 교정] 고가/저가(High/Low) 기반 타점 산출 맹점을 소각하고, 각 세션의 시가(Open) 기준 상승장/하락장 판별(3/6/9% vs 6/9/12%) 팩트 연산 전면 이식.
+# 🚨 MODIFIED: [암살자 딥-레스큐 실전 렌더링 락온] avwap_trade_state 파일을 EAFP 샌드박스로 파싱하여, 교전 중(qty > 0)일 때 원화 환산 목표 스윕가 및 -1% 하단 손절 덫 팩트 노출 완료.
+# 🚨 MODIFIED: [ZeroDivision 붕괴 수술] OCO 듀얼 엑시트 원화 역산 시 수수료(fee_rate) 가산식의 분모 0 붕괴를 막기 위한 safe_denom 쉴드 락온.
 # 🚨 MODIFIED: [Time Paradox UI 렌더링 붕괴 수술] 야후 파이낸스 1분봉 관통 시간을 연산할 때, 전일(Yesterday) 데이터 혼입을 막기 위해 무조건 `now_est.date()` 로 슬라이싱하도록 100% 팩트 락온.
-# 🚨 MODIFIED: [Series Stringification 붕괴 방어] 1분봉 고점/저점 시간 추출 시 `idxmax()` 와 `.loc` 의 조합이 유발하는 중복 인덱스 런타임 붕괴를 막기 위해 불리언 마스킹 및 `.iloc[0].split('.')[0]` 로 100% 원천 교정.
 # 🚨 MODIFIED: [고성능 클라우드 TPS 방어] 데이터 추출 시 순차적(Sequential) await 및 0.06초 샌드위치 지연(TPS 캡핑), 3단 지수 백오프 강제 락온.
 # 🚨 MODIFIED: [Insight 14, 25] API String-Float 및 NaN/Inf 맹독성 포맷팅 쉴드. `_safe_float` 코어 래핑 전면 결속 완료.
 # 🚨 MODIFIED: [Case 26 절대 헌법 준수] 텔레그램 HTML 파서 붕괴 방어를 위한 html.escape 쉴드 전역 강제 주입.
-# 🚨 MODIFIED: [String Lexical Comparison 보완] '160001' 대신 '160100'으로 교정하여 1분봉 time_est('%H%M00') 포맷과 시맨틱 일치화 완료.
 # 🚨 MODIFIED: [JSON Iterable 붕괴 방어] active_tickers 문자열 오염 시 봇이 오프라인되는 현상(Silent Death)을 막기 위한 isinstance 리스트 강제 캐스팅 락온.
-# 🚨 MODIFIED: [UI 텍스트 팩트 교정] SMA 5 텍스트 렌더링 시 레이아웃 통일성을 위해 헤더 텍스트를 바디로 이동 락온.
+# 🚨 MODIFIED: [Async I/O 코루틴 붕괴 수술] _get_exchange_rate 내부 동기 함수화로 asyncio.to_thread 래핑 시 발생하는 TypeError(Coroutine) 즉사 버그 완벽 소각.
 # ==========================================================
 import logging
 import datetime
@@ -24,9 +20,13 @@ from zoneinfo import ZoneInfo
 import math
 import asyncio
 import time
+import os
+import json
 import pandas as pd
 import pandas_market_calendars as mcal  
+import yfinance as yf
 import html  
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 class AvwapConsolePlugin:
@@ -53,7 +53,6 @@ class AvwapConsolePlugin:
 
         est = ZoneInfo('America/New_York')
         now_est = datetime.datetime.now(est)
-        curr_time = now_est.time()
         today_est_date = now_est.date()
         
         # 🚨 [Case 32, 33] 달력 API 호출 시 TPS 캡핑 및 지수 백오프 주입
@@ -130,7 +129,7 @@ class AvwapConsolePlugin:
         
         active_avwap = avwap_tickers
         
-        msg = f"📡 <b>[ 실시간 퀀트 인텔리전스 관제탑 ]</b>\n{header_status}\n\n"
+        msg = f"📡 <b>[ 초고도화 인텔리전스 관제탑 ]</b>\n{header_status}\n\n"
         keyboard = []
 
         # 🚨 [Case 31, 32] 고성능 클라우드 TPS 방어 및 지수 백오프 비동기 헬퍼
@@ -143,6 +142,21 @@ class AvwapConsolePlugin:
                     if attempt == 2: return None
                     await asyncio.sleep(1.0 * (2 ** attempt))
 
+        # 🚨 MODIFIED: [Async I/O 코루틴 붕괴 수술] def로 팩트 교정하여 to_thread 런타임 호환성 100% 확보
+        def _get_exchange_rate():
+            time.sleep(0.06)
+            df = yf.Ticker("KRW=X").history(period="1d", timeout=5.0)
+            if not df.empty and 'Close' in df.columns and len(df['Close']) > 0:
+                val = self._safe_float(df['Close'].iloc[-1])
+                return val if val > 0 else 1400.0
+            return 1400.0
+
+        exchange_rate = 1400.0
+        try:
+            xr_val = await asyncio.wait_for(asyncio.to_thread(_get_exchange_rate), timeout=10.0)
+            if xr_val > 0: exchange_rate = xr_val
+        except Exception: pass
+
         for t in active_avwap:
             await asyncio.sleep(0.06)
             # 🚨 [Case 26] 텔레그램 HTML 파서 붕괴 방어용 html.escape 쉴드
@@ -154,6 +168,9 @@ class AvwapConsolePlugin:
                 # 🚨 데이터 추출 및 병목 방지
                 curr_p_val = await _get_with_retry(self.broker.get_current_price, t)
                 curr_p = self._safe_float(curr_p_val)
+                
+                prev_c_val = await _get_with_retry(self.broker.get_previous_close, t)
+                prev_c = self._safe_float(prev_c_val)
                 
                 base_curr_p_val = await _get_with_retry(self.broker.get_current_price, base_t)
                 base_curr_p = self._safe_float(base_curr_p_val)
@@ -168,10 +185,36 @@ class AvwapConsolePlugin:
                 ma_5day_val = await _get_with_retry(self.broker.get_5day_ma, t)
                 ma_5day = self._safe_float(ma_5day_val)
                 
+                fee_rate = self._safe_float(await _get_with_retry(self.cfg.get_fee, t)) / 100.0
+                target_krw = self._safe_float(await _get_with_retry(self.cfg.get_avwap_target_krw, t))
+
             except Exception as e:
                 logging.error(f"🚨 [{t}] 퀀트 관측망 데이터 추출 실패: {e}")
-                # 🚨 [9대 관측 지표] 결측치 폴백 항목에 ma_5day 추가
-                curr_p, base_curr_p, base_amp5, df_1m, df_base, ma_5day = 0.0, 0.0, 0.0, None, None, 0.0
+                curr_p, prev_c, base_curr_p, base_amp5, df_1m, df_base, ma_5day, fee_rate, target_krw = 0.0, 0.0, 0.0, 0.0, None, None, 0.0, 0.0007, 1000000.0
+
+            # 🚨 [암살자 딥-레스큐 실전 렌더링 팩트 파싱]
+            avwap_qty, avwap_avg, avwap_inv_usd, target_usd, cut_loss = 0, 0.0, 0.0, 0.0, 0.0
+            is_assassin_active = False
+            state_file = f"data/avwap_trade_state_{t}.json"
+            try:
+                def _read_state():
+                    with open(state_file, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+                state_data = await asyncio.wait_for(asyncio.to_thread(_read_state), timeout=5.0)
+                
+                if isinstance(state_data, dict):
+                    avwap_qty = int(self._safe_float(state_data.get('qty', 0)))
+                    if avwap_qty > 0:
+                        is_assassin_active = True
+                        avwap_avg = self._safe_float(state_data.get('avg_price', 0.0))
+                        avwap_inv_usd = avwap_qty * avwap_avg
+                        cut_loss = round(avwap_avg * 0.99, 2)
+                        
+                        # 🚨 [ZeroDivision 붕괴 수술] 수수료 가산식 분모 0 붕괴 차단
+                        safe_denom = avwap_qty * max(0.0001, (1.0 - fee_rate))
+                        target_usd = ((target_krw / exchange_rate) + (avwap_inv_usd * (1.0 + fee_rate))) / safe_denom
+            except Exception:
+                pass
 
             # ==============================================================
             # 1️⃣ 지표 1: 기초지수 평균 진폭 레버리지(x3) 환산
@@ -203,13 +246,13 @@ class AvwapConsolePlugin:
                             base_vwap = df_b_reg['vol_tp'].sum() / c_vol
                             if base_vwap > 0:
                                 base_gap_pct = (base_curr_p - base_vwap) / base_vwap * 100.0
-                                # NEW: 기초지수 VWAP 이격도 레버리지(x3) 환산
+                                # 기초지수 VWAP 이격도 레버리지(x3) 환산
                                 lev_gap_pct = base_gap_pct * 3.0
 
             # ==============================================================
-            # 3️⃣~8️⃣ 지표 3-8: 프리장/정규장/애프터장 H/L 슬라이싱 및 타점 연산
+            # 3️⃣~8️⃣ 지표 3-8: 프리장/정규장/애프터장 시가(Open) 추출 및 타점 연산
             # ==============================================================
-            # 🚨 MODIFIED: [Vectorization 연산 락온] time_est 기반 애프터장 슬라이싱 추가
+            # 🚨 MODIFIED: [Quant Logic 팩트 교정] 고가/저가 데드코드 소각 및 Open 기반 상승장/하락장 판별
             df_today = df_1m[df_1m.index.date == today_est_date].copy() if (df_1m is not None and not df_1m.empty) else pd.DataFrame()
             
             df_pre = pd.DataFrame()
@@ -219,92 +262,36 @@ class AvwapConsolePlugin:
             if not df_today.empty and 'time_est' in df_today.columns:
                 df_pre = df_today[(df_today['time_est'] >= '040000') & (df_today['time_est'] <= '092959')]
                 df_reg = df_today[(df_today['time_est'] >= '093000') & (df_today['time_est'] <= '160000')]
-                # 🚨 MODIFIED: [String Lexical Comparison 보완] '160100'으로 교정하여 시맨틱 일치
                 df_aft = df_today[(df_today['time_est'] >= '160100') & (df_today['time_est'] <= '200000')]
 
-            # 프리장 지표 연산
-            pre_h, pre_l, pre_amp = 0.0, 0.0, 0.0
-            pre_h_t, pre_l_t = "미달성", "미달성"
-            if not df_pre.empty:
-                safe_high_pre = pd.to_numeric(df_pre['high'], errors='coerce')
-                safe_low_pre = pd.to_numeric(df_pre['low'], errors='coerce')
+            def _calc_session_metrics(df_session, p_close):
+                if df_session.empty:
+                    return 0.0, 0.0, 0.0, False, 0.0, 0.0, 0.0
                 
-                pre_h = self._safe_float(safe_high_pre.max())
-                pre_l = self._safe_float(safe_low_pre.min())
+                s_open = self._safe_float(df_session['open'].iloc[0])
+                s_high = self._safe_float(df_session['high'].max())
+                s_low = self._safe_float(df_session['low'].min())
                 
-                if pre_h > 0 and pre_l > 0:
-                    pre_amp = (pre_h - pre_l) / pre_l * 100.0
-                    
-                    try:
-                        # 🚨 [Series Stringification 붕괴 방어] idxmax() 대신 불리언 마스킹 강제 및 float 문자 파쇄
-                        h_row = df_pre[safe_high_pre >= pre_h]
-                        if not h_row.empty:
-                            raw_h_t = str(h_row['time_est'].iloc[0]).split('.')[0].zfill(6)
-                            pre_h_t = f"{raw_h_t[:2]}:{raw_h_t[2:4]}"
-                            
-                        l_row = df_pre[safe_low_pre <= pre_l]
-                        if not l_row.empty:
-                            raw_l_t = str(l_row['time_est'].iloc[0]).split('.')[0].zfill(6)
-                            pre_l_t = f"{raw_l_t[:2]}:{raw_l_t[2:4]}"
-                    except Exception: pass
+                is_bull = s_open > p_close
+                drop_1 = 0.97 if is_bull else 0.94
+                drop_2 = 0.94 if is_bull else 0.91
+                drop_3 = 0.91 if is_bull else 0.88
+                
+                t1 = s_open * drop_1
+                t2 = s_open * drop_2
+                t3 = s_open * drop_3
+                
+                return s_open, s_high, s_low, is_bull, t1, t2, t3
 
-            # 정규장 지표 연산
-            reg_h, reg_l, reg_amp = 0.0, 0.0, 0.0
-            reg_h_t, reg_l_t = "미달성", "미달성"
-            if not df_reg.empty:
-                safe_high_reg = pd.to_numeric(df_reg['high'], errors='coerce')
-                safe_low_reg = pd.to_numeric(df_reg['low'], errors='coerce')
-                
-                reg_h = self._safe_float(safe_high_reg.max())
-                reg_l = self._safe_float(safe_low_reg.min())
-
-                if reg_h > 0 and reg_l > 0:
-                    reg_amp = (reg_h - reg_l) / reg_l * 100.0
-                    
-                    try:
-                        # 🚨 [Series Stringification 붕괴 방어] 불리언 마스킹 락온 및 float 문자 파쇄
-                        h_row_r = df_reg[safe_high_reg >= reg_h]
-                        if not h_row_r.empty:
-                            raw_h_t_r = str(h_row_r['time_est'].iloc[0]).split('.')[0].zfill(6)
-                            reg_h_t = f"{raw_h_t_r[:2]}:{raw_h_t_r[2:4]}"
-                            
-                        l_row_r = df_reg[safe_low_reg <= reg_l]
-                        if not l_row_r.empty:
-                            raw_l_t_r = str(l_row_r['time_est'].iloc[0]).split('.')[0].zfill(6)
-                            reg_l_t = f"{raw_l_t_r[:2]}:{raw_l_t_r[2:4]}"
-                    except Exception: pass
-
-            # 애프터장 지표 연산 및 ValueError 방어막(Case 24) 락온
-            aft_h, aft_l, aft_amp = 0.0, 0.0, 0.0
-            aft_h_t, aft_l_t = "미달성", "미달성"
-            if not df_aft.empty:
-                safe_high_aft = pd.to_numeric(df_aft['high'], errors='coerce')
-                safe_low_aft = pd.to_numeric(df_aft['low'], errors='coerce')
-                
-                aft_h = self._safe_float(safe_high_aft.max())
-                aft_l = self._safe_float(safe_low_aft.min())
-                
-                if aft_h > 0 and aft_l > 0:
-                    aft_amp = (aft_h - aft_l) / aft_l * 100.0
-                    
-                    try:
-                        # 🚨 [Series Stringification 붕괴 방어] 불리언 마스킹 락온 및 float 문자 파쇄
-                        h_row_a = df_aft[safe_high_aft >= aft_h]
-                        if not h_row_a.empty:
-                            raw_h_t_a = str(h_row_a['time_est'].iloc[0]).split('.')[0].zfill(6)
-                            aft_h_t = f"{raw_h_t_a[:2]}:{raw_h_t_a[2:4]}"
-                            
-                        l_row_a = df_aft[safe_low_aft <= aft_l]
-                        if not l_row_a.empty:
-                            raw_l_t_a = str(l_row_a['time_est'].iloc[0]).split('.')[0].zfill(6)
-                            aft_l_t = f"{raw_l_t_a[:2]}:{raw_l_t_a[2:4]}"
-                    except Exception: pass
+            pre_open, pre_high, pre_low, pre_bull, pre_t1, pre_t2, pre_t3 = _calc_session_metrics(df_pre, prev_c)
+            reg_open, reg_high, reg_low, reg_bull, reg_t1, reg_t2, reg_t3 = _calc_session_metrics(df_reg, prev_c)
+            aft_open, aft_high, aft_low, aft_bull, aft_t1, aft_t2, aft_t3 = _calc_session_metrics(df_aft, prev_c)
 
             # ==============================================================
             # 🖥️ 뷰포트 렌더링
             # ==============================================================
             msg += f"🎯 <b>[ {ticker_clean} 마스터 옵저버 ]</b>\n"
-            msg += f"▫️ 현재가: <b>${curr_p:.2f}</b>\n\n"
+            msg += f"▫️ 현재가: <b>${curr_p:.2f}</b> (전일종가 ${prev_c:.2f})\n\n"
             
             msg += f"1️⃣ <b>기초지수({base_t_clean}) 환산 진폭 (5MA)</b>\n"
             msg += f"▫️ 레버리지(x3) 진폭: <b>{lev_amp_pct:.2f}%</b>\n\n"
@@ -319,40 +306,50 @@ class AvwapConsolePlugin:
             else:
                 msg += f"▫️ 정규장 개장 대기 중 (VWAP 연산 불가)\n\n"
 
-            # 🚨 [UI 가독성 팩트 교정] 개행(\n) 및 7칸 공백 들여쓰기 락온
+            # 🚨 [UI 가독성 팩트 교정] 시가 기반 상승장/하락장 판별 및 무한 하락 타점 렌더링
             msg += f"🌅 <b>[ 프리장 스펙 (04:00~09:29) ]</b>\n"
-            if pre_h > 0 and pre_l > 0:
-                msg += f"▫️ 고가: <b>${pre_h:.2f}</b> ({pre_h_t})\n       저가: <b>${pre_l:.2f}</b> ({pre_l_t})\n"
-                msg += f"▫️ 세션 진폭: <b>{pre_amp:.2f}%</b>\n"
-                msg += f"🔻 고가 대비 3%(${(pre_h*0.97):.2f})\n       / 6%(${(pre_h*0.94):.2f}) / 9%(${(pre_h*0.91):.2f})\n"
-                msg += f"🔺 저가 대비 3%(${(pre_l*1.03):.2f})\n       / 6%(${(pre_l*1.06):.2f}) / 9%(${(pre_l*1.09):.2f})\n\n"
+            if pre_open > 0:
+                msg += f"▫️ 시가: <b>${pre_open:.2f}</b> (고가 ${pre_high:.2f} / 저가 ${pre_low:.2f})\n"
+                msg += f"▫️ 판별: {'상승장' if pre_bull else '하락장'} (시가 vs 전일종가)\n"
+                msg += f"🔻 무한 하락 타점 추적 (시가 기준)\n"
+                msg += f"       1차: <b>${pre_t1:.2f}</b> / 2차: <b>${pre_t2:.2f}</b> / 3차: <b>${pre_t3:.2f}</b>\n\n"
             else:
                 msg += "▫️ 데이터 집계 대기 중...\n\n"
 
             msg += f"🔥 <b>[ 정규장 스펙 (09:30~16:00) ]</b>\n"
-            if reg_h > 0 and reg_l > 0:
-                msg += f"▫️ 고가: <b>${reg_h:.2f}</b> ({reg_h_t})\n       저가: <b>${reg_l:.2f}</b> ({reg_l_t})\n"
-                msg += f"▫️ 세션 진폭: <b>{reg_amp:.2f}%</b>\n"
-                msg += f"🔻 고가 대비 3%(${(reg_h*0.97):.2f})\n       / 6%(${(reg_h*0.94):.2f}) / 9%(${(reg_h*0.91):.2f})\n"
-                msg += f"🔺 저가 대비 3%(${(reg_l*1.03):.2f})\n       / 6%(${(reg_l*1.06):.2f}) / 9%(${(reg_l*1.09):.2f})\n\n"
+            if reg_open > 0:
+                msg += f"▫️ 시가: <b>${reg_open:.2f}</b> (고가 ${reg_high:.2f} / 저가 ${reg_low:.2f})\n"
+                msg += f"▫️ 판별: {'상승장' if reg_bull else '하락장'} (시가 vs 전일종가)\n"
+                msg += f"🔻 무한 하락 타점 추적 (시가 기준)\n"
+                msg += f"       1차: <b>${reg_t1:.2f}</b> / 2차: <b>${reg_t2:.2f}</b> / 3차: <b>${reg_t3:.2f}</b>\n\n"
             else:
                 msg += "▫️ 정규장 개장 대기 중...\n\n"
 
             msg += f"🌙 <b>[ 애프터장 스펙 (16:00~20:00) ]</b>\n"
-            if aft_h > 0 and aft_l > 0:
-                msg += f"▫️ 고가: <b>${aft_h:.2f}</b> ({aft_h_t})\n       저가: <b>${aft_l:.2f}</b> ({aft_l_t})\n"
-                msg += f"▫️ 세션 진폭: <b>{aft_amp:.2f}%</b>\n"
-                msg += f"🔻 고가 대비 3%(${(aft_h*0.97):.2f})\n       / 6%(${(aft_h*0.94):.2f}) / 9%(${(aft_h*0.91):.2f})\n"
-                msg += f"🔺 저가 대비 3%(${(aft_l*1.03):.2f})\n       / 6%(${(aft_l*1.06):.2f}) / 9%(${(aft_l*1.09):.2f})\n\n"
+            if aft_open > 0:
+                msg += f"▫️ 시가: <b>${aft_open:.2f}</b> (고가 ${aft_high:.2f} / 저가 ${aft_low:.2f})\n"
+                msg += f"▫️ 판별: {'상승장' if aft_bull else '하락장'} (시가 vs 전일종가)\n"
+                msg += f"🔻 무한 하락 타점 추적 (시가 기준)\n"
+                msg += f"       1차: <b>${aft_t1:.2f}</b> / 2차: <b>${aft_t2:.2f}</b> / 3차: <b>${aft_t3:.2f}</b>\n\n"
             else:
                 msg += "▫️ 애프터장 개장 대기 중...\n\n"
 
             # 🚨 MODIFIED: [UI 텍스트 팩트 교정] 사용자 요청에 따라 SMA 5 텍스트 위치를 헤더에서 바디로 이동 락온
             msg += f"📊 <b>[ 직전 5거래일 정규장 종가 평균 ]</b>\n"
             if ma_5day > 0:
-                msg += f"▫️ 5일 평균가(SMA 5): <b>${ma_5day:.2f}</b>\n"
+                msg += f"▫️ 5일 평균가(SMA 5): <b>${ma_5day:.2f}</b>\n\n"
             else:
-                msg += "▫️ 5일 평균가(SMA 5): 대기 중...\n"
+                msg += "▫️ 5일 평균가(SMA 5): 대기 중...\n\n"
+
+            # 🚨 [암살자 딥-레스큐 교전망 현황 렌더링 락온]
+            msg += f"⚔️ <b>[ 암살자 딥-레스큐 교전망 현황 ]</b>\n"
+            if is_assassin_active:
+                msg += f"▫️ 교전 상태: <b>ON (OCO 듀얼 엑시트 대기 중)</b>\n"
+                msg += f"▫️ 투입 물량: <b>{avwap_qty}주</b> (진입 단가 ${avwap_avg:.2f} | 총 ${avwap_inv_usd:,.2f})\n"
+                msg += f"▫️ 전량 익절: <b>목표가 ${target_usd:.2f}</b> (환산 ₩{int(target_krw):,})\n"
+                msg += f"▫️ 하드 손절: <b>탈출가 ${cut_loss:.2f}</b> (-1% KIS 덫 장전 완료)\n"
+            else:
+                msg += f"▫️ 교전 상태: <b>OFF (대기 중 / 무포지션)</b>\n"
 
             # 🚨 [관측 전용 아키텍처 전환] 수동 매수/매도 제어 버튼 영구 삭제 유지
             if is_holiday:

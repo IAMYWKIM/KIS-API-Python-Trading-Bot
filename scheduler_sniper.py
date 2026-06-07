@@ -15,6 +15,12 @@
 # 🚨 MODIFIED: [AttributeError 궁극 수술] context.job 객체 파손/결측 시 발생하는 연쇄 붕괴를 getattr 단락 평가로 완벽 교정.
 # 🚨 NEW: [Time Paradox 팩트 교정] KIS 당일 체결 내역 조회(get_execution_history) 시 EST 날짜를 사용하여 조회가 누락되던 맹점을 KST 100% 동기화로 영구 소각.
 # 🚨 NEW: [방어막 누수 방어] 암살자 딥매수 체결 후 서버 오류로 -1% 덫이 누락될 경우 즉각 복구하는 자가 치유(Self-Healing) 로직 100% 이식.
+# 🚨 NEW: [시나리오 2 디커플링 수복] OCO 듀얼 엑시트 전량 익절 직후, 당일 조기 졸업 및 새출발(Re-entry) 팩트 파이프라인 직결 완료.
+# 🚨 MODIFIED: [SOXL 절대 락온] 암살자 하이브리드 로직에 타 종목이 진입하지 못하도록 (t == "SOXL") 차단막 100% 결속.
+# 🚨 MODIFIED: [Case 30 팩트 동기화] 암살자 Hit & Cut 타격 직후, KIS 실잔고를 재스캔하여 로컬 큐 장부를 100% 오버라이드하도록 유령 차단(Ghost-Sync) 결속.
+# 🚨 MODIFIED: [잔고 동기화 팩트 수술] SHAD0W_EXIT 및 스나이퍼 매도 타격 시 실시간 잔고(rt_qty)를 추출하여 매도 수량을 100% 정밀 캡핑 (주문가능수량 초과 Reject 원천 봉쇄).
+# 🚨 NEW: [Ghost-Trap 붕괴 수술] 스윕 실패 등의 사유로 덫이 미체결 상태로 증발(Cancel)했을 경우, 즉각 자가 치유 파이프라인으로 상태를 롤백하여 무방비 노출 원천 차단.
+# 🚨 NEW: [자가 치유 오발 방어] 실잔고가 0주인 상태에서는 억지로 손절 덫을 복구하려다 KIS Reject를 유발하지 않도록, 실잔고 1주 이상일 때만 방어막을 팩트 전개.
 # ==========================================================
 import logging
 import datetime
@@ -32,7 +38,8 @@ import pandas_market_calendars as mcal
 import time 
 import yfinance as yf
 
-from scheduler_core import is_market_open
+# 🚨 MODIFIED: 당일 15% 새출발 연산을 위한 process_realtime_graduation 임포트 락온
+from scheduler_core import is_market_open, process_realtime_graduation
 
 def _safe_float(val):
     try:
@@ -259,13 +266,11 @@ async def scheduled_sniper_monitor(context):
                     except Exception:
                         version = "V14"
                         is_avwap_hybrid = False
-
-                    target_base = base_map.get(t, t) 
-                    
                     # ==============================================================
                     # 1. ⚔️ 암살자 aVWAP 딥-레스큐 교전망 (Phase 3)
                     # ==============================================================
-                    if version == "V_REV" and is_avwap_hybrid:
+                    # 🚨 MODIFIED: [SOXL 절대 락온] 타 종목 오염 원천 차단
+                    if version == "V_REV" and is_avwap_hybrid and t == "SOXL":
                         t_state = {}
                         try:
                             t_state = await asyncio.wait_for(asyncio.to_thread(_load_avwap_trade_state, t, now_est), timeout=10.0)
@@ -299,29 +304,46 @@ async def scheduled_sniper_monitor(context):
                                 except Exception as e:
                                     logging.error(f"🚨 [{t}] 익일 대통합 장부 병합 에러: {e}")
                             
-                            # -1% 손절 덫 재장전 (3단 지수 백오프 및 TPS 캡핑 내장)
-                            trap_p = round(t_state['avg_price'] * 0.99, 2)
-                            t_res = await _retry_api(broker.send_order, t, "SELL", t_state['qty'], trap_p, "LIMIT")
-
-                            # 🚨 MODIFIED: Target 3 (생존망 멱등성 파괴 방어) - KIS 서버 정상 응답 시에만 True 마킹
-                            if isinstance(t_res, dict) and t_res.get('rt_cd') == '0':
-                                t_state['trap_odno'] = str(t_res.get('odno') or '')
-                                t_state['unification_processed'] = True # 🚨 성공 시에만 True 락온
-                                
-                                try: await asyncio.wait_for(asyncio.to_thread(_save_avwap_trade_state, t, t_state), timeout=10.0)
-                                except Exception: pass
-                                
-                                if chat_id:
-                                    try: 
-                                        await asyncio.wait_for(context.bot.send_message(chat_id, f"🌅 <b>[{html.escape(str(t))}] 익일 대통합 및 손절 덫 장전 완료</b>\n▫️ 큐(Queue) L1 단일 지층 병합 완료.\n▫️ -1% 하드 손절 덫(${trap_p:.2f}) 재장전 팩트 가동.", parse_mode='HTML'), timeout=15.0)
-                                    except Exception: pass
+                            # 🚨 NEW: [주문 거절 전역 방어막 결속] KIS 잔고 교차 검증으로 수량 캡핑
+                            rt_bal_unif = await _retry_api(broker.get_account_balance)
+                            if rt_bal_unif and len(rt_bal_unif) > 1:
+                                actual_qty_unif = int(_safe_float(rt_bal_unif[1].get(t, {}).get('qty', 0)))
                             else:
-                                t_state['unification_processed'] = False # 🚨 실패 시 False 유지하여 다음 1분 스캔 때 무조건 재장전 시도
+                                actual_qty_unif = int(_safe_float(safe_holdings.get(t, {}).get('qty', 0)))
+
+                            t_state['qty'] = min(t_state['qty'], actual_qty_unif)
+
+                            if t_state['qty'] > 0:
+                                # -1% 손절 덫 재장전 (3단 지수 백오프 및 TPS 캡핑 내장)
+                                trap_p = round(t_state['avg_price'] * 0.99, 2)
+                                t_res = await _retry_api(broker.send_order, t, "SELL", t_state['qty'], trap_p, "LIMIT")
+
+                                # 🚨 MODIFIED: Target 3 (생존망 멱등성 파괴 방어) - KIS 서버 정상 응답 시에만 True 마킹
+                                if isinstance(t_res, dict) and t_res.get('rt_cd') == '0':
+                                    t_state['trap_odno'] = str(t_res.get('odno') or '')
+                                    t_state['unification_processed'] = True # 🚨 성공 시에만 True 락온
+                                    
+                                    try: await asyncio.wait_for(asyncio.to_thread(_save_avwap_trade_state, t, t_state), timeout=10.0)
+                                    except Exception: pass
+                                    
+                                    if chat_id:
+                                        try: 
+                                            await asyncio.wait_for(context.bot.send_message(chat_id, f"🌅 <b>[{html.escape(str(t))}] 익일 대통합 및 손절 덫 장전 완료</b>\n▫️ 큐(Queue) L1 단일 지층 병합 완료.\n▫️ -1% 하드 손절 덫(${trap_p:.2f}) 재장전 팩트 가동.", parse_mode='HTML'), timeout=15.0)
+                                        except Exception: pass
+                                else:
+                                    t_state['unification_processed'] = False # 🚨 실패 시 False 유지하여 다음 1분 스캔 때 무조건 재장전 시도
+                                    try: await asyncio.wait_for(asyncio.to_thread(_save_avwap_trade_state, t, t_state), timeout=10.0)
+                                    except Exception: pass
+                                    
+                                    err_msg = html.escape(str(t_res.get('msg1') if isinstance(t_res, dict) else '응답 없음/통신 지연'))
+                                    logging.warning(f"🚨 [{t}] 익일 대통합 손절 덫 장전 실패 (멱등성 사수. 다음 사이클 재시도): {err_msg}")
+                            else:
+                                logging.warning(f"🚨 [{t}] 익일 대통합 보류: KIS 실잔고 0주. 수동 청산 감지로 방어막 생략.")
+                                t_state['unification_processed'] = True # 무한 루프 방지
+                                t_state['shutdown'] = True 
+                                t_state['overnight'] = False
                                 try: await asyncio.wait_for(asyncio.to_thread(_save_avwap_trade_state, t, t_state), timeout=10.0)
                                 except Exception: pass
-                                
-                                err_msg = html.escape(str(t_res.get('msg1') if isinstance(t_res, dict) else '응답 없음/통신 지연'))
-                                logging.warning(f"🚨 [{t}] 익일 대통합 손절 덫 장전 실패 (멱등성 사수. 다음 사이클 재시도): {err_msg}")
 
                         # 🔹 [시장 데이터 팩트 추출]
                         exec_curr_p = _safe_float(await _retry_api(broker.get_current_price, t))
@@ -331,7 +353,7 @@ async def scheduled_sniper_monitor(context):
                         prev_c = _safe_float(await _retry_api(broker.get_previous_close, t))
                         df_1min_t = await _retry_api(broker.get_1min_candles_df, t)
                         df_1min_base = await _retry_api(broker.get_1min_candles_df, target_base)
-                        
+                    
                         main_actual_avg = _safe_float(safe_holdings.get(t, {}).get('avg', 0.0))
                         
                         target_krw = 1000000.0
@@ -370,17 +392,31 @@ async def scheduled_sniper_monitor(context):
                                 trap_odno = t_state.get('trap_odno')
                                 if not trap_odno:
                                     logging.warning(f"🚨 [{t}] 암살자 물량 보유 중이나 손절 덫(Trap) 누락 감지! 자가 치유(Self-Healing) 가동.")
-                                    trap_p = round(t_state['avg_price'] * 0.99, 2)
-                                    t_res = await _retry_api(broker.send_order, t, "SELL", t_state['qty'], trap_p, "LIMIT")
-                                    if isinstance(t_res, dict) and t_res.get('rt_cd') == '0':
-                                        t_state['trap_odno'] = str(t_res.get('odno') or '')
-                                        try: await asyncio.wait_for(asyncio.to_thread(_save_avwap_trade_state, t, t_state), timeout=10.0)
-                                        except Exception: pass
-                                        if chat_id:
-                                            try: await asyncio.wait_for(context.bot.send_message(chat_id, f"🛡️ <b>[{html.escape(str(t))}] 암살자 방어막 자가 치유(Self-Healing) 완료</b>\n▫️ 통신 오류로 누락되었던 -1% 하드 손절 덫(${trap_p:.2f})이 복구되었습니다.", parse_mode='HTML'), timeout=15.0)
+                                    
+                                    # 🚨 NEW: [주문 거절 전역 방어막 결속] 실시간 잔고(rt_qty) 스캔으로 수량 캡핑
+                                    rt_bal_heal = await _retry_api(broker.get_account_balance)
+                                    if rt_bal_heal and len(rt_bal_heal) > 1:
+                                        actual_qty_heal = int(_safe_float(rt_bal_heal[1].get(t, {}).get('qty', 0)))
+                                    else:
+                                        actual_qty_heal = int(_safe_float(safe_holdings.get(t, {}).get('qty', 0)))
+
+                                    t_state['qty'] = min(t_state['qty'], actual_qty_heal)
+
+                                    if t_state['qty'] > 0:
+                                        trap_p = round(t_state['avg_price'] * 0.99, 2)
+                                        t_res = await _retry_api(broker.send_order, t, "SELL", t_state['qty'], trap_p, "LIMIT")
+                                        if isinstance(t_res, dict) and t_res.get('rt_cd') == '0':
+                                            t_state['trap_odno'] = str(t_res.get('odno') or '')
+                                            try: await asyncio.wait_for(asyncio.to_thread(_save_avwap_trade_state, t, t_state), timeout=10.0)
                                             except Exception: pass
-                                    continue # 방어막을 복구했으므로 다음 틱부터 정상 교전 개시
-                                
+                                            if chat_id:
+                                                try: await asyncio.wait_for(context.bot.send_message(chat_id, f"🛡️ <b>[{html.escape(str(t))}] 암살자 방어막 자가 치유(Self-Healing) 완료</b>\n▫️ 통신 오류로 누락되었던 -1% 하드 손절 덫(${trap_p:.2f})이 복구되었습니다.", parse_mode='HTML'), timeout=15.0)
+                                                except Exception: pass
+                                        continue # 방어막을 복구했으므로 다음 틱부터 정상 교전 개시
+                                    else:
+                                        logging.warning(f"🚨 [{t}] 자가 치유 보류: KIS 실잔고 0주. 체결 대기 또는 수동 청산 감지.")
+                                        continue
+                                 
                                 # 1. 덫 체결 여부 교차 검증 (손절 확인)
                                 unf = await _retry_api(broker.get_unfilled_orders_detail, t)
                                 safe_unf = unf if isinstance(unf, list) else []
@@ -397,18 +433,30 @@ async def scheduled_sniper_monitor(context):
                                         t_state['strikes'] += 1
                                         t_state['trap_odno'] = ""
                                         
-                                        if queue_ledger: 
-                                            try: await asyncio.wait_for(asyncio.to_thread(queue_ledger.sync_with_broker, t, 0), timeout=10.0)
-                                            except Exception: pass
-                                            
                                         try: await asyncio.wait_for(asyncio.to_thread(_save_avwap_trade_state, t, t_state), timeout=10.0)
                                         except Exception: pass
+                                        
+                                        # 🚨 MODIFIED: [Case 30 팩트 동기화] KIS 실잔고 오버라이드 유령 차단(Ghost-Sync) 결속
+                                        await asyncio.sleep(1.0)
+                                        new_bal = await _retry_api(broker.get_account_balance)
+                                        if new_bal and len(new_bal) > 1:
+                                            new_qty = int(_safe_float(new_bal[1].get(t, {}).get('qty', 0)))
+                                            if queue_ledger:
+                                                try: await asyncio.wait_for(asyncio.to_thread(queue_ledger.sync_with_broker, t, new_qty), timeout=10.0)
+                                                except Exception: pass
                                         
                                         if chat_id:
                                             try: 
                                                 await asyncio.wait_for(context.bot.send_message(chat_id, f"🩸 <b>[{html.escape(str(t))}] 암살자 -1% 칼손절 완료</b>\n▫️ 85% 예산을 즉시 회수했습니다.\n▫️ 더 깊은 타점(-3%)으로 다중 타격망을 연장(Reload)합니다.", parse_mode='HTML'), timeout=15.0)
                                             except Exception: pass
                                         continue
+                                    else:
+                                        # 🚨 NEW: [Ghost-Trap 붕괴 수술] 취소 후 스윕 실패 등 미체결 상태로 덫이 증발한 경우
+                                        logging.warning(f"🚨 [{t}] 손절 덫(Trap) 미체결 증발 감지. 자가 치유 파이프라인으로 롤백합니다.")
+                                        t_state['trap_odno'] = ""
+                                        try: await asyncio.wait_for(asyncio.to_thread(_save_avwap_trade_state, t, t_state), timeout=10.0)
+                                        except Exception: pass
+                                        continue # 다음 틱에 Self-Healing 발동
 
                                 # 2. OCO 섀도우 스위칭 (전량 익절)
                                 if action == 'SHADOW_EXIT':
@@ -418,26 +466,51 @@ async def scheduled_sniper_monitor(context):
                                     
                                     bid_p = _safe_float(await _retry_api(broker.get_bid_price, t))
                                     if bid_p > 0:
-                                        swp_res = await _retry_api(broker.send_order, t, "SELL", t_state['qty'], bid_p, "LIMIT")
-                                        if isinstance(swp_res, dict) and swp_res.get('rt_cd') == '0':
-                                            t_state['qty'] = 0
-                                            t_state['shutdown'] = True
-                                            t_state['trap_odno'] = ""
-                                            
-                                            try: await asyncio.wait_for(asyncio.to_thread(_save_avwap_trade_state, t, t_state), timeout=10.0)
-                                            except Exception: pass
-                                            
-                                            if queue_ledger: 
-                                                try: await asyncio.wait_for(asyncio.to_thread(queue_ledger.clear_queue, t), timeout=10.0)
+                                        # 🚨 MODIFIED: [잔고 동기화 팩트 수술] SHADOW_EXIT 스윕 타격 시 실시간 잔고를 재추출하여 KIS 서버 Reject 원천 방어
+                                        rt_bal = await _retry_api(broker.get_account_balance)
+                                        if rt_bal and len(rt_bal) > 1:
+                                            rt_qty = int(_safe_float(rt_bal[1].get(t, {}).get('qty', 0)))
+                                            # KIS 서버 잔고가 존재하면 해당 수량을 캡핑, 아니면 암살자 캐시 수량을 폴백
+                                            sell_qty = min(t_state['qty'], rt_qty)
+                                        else:
+                                            # 최악의 통신 실패 시에만 기존 로직으로 폴백
+                                            actual_qty = int(_safe_float(safe_holdings.get(t, {}).get('qty', 0)))
+                                            sell_qty = min(t_state['qty'], actual_qty)
+                                        
+                                        if sell_qty > 0:
+                                            swp_res = await _retry_api(broker.send_order, t, "SELL", sell_qty, bid_p, "LIMIT")
+                                            if isinstance(swp_res, dict) and swp_res.get('rt_cd') == '0':
+                                                t_state['qty'] = 0
+                                                t_state['shutdown'] = True
+                                                t_state['trap_odno'] = ""
+                                                
+                                                try: await asyncio.wait_for(asyncio.to_thread(_save_avwap_trade_state, t, t_state), timeout=10.0)
                                                 except Exception: pass
                                                 
-                                            try: await asyncio.wait_for(asyncio.to_thread(cfg.clear_ledger_for_ticker, t), timeout=10.0)
-                                            except Exception: pass
-                                            
-                                            if chat_id:
-                                                try: 
-                                                    await asyncio.wait_for(context.bot.send_message(chat_id, f"🎯 <b>[{html.escape(str(t))}] 암살자 전량 익절 (스윕 타격) 완료!</b>\n▫️ 원화 목표 수익금을 관통하여 매수 1호가로 전량 덤핑을 완수했습니다.\n▫️ KIS 장부 동기화 및 큐 소각 완료.", parse_mode='HTML'), timeout=15.0)
+                                                if queue_ledger: 
+                                                    try: await asyncio.wait_for(asyncio.to_thread(queue_ledger.clear_queue, t), timeout=10.0)
+                                                    except Exception: pass
+                                                                    
+                                                try: await asyncio.wait_for(asyncio.to_thread(cfg.clear_ledger_for_ticker, t), timeout=10.0)
                                                 except Exception: pass
+                                                 
+                                                if chat_id:
+                                                    try: 
+                                                        await asyncio.wait_for(context.bot.send_message(chat_id, f"🎯 <b>[{html.escape(str(t))}] 암살자 전량 익절 (스윕 타격) 완료!</b>\n▫️ 원화 목표 수익금을 관통하여 매수 1호가로 전량 덤핑을 완수했습니다.\n▫️ KIS 장부 동기화 및 큐 소각 완료.", parse_mode='HTML'), timeout=15.0)
+                                                    except Exception: pass
+    
+                                                # 🚨 NEW: [시나리오 2 디커플링 수복] 전량 익절 후 당일 15% 예산 새출발(Re-entry) 파이프라인 직결
+                                                try:
+                                                    await asyncio.wait_for(
+                                                        process_realtime_graduation(t, cfg, broker, queue_ledger, chat_id, context, tx_lock),
+                                                        timeout=120.0
+                                                    )
+                                                except Exception as e:
+                                                    logging.error(f"🚨 [{t}] OCO 익절 후 당일 새출발(Re-entry) 파이프라인 격발 타임아웃/에러: {e}")
+                                            else:
+                                                logging.error(f"🚨 [{t}] 암살자 익절 스윕 KIS 전송 실패: {swp_res}")
+                                        else:
+                                            logging.warning(f"🚨 [{t}] 스윕 수량 0주 캡핑으로 주문 스킵 (Ghost-Dumping 방어)")
                                             
                             elif t_state.get('qty', 0) == 0:
                                 # 3. 딥-매수 격발 및 OCO 하단 덫 하드 장전
@@ -463,13 +536,20 @@ async def scheduled_sniper_monitor(context):
                                                 
                                                 if isinstance(s_res, dict) and s_res.get('rt_cd') == '0':
                                                     t_state['trap_odno'] = str(s_res.get('odno') or '')
+                                                else:
+                                                    logging.warning(f"🚨 [{t}] 딥-매수 직후 손절 덫 장전 실패. 다음 틱에 자가 치유(Self-Healing) 대기.")
                                                 
                                                 try: await asyncio.wait_for(asyncio.to_thread(_save_avwap_trade_state, t, t_state), timeout=10.0)
                                                 except Exception: pass
                                                 
-                                                if queue_ledger: 
-                                                    try: await asyncio.wait_for(asyncio.to_thread(queue_ledger.sync_with_broker, t, buy_qty), timeout=10.0)
-                                                    except Exception: pass
+                                                # 🚨 MODIFIED: [Case 30 팩트 동기화] KIS 실잔고 오버라이드 유령 차단(Ghost-Sync) 결속
+                                                await asyncio.sleep(1.0)
+                                                new_bal = await _retry_api(broker.get_account_balance)
+                                                if new_bal and len(new_bal) > 1:
+                                                    new_qty = int(_safe_float(new_bal[1].get(t, {}).get('qty', 0)))
+                                                    if queue_ledger:
+                                                        try: await asyncio.wait_for(asyncio.to_thread(queue_ledger.sync_with_broker, t, new_qty), timeout=10.0)
+                                                        except Exception: pass
                                                 
                                                 if chat_id:
                                                     try: 
@@ -538,7 +618,7 @@ async def scheduled_sniper_monitor(context):
                                 await asyncio.sleep(2.0)
                             
                             if has_unfilled: continue
-                           
+                            
                             ask_price = _safe_float(await _retry_api(broker.get_ask_price, t))
                             exec_price = ask_price if ask_price > 0 else limit_p
 
@@ -680,7 +760,19 @@ async def scheduled_sniper_monitor(context):
    
                             try:
                                 await asyncio.sleep(0.06) 
-                                order_res = await asyncio.wait_for(asyncio.to_thread(broker.send_order, t, "SELL", qty, exec_price, "LIMIT"), timeout=15.0)
+                                # 🚨 NEW: [주문 거절 전역 방어막 결속] V14 스나이퍼 매도 시에도 실시간 잔고(rt_qty) 스캔으로 수량 캡핑
+                                rt_bal_v14 = await _retry_api(broker.get_account_balance)
+                                if rt_bal_v14 and len(rt_bal_v14) > 1:
+                                    rt_qty_v14 = int(_safe_float(rt_bal_v14[1].get(t, {}).get('qty', 0)))
+                                else:
+                                    rt_qty_v14 = int(_safe_float(safe_holdings.get(t, {}).get('qty', 0)))
+                                    
+                                qty = min(qty, rt_qty_v14)
+                                
+                                if qty > 0:
+                                    order_res = await asyncio.wait_for(asyncio.to_thread(broker.send_order, t, "SELL", qty, exec_price, "LIMIT"), timeout=15.0)
+                                else:
+                                    order_res = {'rt_cd': '999', 'msg1': '보유 수량 0주 캡핑으로 스나이퍼 매도 스킵'}
                             except Exception as e:
                                 logging.error(f"🚨 [{t}] 상방 스나이퍼 매도 통신 에러: {e}")
                                 order_res = None
