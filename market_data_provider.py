@@ -2,9 +2,12 @@
 # FILE: market_data_provider.py
 # ==========================================================
 # 🚨 MODIFIED: [파사드 패턴 2단계] yfinance 및 KIS 시세 데이터 연산 도메인 분리
-# 🚨 MODIFIED: [미래 참조 데이터 누수 전면 차단] get_amp_5d_data, get_5day_ma, get_atr_data 당일 미확정 라이브 캔들(Live Candle) 절단 100% 복제 이식.
+# 🚨 MODIFIED: [미래 참조 데이터 누수 전면 차단] get_amp_5d_data, get_5day_ma, get_atr_data 당일 미확정 라이브 캔들(Live Candle) 절단 100% 복제 이식
 # 🚨 MODIFIED: [선형 상속 락온] KisApiClient를 상속하여 공통 캐시 및 방어막(_safe_float, _call_api 등)을 100% 활용
 # 🚨 MODIFIED: [Case 16] 시계열 데이터 원자적 쓰기 시 디렉토리 동적 파싱 보강 및 스토리지 고갈 방어 락온
+# 🚨 VERIFIED: [Case 35 절대 방어망 결속] get_5day_ma 내부 ffill 주입으로 결측치(NaN) 런타임 에러 차단 및 V-REV 리버스 별값(Rev_Star) 연산 무결성 100% 확보
+# 🚨 VERIFIED: [결측치 방어 전역 확장] get_atr_data 및 get_amp_5d_data 에도 ffill() 방어막을 주입하여 Yahoo Finance 서버 노이즈로 인한 수학 연산 붕괴 원천 차단
+# 🚨 NEW: [벡터화 강제 헌법 준수] get_atr_data 내부의 apply(lambda) 묵시적 루프를 영구 소각하고, pd.concat 및 max(axis=1) 기반의 100% 순수 벡터화 연산으로 병목 지점 완벽 교정
 # ==========================================================
 
 import time
@@ -58,7 +61,7 @@ class MarketDataProvider(KisApiClient):
                 regular_market['Vol_x_Price'] = regular_market['Typical_Price'] * regular_market['Volume']
         
                 regular_market['Date'] = regular_market.index.date
-               
+                
                 daily_stats = regular_market.groupby('Date').agg(Total_Vol_Price=('Vol_x_Price', 'sum'), Total_Vol=('Volume', 'sum'))
                 # 🚨 MODIFIED: [Case 05] 결측치 방어용 0.0 강제 형변환
                 daily_stats['VWAP'] = np.where(daily_stats['Total_Vol'] > 0, daily_stats['Total_Vol_Price'] / daily_stats['Total_Vol'], np.nan)
@@ -237,7 +240,7 @@ class MarketDataProvider(KisApiClient):
                 excg_cd = self._get_exchange_code(ticker, target_api="PRICE")
                 params = {"AUTH": "", "EXCD": excg_cd, "SYMB": ticker}
                 res = self._call_api("HHDFS76200200", "/uapi/overseas-price/v1/quotations/price", "GET", params=params)
-                
+             
                 # 🚨 MODIFIED: [AttributeError 붕괴 방어]
                 if res.get('rt_cd') == '0': 
                     out = res.get('output') or {}
@@ -248,7 +251,7 @@ class MarketDataProvider(KisApiClient):
                 if attempt == 2: pass
                 else: time.sleep(1.0 * (2 ** attempt))
         return 0.0
-       
+        
     def get_5day_ma(self, ticker):
         # 🚨 MODIFIED: [미래 참조 데이터 누수 차단] 당일 미확정 라이브 캔들 절단 및 D-1 타임라인 락온
         for attempt in range(3):
@@ -269,6 +272,9 @@ class MarketDataProvider(KisApiClient):
                     else: 
                         hist.index = hist.index.tz_convert(est)
                         
+                    # 🚨 VERIFIED: [Case 35 절대 방어망] 공휴일 및 조기 폐장일 결측치 방어를 위한 ffill 강제 주입
+                    hist['Close'] = hist['Close'].ffill()
+                    
                     past_hist = hist[hist.index.date <= cutoff_date]
                     if len(past_hist) >= 5:
                         ma_val = past_hist['Close'].dropna().tail(5).mean()
@@ -294,12 +300,15 @@ class MarketDataProvider(KisApiClient):
                         # 🚨 MODIFIED: [KIS API 폴백 오염 차단] 장 마감 이전이면 당일 라이브 주가 스킵
                         skip_today = 1 if now_est.time() <= datetime.time(16, 0, 30) else 0
                         
-                        valid_items = [x for x in o2[skip_today:skip_today+5] if isinstance(x, dict)]
+                        valid_items = [x for x in o2[skip_today:skip_today+10] if isinstance(x, dict)]
                         if len(valid_items) > 0:
                             closes = [self._safe_float(x.get('clos', 0)) for x in valid_items]
-                            # 🚨 MODIFIED: [ZeroDivision 보호] closes 길이가 0인 경우 예외 차단
-                            if len(closes) > 0:
-                                return self._safe_float(sum(closes) / len(closes))
+                            # 🚨 VERIFIED: [Case 35 절대 방어망] KIS API 폴백 시에도 0값 필터링으로 무결성 보장
+                            valid_closes = [c for c in closes if c > 0]
+                            if len(valid_closes) >= 5:
+                                return self._safe_float(sum(valid_closes[:5]) / 5.0)
+                            elif len(valid_closes) > 0:
+                                return self._safe_float(sum(valid_closes) / len(valid_closes))
                 break
             except Exception:
                 if attempt == 2: pass
@@ -339,7 +348,7 @@ class MarketDataProvider(KisApiClient):
         
                     cache_file = "data/avwap_cache.json"
                     cache_data = {}
-                  
+    
                     # 🚨 MODIFIED: [Case 08] TOCTOU 레이스 컨디션 차단 os.path.exists 소각 및 EAFP 적용
                     try:
                         with open(cache_file, 'r', encoding='utf-8') as f: 
@@ -356,6 +365,7 @@ class MarketDataProvider(KisApiClient):
                     
                     fd = None
                     tmp_path = None
+            
                     try:
                         fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
                         with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
@@ -403,17 +413,22 @@ class MarketDataProvider(KisApiClient):
             if target_index == "SOXX":
                 hv, w, td, ba = ve.get_soxl_target_drop_full()
                 safe_w = self._safe_float(w)
-                ret = TargetFloat(td); ret.metric_val, ret.weight, ret.base_amp, ret.metric_name, ret.metric_base = hv, w, ba, "SOXX HV", round(self._safe_float(hv)/safe_w, 2) if safe_w>0 else 25.0
+                ret = TargetFloat(td)
+                ret.metric_val, ret.weight, ret.base_amp, ret.metric_name, ret.metric_base = hv, w, ba, "SOXX HV", round(self._safe_float(hv)/safe_w, 2) if safe_w>0 else 25.0
             else:
                 vxn, w, td, ba = ve.get_tqqq_target_drop_full()
                 safe_w = self._safe_float(w)
-                ret = TargetFloat(td); ret.metric_val, ret.weight, ret.base_amp, ret.metric_name, ret.metric_base = vxn, w, ba, "실시간 VXN", round(self._safe_float(vxn)/safe_w, 2) if safe_w>0 else 20.0
+                ret = TargetFloat(td)
+                ret.metric_val, ret.weight, ret.base_amp, ret.metric_name, ret.metric_base = vxn, w, ba, "실시간 VXN", round(self._safe_float(vxn)/safe_w, 2) if safe_w>0 else 20.0
      
-            ret.is_panic, ret.gap_pct = False, 0.0; return ret
+            ret.is_panic, ret.gap_pct = False, 0.0
+            return ret
         except:
             fb = -8.79 if target_index == "SOXX" else -4.95
-            ret = TargetFloat(fb); ret.metric_val, ret.weight, ret.base_amp, ret.metric_name, ret.metric_base = 0.0, 1.0, fb, "통신오류", 25.0 if target_index == "SOXX" else 20.0
-            ret.is_panic, ret.gap_pct = False, 0.0; return ret
+            ret = TargetFloat(fb)
+            ret.metric_val, ret.weight, ret.base_amp, ret.metric_name, ret.metric_base = 0.0, 1.0, fb, "통신오류", 25.0 if target_index == "SOXX" else 20.0
+            ret.is_panic, ret.gap_pct = False, 0.0
+            return ret
 
     def get_day_high_low(self, ticker):
         for attempt in range(3):
@@ -469,6 +484,11 @@ class MarketDataProvider(KisApiClient):
                 else:
                     hist.index = hist.index.tz_convert(est)
 
+                # 🚨 MODIFIED: [결측치 방어 전역 확장] ffill 결속
+                hist['Close'] = hist['Close'].ffill()
+                hist['High'] = hist['High'].ffill()
+                hist['Low'] = hist['Low'].ffill()
+
                 hist = hist[hist.index.date <= cutoff_date].copy()
 
                 if hist.empty or len(hist) < 15:
@@ -479,7 +499,12 @@ class MarketDataProvider(KisApiClient):
                 hist['Prev_Close'] = hist['Close'].shift(1)
                 hist = hist.dropna(subset=['High', 'Low', 'Close']).copy()
 
-                hist['TR'] = hist.apply(lambda row: max(row['High']-row['Low'], abs(row['High']-row['Prev_Close']), abs(row['Low']-row['Prev_Close'])), axis=1)
+                # 🚨 MODIFIED: [벡터화 강제 헌법 준수] apply(lambda) 묵시적 루프 영구 소각 및 100% 벡터화 연산 팩트 교정
+                tr1 = hist['High'] - hist['Low']
+                tr2 = (hist['High'] - hist['Prev_Close']).abs()
+                tr3 = (hist['Low'] - hist['Prev_Close']).abs()
+                
+                hist['TR'] = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
                 hist['ATR5'] = hist['TR'].rolling(window=5).mean()
                 hist['ATR14'] = hist['TR'].rolling(window=14).mean()
 
@@ -522,6 +547,11 @@ class MarketDataProvider(KisApiClient):
                     hist.index = hist.index.tz_localize('UTC').tz_convert(est)
                 else: 
                     hist.index = hist.index.tz_convert(est)
+
+                # 🚨 MODIFIED: [결측치 방어 전역 확장] ffill 결속
+                hist['Close'] = hist['Close'].ffill()
+                hist['High'] = hist['High'].ffill()
+                hist['Low'] = hist['Low'].ffill()
                     
                 hist = hist[hist.index.date <= cutoff_date].copy()
 

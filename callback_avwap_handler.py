@@ -7,6 +7,7 @@
 # 🚨 MODIFIED: [제1헌법 철저 준수] 로컬 파일 I/O(config 조작) 실행 시 `wait_for(..., timeout=5.0)` 족쇄를 완벽히 래핑하여 디스크 I/O 병목으로 인한 이벤트 루프 교착 원천 차단.
 # 🚨 MODIFIED: [Ghost Chat 붕괴 원천 봉쇄] update.callback_query 결측치 유입 시 발생하는 즉사 버그 방어.
 # 🚨 MODIFIED: [Case 26 절대 헌법 준수] 텔레그램 타전망 내 동적 변수 전역에 `html.escape` 쉴드 강제 래핑 완료.
+# 🚨 MODIFIED: [데드코드 콜백 소각] AVWAP_WARN, AVWAP_ON, AVWAP_OFF 콜백 분기문을 100% 영구 삭제하여 팻핑거 유입 시 시스템 오작동을 원천 차단 (Phase 3 완료).
 # ==========================================================
 import logging
 import datetime
@@ -73,36 +74,14 @@ class CallbackAvwapHandler:
                 if hasattr(controller, 'cmd_mode'):
                     await controller.cmd_mode(update, context)
             
-            elif sub == "AVWAP_WARN":
-                try: await query.answer()
-                except Exception: pass
-                msg, markup = self.view.get_avwap_warning_menu(ticker)
-                try:
-                    await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-                except Exception: pass
-            
-            elif sub == "AVWAP_ON":
-                try: await query.answer()
-                except Exception: pass
-                try: await asyncio.wait_for(asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, ticker, True), timeout=5.0)
-                except Exception: pass
-                if hasattr(controller, 'cmd_settlement'):
-                    await controller.cmd_settlement(update, context)
-            
-            elif sub == "AVWAP_OFF":
-                try: await query.answer()
-                except Exception: pass
-                try: await asyncio.wait_for(asyncio.to_thread(self.cfg.set_avwap_hybrid_mode, ticker, False), timeout=5.0)
-                except Exception: pass
-                if hasattr(controller, 'cmd_settlement'):
-                    await controller.cmd_settlement(update, context)
+            # 🚨 MODIFIED: AVWAP_WARN, AVWAP_ON, AVWAP_OFF 365일 상시가동 하드코딩에 의한 콜백 라우팅 영구 소각 완료
 
         elif action == "AVWAP_SET":
             if not ticker: return
             
             # 🚨 MODIFIED: [수동 제어망 라우팅 영구 소각] PAUSE_BUY, RESUME_BUY, SYNC_ZERO 등 팻핑거 뇌관을 파일 내에서 100% 완전 제거.
             if sub == "REFRESH":
-                try: await query.answer()
+                try: await query.answer("🔄 관제탑 레이더망 스캔 중...", show_alert=False)
                 except Exception: pass
                 if hasattr(controller, 'cmd_avwap'):
                     await controller.cmd_avwap(update, context)
