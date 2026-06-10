@@ -2,6 +2,7 @@
 # FILE: scheduler_sniper.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 37대 엣지 케이스 완벽 결속 교차 검증 완료
+# 🚨 MODIFIED: [Zero-Defect 팩트 교정] strategy.get_avwap_decision 호출 시 발생하는 kwargs 충돌(TypeError: got multiple values) 런타임 즉사 에러를 막기 위해, 중복 전달되던 avwap_qty, avwap_avg_price 데드코드 전면 소각.
 # 🚨 MODIFIED: [Phase 3 암살자 실전 매매망 복구] 딥-매수, 섀도 스위칭(OCO 듀얼 엑시트) 100% 팩트 부활.
 # 🚨 MODIFIED: [치명적 패러독스 수술] KIS API 한계(낮은 가격 LIMIT 매도 시 즉시 체결)를 극복하기 위해, 서버 전송 덫을 영구 소각하고 '로컬 섀도우 컷오프 엔진(-1%)'으로 100% 전면 교체.
 # 🚨 MODIFIED: [14:00 EST 컷오프 디커플링] 14:00 도달 시 물량 검증 후 본진 셧다운(AVWAP_OVERNIGHT) 또는 암살자 퇴근(시나리오 1) 결정 팩트 락온.
@@ -17,6 +18,7 @@
 # 🚨 NEW: [Phase 1, 2, 3 정밀 타격망 결속] 50/50 분할 매수 및 무한 재진입에 대응하는 Phase Tracking 스키마 및 Action 라우팅.
 # 🚨 NEW: [Ghost-Sync 마비 붕괴 방어] 섀도우 익절/손절 격발 시 수동 매도로 인해 KIS 잔고가 0주인 경우, 무한 스윕 스킵에 빠지는 패러독스를 막기 위해 로컬 장부를 0으로 즉시 오버라이드.
 # 🚨 NEW: [IndexError 붕괴 방어] rt_bal[0] 현금 추출 시 튜플 객체 유효성 검증을 강제하여 무한 재진입(Phase 3) 구간의 Zero-Defect 사수.
+# 🚨 NEW: [Phase 3 암살자 듀얼 익절 스키마 결속] Config 객체에서 target_mode(KRW/PCT) 및 target_pct를 추출하여 브레인 엔진에 100% 팩트로 패싱 및 UI 동적 렌더링 락온 완료.
 # ==========================================================
 import logging
 import datetime
@@ -251,7 +253,7 @@ async def scheduled_sniper_monitor(context):
                 active_tickers = await asyncio.wait_for(asyncio.to_thread(cfg.get_active_tickers), timeout=5.0) or []
             except Exception:
                 active_tickers = []
-              
+                
             for t in active_tickers:
                 try:
                     await asyncio.sleep(0.06) 
@@ -337,14 +339,20 @@ async def scheduled_sniper_monitor(context):
                         _t_hold_avg = safe_holdings.get(t)
                         main_actual_avg = _safe_float(_t_hold_avg.get('avg', 0.0) if isinstance(_t_hold_avg, dict) else 0.0)
                         
+                        # 🚨 NEW: [Phase 3 듀얼 익절 스키마 결속]
+                        target_mode = "KRW"
+                        target_pct = 10.0
                         target_krw = 1000000.0
                         fee_rate = 0.07
                         try:
+                            target_mode = str(await asyncio.wait_for(asyncio.to_thread(getattr(cfg, 'get_avwap_target_mode', lambda x: "KRW"), t), timeout=5.0)).upper()
+                            target_pct = _safe_float(await asyncio.wait_for(asyncio.to_thread(getattr(cfg, 'get_avwap_target_pct', lambda x: 10.0), t), timeout=5.0))
                             target_krw = _safe_float(await asyncio.wait_for(asyncio.to_thread(cfg.get_avwap_target_krw, t), timeout=5.0))
                             fee_rate = _safe_float(await asyncio.wait_for(asyncio.to_thread(cfg.get_fee, t), timeout=5.0))
                         except Exception: pass
 
                         try:
+                            # 🚨 MODIFIED: [Zero-Defect 팩트 교정] TypeError: got multiple values for keyword argument 'avwap_qty' 방어를 위해, 중복 전달되던 데드코드 영구 소각 완료.
                             decision = await asyncio.wait_for(
                                 asyncio.to_thread(
                                     strategy.get_avwap_decision,
@@ -354,8 +362,8 @@ async def scheduled_sniper_monitor(context):
                                     df_1min_base=df_1min_base, df_1min_exec=df_1min_t, now_est=now_est,
                                     avwap_state={"strikes": t_state.get('strikes', 0), "phase": t_state.get('phase', 0), "last_entry_price": t_state.get('last_entry_price', 0.0)},
                                     prev_close=prev_c, main_actual_avg=main_actual_avg,
-                                    target_krw=target_krw, exchange_rate=exchange_rate, fee_rate=fee_rate,
-                                    is_simulation=False, avwap_qty=t_state.get('qty', 0), avwap_avg_price=t_state.get('avg_price', 0.0)
+                                    target_mode=target_mode, target_pct=target_pct, target_krw=target_krw, exchange_rate=exchange_rate, fee_rate=fee_rate,
+                                    is_simulation=False
                                 ),
                                 timeout=15.0
                             )
@@ -399,12 +407,12 @@ async def scheduled_sniper_monitor(context):
                                                         if queue_ledger:
                                                             try: await asyncio.wait_for(asyncio.to_thread(queue_ledger.sync_with_broker, t, new_qty), timeout=10.0)
                                                             except Exception: pass
-                                                    
+                                                
                                                     if chat_id:
                                                         try: 
                                                             await asyncio.wait_for(context.bot.send_message(chat_id, f"🩸 <b>[{html.escape(str(t))}] 암살자 섀도우 컷오프(-1%) 관통! 연쇄 손절 스윕 타격 완료</b>\n▫️ 가격이 컷오프(${cutoff_price:.2f})를 관통하여 덤핑(시장가 스윕)으로 시드를 회수했습니다.\n▫️ 더 깊은 타점(-3%)으로 무한 다중 타격망(Reload)을 연장 감시합니다.", parse_mode='HTML'), timeout=15.0)
                                                         except Exception: pass
-                                                continue
+                                                        continue
                                             else:
                                                 # 🚨 NEW: [Ghost-Sync 0주 캡핑 수동 매도 파편화 방어]
                                                 logging.warning(f"🚨 [{t}] 컷오프 스윕 수량 0주 캡핑. 로컬 장부를 0주로 강제 동기화 (Ghost-Sync 방어)")
@@ -446,10 +454,16 @@ async def scheduled_sniper_monitor(context):
                                                                     
                                                 try: await asyncio.wait_for(asyncio.to_thread(cfg.clear_ledger_for_ticker, t), timeout=10.0)
                                                 except Exception: pass
-                                                 
+                                                
                                                 if chat_id:
                                                     try: 
-                                                        await asyncio.wait_for(context.bot.send_message(chat_id, f"🎯 <b>[{html.escape(str(t))}] 암살자 전량 익절 (스윕 타격) 완료!</b>\n▫️ 원화 목표 수익금을 관통하여 매수 1호가로 전량 덤핑을 완수했습니다.\n▫️ KIS 장부 동기화 및 큐 소각 완료.", parse_mode='HTML'), timeout=15.0)
+                                                        # 🚨 MODIFIED: [암살자 듀얼 익절 스키마 결속] 목표 모드에 따른 동적 UI 렌더링
+                                                        if target_mode == "PCT":
+                                                            exit_msg = f"▫️ 설정된 목표 수익률({target_pct}%)을 관통하여 매수 1호가로 전량 덤핑을 완수했습니다."
+                                                        else:
+                                                            exit_msg = f"▫️ 원화 목표 수익금(₩{int(target_krw):,})을 관통하여 매수 1호가로 전량 덤핑을 완수했습니다."
+                                                            
+                                                        await asyncio.wait_for(context.bot.send_message(chat_id, f"🎯 <b>[{html.escape(str(t))}] 암살자 전량 익절 (스윕 타격) 완료!</b>\n{exit_msg}\n▫️ KIS 장부 동기화 및 큐 소각 완료.", parse_mode='HTML'), timeout=15.0)
                                                     except Exception: pass
     
                                                 try:
@@ -471,7 +485,7 @@ async def scheduled_sniper_monitor(context):
                                             if queue_ledger:
                                                 try: await asyncio.wait_for(asyncio.to_thread(queue_ledger.clear_queue, t), timeout=10.0)
                                                 except Exception: pass
-                                            
+                                             
                             elif t_state.get('qty', 0) == 0:
                                 # 3. 딥-매수 분할/무한 격발망
                                 if action == 'DEEP_BUY_1':
@@ -622,7 +636,6 @@ async def scheduled_sniper_monitor(context):
 
                     try: version = await asyncio.wait_for(asyncio.to_thread(cfg.get_version, t), timeout=5.0)
                     except Exception: version = "V14"
-             
                     is_rev = (version == "V_REV")
 
                     if action == "BUY" and not is_rev and not sniper_buy_locked and master_switch != "UP_ONLY":
@@ -641,7 +654,7 @@ async def scheduled_sniper_monitor(context):
                                     await asyncio.sleep(0.06) 
                                     unfilled = await asyncio.wait_for(asyncio.to_thread(broker.get_unfilled_orders_detail, t), timeout=10.0)
                                 except Exception: unfilled = []
-                                    
+                                
                                 if isinstance(unfilled, list) and any(
                                     isinstance(o, dict) and o.get('sll_buy_dvsn_cd') == '02' and str(o.get('ord_dvsn_cd') or o.get('ord_dvsn') or '').strip().zfill(2) == '00' 
                                     for o in unfilled
@@ -779,7 +792,7 @@ async def scheduled_sniper_monitor(context):
                                     await asyncio.sleep(0.06) 
                                     unfilled = await asyncio.wait_for(asyncio.to_thread(broker.get_unfilled_orders_detail, t), timeout=10.0)
                                 except Exception: unfilled = []
-                                    
+                                
                                 if isinstance(unfilled, list) and any(
                                     isinstance(o, dict) and o.get('sll_buy_dvsn_cd') == '01' and str(o.get('ord_dvsn_cd') or o.get('ord_dvsn') or '').strip().zfill(2) == '00' 
                                     for o in unfilled
