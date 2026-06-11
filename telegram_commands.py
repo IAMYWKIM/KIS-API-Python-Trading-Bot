@@ -11,6 +11,7 @@
 # 🚨 MODIFIED: [Case 26] 텔레그램 HTML 파서 붕괴 방어용 html.escape 쉴드 100% 전면 유지.
 # 🚨 NEW: [런타임 호환성 확보] _retry_api 내 asyncio.to_thread 에 kwargs 전달 시 발생 가능한 TypeError 방어를 위해 functools.partial 래핑 강제 주입.
 # 🚨 NEW: [Thread-Safety 락온] 내부 헬퍼 함수(_fetch_schedule, get_yf_close 등)가 클로저(Closure) 외부 변수에 의존하지 않고 명시적 파라미터를 받도록 교정하여 Thread Context 오염 원천 차단.
+# 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링(In-place Edit) 분기 락온하여 버튼 터치 시 채팅창 밀림 현상 완벽 방어.
 # ==========================================================
 import logging
 import datetime
@@ -143,7 +144,14 @@ class TelegramCommands:
         await self._safe_reply(update.effective_message, msg, parse_mode='HTML')
 
     async def cmd_sync(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await self._safe_reply(update.effective_message, "🔄 시장 분석 및 지시서 작성 중...")
+        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링(In-place Edit) 분기 락온
+        is_callback = update.callback_query is not None
+        loading_text = "🔄 시장 분석 및 지시서 작성 중..."
+        if is_callback:
+            status_msg = update.effective_message
+            await self._safe_edit(status_msg, loading_text)
+        else:
+            status_msg = await self._safe_reply(update.effective_message, loading_text)
         
         async with self.tx_lock:
             cash, holdings = 0.0, {}
@@ -152,7 +160,7 @@ class TelegramCommands:
                 cash = self._safe_float(res[0]) if len(res) > 0 else 0.0
                 holdings = res[1] if len(res) > 1 and isinstance(res[1], dict) else {}
             else:
-                await self._safe_reply(update.effective_message, "❌ KIS API 통신 오류로 계좌 정보를 불러올 수 없습니다. 잠시 후 다시 시도해주세요.")
+                await self._safe_edit(status_msg, "❌ KIS API 통신 오류로 계좌 정보를 불러올 수 없습니다. 잠시 후 다시 시도해주세요.")
                 return
 
         target_hour, _ = self._get_dst_info() 
@@ -458,11 +466,19 @@ class TelegramCommands:
             status_code in ["PRE", "REG"], p_trade_data={}, exchange_rate=exchange_rate
         )
 
-        await self._safe_reply(update.effective_message, final_msg, reply_markup=markup, parse_mode='HTML')
+        await self._safe_edit(status_msg, final_msg, reply_markup=markup, parse_mode='HTML')
 
     async def cmd_record(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
-        status_msg = await self._safe_send(context, chat_id, "🛡️ <b>장부 무결성 검증 및 동기화 중...</b>", parse_mode='HTML')
+        
+        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링(In-place Edit) 분기 락온
+        is_callback = update.callback_query is not None
+        loading_text = "🛡️ <b>장부 무결성 검증 및 동기화 중...</b>"
+        if is_callback:
+            status_msg = update.effective_message
+            await self._safe_edit(status_msg, loading_text, parse_mode='HTML')
+        else:
+            status_msg = await self._safe_send(context, chat_id, loading_text, parse_mode='HTML')
         
         success_tickers = []
         active_tickers = await self._retry_api(self.cfg.get_active_tickers, default=[])
@@ -485,11 +501,15 @@ class TelegramCommands:
             await self._safe_edit(status_msg, "✅ <b>동기화 완료</b> (표시할 진행 중인 장부가 없거나 에러 대기 중입니다)", parse_mode='HTML')
 
     async def cmd_history(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        is_callback = update.callback_query is not None
         history_data = await self._retry_api(self.cfg.get_history, default=[])
         if not isinstance(history_data, list): history_data = []
         
         if not history_data:
-            await self._safe_reply(update.effective_message, "📭 <b>명예의 전당 (졸업 기록)이 비어있습니다.</b>", parse_mode='HTML')
+            if is_callback:
+                await self._safe_edit(update.effective_message, "📭 <b>명예의 전당 (졸업 기록)이 비어있습니다.</b>", parse_mode='HTML')
+            else:
+                await self._safe_reply(update.effective_message, "📭 <b>명예의 전당 (졸업 기록)이 비어있습니다.</b>", parse_mode='HTML')
             return
             
         sorted_hist = sorted(history_data, key=lambda x: str(x.get('end_date') or '') if isinstance(x, dict) else '', reverse=True)
@@ -505,13 +525,25 @@ class TelegramCommands:
             keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"HIST:VIEW:{h.get('id', 0)}")])
             
         keyboard.append([InlineKeyboardButton("❌ 닫기", callback_data="RESET:CANCEL")])
-        await self._safe_reply(update.effective_message, msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        
+        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
+        if is_callback:
+            await self._safe_edit(update.effective_message, msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        else:
+            await self._safe_reply(update.effective_message, msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
     async def cmd_settlement(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         active_tickers = await self._retry_api(self.cfg.get_active_tickers, default=[])
         if not isinstance(active_tickers, list): active_tickers = []
         
-        status_msg = await self._safe_reply(update.effective_message, "⏳ <b>실시간 시장 지표 연산 중...</b>", parse_mode='HTML')
+        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링(In-place Edit) 분기 락온
+        is_callback = update.callback_query is not None
+        loading_text = "⏳ <b>실시간 시장 지표 연산 중...</b>"
+        if is_callback:
+            status_msg = update.effective_message
+            await self._safe_edit(status_msg, loading_text, parse_mode='HTML')
+        else:
+            status_msg = await self._safe_reply(update.effective_message, loading_text, parse_mode='HTML')
             
         app_data = context.bot_data.get('app_data', {}) if isinstance(context.bot_data.get('app_data'), dict) else {}
         tracking_cache = app_data.get('sniper_tracking', {}) if isinstance(app_data.get('sniper_tracking'), dict) else {}
@@ -519,7 +551,7 @@ class TelegramCommands:
         
         msg, markup = await self._retry_api(self.view.get_settlement_message, active_tickers, self.cfg, atr_data, tracking_cache, timeout=15.0)
         if not msg: msg, markup = "❌ 설정 화면을 불러오는 도중 에러가 발생했습니다.", None
-            
+        
         await self._safe_edit(status_msg, msg, reply_markup=markup, parse_mode='HTML')
 
     async def cmd_seed(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -535,13 +567,25 @@ class TelegramCommands:
                 InlineKeyboardButton(f"➖ {html.escape(str(t))} 감소", callback_data=f"SEED:SUB:{html.escape(str(t))}"),
                 InlineKeyboardButton(f"🔢 {html.escape(str(t))} 고정", callback_data=f"SEED:SET:{html.escape(str(t))}")
             ])
-        await self._safe_reply(update.effective_message, msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+            
+        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
+        is_callback = update.callback_query is not None
+        if is_callback:
+            await self._safe_edit(update.effective_message, msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        else:
+            await self._safe_reply(update.effective_message, msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
     async def cmd_ticker(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         active_tickers = await self._retry_api(self.cfg.get_active_tickers, default=[])
         if not isinstance(active_tickers, list): active_tickers = []
         msg, markup = self.view.get_ticker_menu(active_tickers)
-        await self._safe_reply(update.effective_message, msg, reply_markup=markup, parse_mode='HTML')
+        
+        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
+        is_callback = update.callback_query is not None
+        if is_callback:
+            await self._safe_edit(update.effective_message, msg, reply_markup=markup, parse_mode='HTML')
+        else:
+            await self._safe_reply(update.effective_message, msg, reply_markup=markup, parse_mode='HTML')
 
     async def cmd_mode(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         active_tickers = await self._retry_api(self.cfg.get_active_tickers, default=[])
@@ -576,12 +620,23 @@ class TelegramCommands:
             report += f"▫️ {html.escape(str(t))} 현재 상태 : {status_txt}\n"
             keyboard.append([InlineKeyboardButton(f"{html.escape(str(t))} ⚪ OFF", callback_data=f"MODE:OFF:{html.escape(str(t))}"), InlineKeyboardButton(f"{html.escape(str(t))} 🎯 ON", callback_data=f"MODE:ON:{html.escape(str(t))}")])
         
-        await self._safe_reply(update.effective_message, report, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
+        is_callback = update.callback_query is not None
+        if is_callback:
+            await self._safe_edit(update.effective_message, report, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        else:
+            await self._safe_reply(update.effective_message, report, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
     async def cmd_version(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         history_data = await self._retry_api(self.cfg.get_full_version_history, default=[])
         msg, markup = self.view.get_version_message(history_data, page_index=None)
-        await self._safe_reply(update.effective_message, msg, parse_mode='HTML', reply_markup=markup)
+        
+        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
+        is_callback = update.callback_query is not None
+        if is_callback:
+            await self._safe_edit(update.effective_message, msg, parse_mode='HTML', reply_markup=markup)
+        else:
+            await self._safe_reply(update.effective_message, msg, parse_mode='HTML', reply_markup=markup)
 
     async def cmd_queue(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         args = context.args
@@ -596,6 +651,8 @@ class TelegramCommands:
             
         q_data = await self._retry_api(self.queue_ledger.get_queue, ticker, default=[])
         msg, reply_markup = self.view.get_queue_management_menu(ticker, q_data if isinstance(q_data, list) else [])
+        
+        # 이 커맨드는 인자(args)를 필요로 하므로 통상 콜백에서 직접 호출되지 않음.
         await self._safe_reply(update.effective_message, msg, reply_markup=reply_markup, parse_mode='HTML')
 
     async def cmd_add_q(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -612,7 +669,7 @@ class TelegramCommands:
         if qty <= 0 or price <= 0.0:
             await self._safe_reply(update.effective_message, "❌ 수량과 평단가는 0보다 큰 숫자여야 합니다. (혹은 형식 오류)", parse_mode='HTML')
             return
-            
+           
         curr_p_val = await self._retry_api(self.broker.get_current_price, ticker)
         curr_p = self._safe_float(curr_p_val)
                 
@@ -620,7 +677,7 @@ class TelegramCommands:
             if price < curr_p * 0.4 or price > curr_p * 1.6:
                 await self._safe_reply(update.effective_message, f"🚨 <b>오입력 차단:</b> 입력하신 평단가(<b>${price:.2f}</b>)가 현재가 대비 ±60%를 벗어납니다. 오타를 확인하세요!", parse_mode='HTML')
                 return
-        
+       
         if not getattr(self, 'queue_ledger', None):
             from queue_ledger import QueueLedger
             self.queue_ledger = await asyncio.to_thread(QueueLedger)
@@ -630,7 +687,7 @@ class TelegramCommands:
         
         q_data.append({"qty": qty, "price": price, "date": f"{date_str} 23:59:59", "type": "MANUAL_OVERRIDE"})
         q_data.sort(key=lambda x: str(x.get('date', '')) if isinstance(x, dict) else '', reverse=True)
-        
+ 
         await self._retry_api(self.queue_ledger.overwrite_queue, ticker, q_data)
         chat_id = update.effective_chat.id
         if ticker not in self.sync_engine.sync_locks: self.sync_engine.sync_locks[ticker] = asyncio.Lock()
@@ -666,7 +723,14 @@ class TelegramCommands:
             await self._safe_reply(update.effective_message, f"🛑 <b>[작전 중 업데이트 거부]</b>\n\n{fail_msg}", parse_mode='HTML')
             return
             
-        status_msg = await self._safe_reply(update.effective_message, "⏳ <b>[시스템 업데이트]</b> 깃허브 원격 서버와 통신을 시작합니다...", parse_mode='HTML')
+        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
+        is_callback = update.callback_query is not None
+        loading_text = "⏳ <b>[시스템 업데이트]</b> 깃허브 원격 서버와 통신을 시작합니다..."
+        if is_callback:
+            status_msg = update.effective_message
+            await self._safe_edit(status_msg, loading_text, parse_mode='HTML')
+        else:
+            status_msg = await self._safe_reply(update.effective_message, loading_text, parse_mode='HTML')
         
         success, msg = await updater.pull_latest_code()
         safe_msg = html.escape(str(msg)) 
@@ -677,8 +741,15 @@ class TelegramCommands:
             await self._safe_edit(status_msg, f"❌ <b>[동기화 실패]</b>\n▫️ 사유: {safe_msg}", parse_mode='HTML')
 
     async def cmd_avwap(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링(In-place Edit) 분기 락온
+        is_callback = update.callback_query is not None
         loading_text = "⏳ <b>[AVWAP 듀얼 모멘텀 관제탑]</b>\n레이더망을 가동하여 시장 데이터를 스캔 중..."
-        status_msg = await self._safe_reply(update.effective_message, loading_text, parse_mode='HTML')
+        
+        if is_callback:
+            status_msg = update.effective_message
+            await self._safe_edit(status_msg, loading_text, parse_mode='HTML')
+        else:
+            status_msg = await self._safe_reply(update.effective_message, loading_text, parse_mode='HTML')
         
         plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
         app_data = context.bot_data.get('app_data', {})
@@ -697,7 +768,14 @@ class TelegramCommands:
             await self._safe_edit(status_msg, "❌ <b>[네트워크 지연 발생]</b>\n야후 파이낸스 또는 증권사 서버 응답이 지연되어 스캔을 강제 종료했습니다.", parse_mode='HTML')
 
     async def cmd_log(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        status_msg = await self._safe_reply(update.effective_message, "🔍 <b>[원격 진단]</b> 최근 시스템 에러 로그를 핀셋 추출 중...", parse_mode='HTML')
+        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
+        is_callback = update.callback_query is not None
+        loading_text = "🔍 <b>[원격 진단]</b> 최근 시스템 에러 로그를 핀셋 추출 중..."
+        if is_callback:
+            status_msg = update.effective_message
+            await self._safe_edit(status_msg, loading_text, parse_mode='HTML')
+        else:
+            status_msg = await self._safe_reply(update.effective_message, loading_text, parse_mode='HTML')
         
         log_path = "logs/bot_app.log" 
         def _grep_tail_logs(path, limit=50):
@@ -724,4 +802,10 @@ class TelegramCommands:
         active_tickers = await self._retry_api(self.cfg.get_active_tickers, default=[])
         if not isinstance(active_tickers, list): active_tickers = []
         msg, markup = self.view.get_reset_menu(active_tickers)
-        await self._safe_reply(update.effective_message, msg, reply_markup=markup, parse_mode='HTML')
+        
+        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
+        is_callback = update.callback_query is not None
+        if is_callback:
+            await self._safe_edit(update.effective_message, msg, reply_markup=markup, parse_mode='HTML')
+        else:
+            await self._safe_reply(update.effective_message, msg, reply_markup=markup, parse_mode='HTML')
