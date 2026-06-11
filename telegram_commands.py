@@ -11,7 +11,7 @@
 # 🚨 MODIFIED: [Case 26] 텔레그램 HTML 파서 붕괴 방어용 html.escape 쉴드 100% 전면 유지.
 # 🚨 NEW: [런타임 호환성 확보] _retry_api 내 asyncio.to_thread 에 kwargs 전달 시 발생 가능한 TypeError 방어를 위해 functools.partial 래핑 강제 주입.
 # 🚨 NEW: [Thread-Safety 락온] 내부 헬퍼 함수(_fetch_schedule, get_yf_close 등)가 클로저(Closure) 외부 변수에 의존하지 않고 명시적 파라미터를 받도록 교정하여 Thread Context 오염 원천 차단.
-# 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링(In-place Edit) 분기 락온하여 버튼 터치 시 채팅창 밀림 현상 완벽 방어.
+# 🚨 MODIFIED: [UI 높이 붕괴 패러독스 수술] 콜백 유입 시 1줄짜리 로딩 텍스트 중간 렌더링을 100% 전면 소각하여, 기존 화면(높이 및 버튼)을 그대로 유지하다가 최종 데이터로 제자리 갱신(In-place Edit)만 수행하도록 팩트 락온.
 # ==========================================================
 import logging
 import datetime
@@ -144,14 +144,12 @@ class TelegramCommands:
         await self._safe_reply(update.effective_message, msg, parse_mode='HTML')
 
     async def cmd_sync(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링(In-place Edit) 분기 락온
+        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 1줄 로딩 텍스트 전면 소각 (Height Collapse 방어)
         is_callback = update.callback_query is not None
-        loading_text = "🔄 시장 분석 및 지시서 작성 중..."
-        if is_callback:
-            status_msg = update.effective_message
-            await self._safe_edit(status_msg, loading_text)
-        else:
-            status_msg = await self._safe_reply(update.effective_message, loading_text)
+        status_msg = update.effective_message if is_callback else None
+        
+        if not is_callback:
+            status_msg = await self._safe_reply(update.effective_message, "🔄 시장 분석 및 지시서 작성 중...")
         
         async with self.tx_lock:
             cash, holdings = 0.0, {}
@@ -473,12 +471,10 @@ class TelegramCommands:
         
         # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링(In-place Edit) 분기 락온
         is_callback = update.callback_query is not None
-        loading_text = "🛡️ <b>장부 무결성 검증 및 동기화 중...</b>"
-        if is_callback:
-            status_msg = update.effective_message
-            await self._safe_edit(status_msg, loading_text, parse_mode='HTML')
-        else:
-            status_msg = await self._safe_send(context, chat_id, loading_text, parse_mode='HTML')
+        status_msg = update.effective_message if is_callback else None
+        
+        if not is_callback:
+            status_msg = await self._safe_send(context, chat_id, "🛡️ <b>장부 무결성 검증 및 동기화 중...</b>", parse_mode='HTML')
         
         success_tickers = []
         active_tickers = await self._retry_api(self.cfg.get_active_tickers, default=[])
@@ -538,12 +534,10 @@ class TelegramCommands:
         
         # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링(In-place Edit) 분기 락온
         is_callback = update.callback_query is not None
-        loading_text = "⏳ <b>실시간 시장 지표 연산 중...</b>"
-        if is_callback:
-            status_msg = update.effective_message
-            await self._safe_edit(status_msg, loading_text, parse_mode='HTML')
-        else:
-            status_msg = await self._safe_reply(update.effective_message, loading_text, parse_mode='HTML')
+        status_msg = update.effective_message if is_callback else None
+        
+        if not is_callback:
+            status_msg = await self._safe_reply(update.effective_message, "⏳ <b>실시간 시장 지표 연산 중...</b>", parse_mode='HTML')
             
         app_data = context.bot_data.get('app_data', {}) if isinstance(context.bot_data.get('app_data'), dict) else {}
         tracking_cache = app_data.get('sniper_tracking', {}) if isinstance(app_data.get('sniper_tracking'), dict) else {}
@@ -725,12 +719,10 @@ class TelegramCommands:
             
         # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
         is_callback = update.callback_query is not None
-        loading_text = "⏳ <b>[시스템 업데이트]</b> 깃허브 원격 서버와 통신을 시작합니다..."
-        if is_callback:
-            status_msg = update.effective_message
-            await self._safe_edit(status_msg, loading_text, parse_mode='HTML')
-        else:
-            status_msg = await self._safe_reply(update.effective_message, loading_text, parse_mode='HTML')
+        status_msg = update.effective_message if is_callback else None
+        
+        if not is_callback:
+            status_msg = await self._safe_reply(update.effective_message, "⏳ <b>[시스템 업데이트]</b> 깃허브 원격 서버와 통신을 시작합니다...", parse_mode='HTML')
         
         success, msg = await updater.pull_latest_code()
         safe_msg = html.escape(str(msg)) 
@@ -741,15 +733,12 @@ class TelegramCommands:
             await self._safe_edit(status_msg, f"❌ <b>[동기화 실패]</b>\n▫️ 사유: {safe_msg}", parse_mode='HTML')
 
     async def cmd_avwap(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링(In-place Edit) 분기 락온
+        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 1줄짜리 로딩 메시지를 소각하여 Height Collapse 방어
         is_callback = update.callback_query is not None
-        loading_text = "⏳ <b>[AVWAP 듀얼 모멘텀 관제탑]</b>\n레이더망을 가동하여 시장 데이터를 스캔 중..."
+        status_msg = update.effective_message if is_callback else None
         
-        if is_callback:
-            status_msg = update.effective_message
-            await self._safe_edit(status_msg, loading_text, parse_mode='HTML')
-        else:
-            status_msg = await self._safe_reply(update.effective_message, loading_text, parse_mode='HTML')
+        if not is_callback:
+            status_msg = await self._safe_reply(update.effective_message, "⏳ <b>[AVWAP 듀얼 모멘텀 관제탑]</b>\n레이더망을 가동하여 시장 데이터를 스캔 중...", parse_mode='HTML')
         
         plugin = AvwapConsolePlugin(self.cfg, self.broker, self.strategy, self.tx_lock)
         app_data = context.bot_data.get('app_data', {})
@@ -770,12 +759,10 @@ class TelegramCommands:
     async def cmd_log(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
         is_callback = update.callback_query is not None
-        loading_text = "🔍 <b>[원격 진단]</b> 최근 시스템 에러 로그를 핀셋 추출 중..."
-        if is_callback:
-            status_msg = update.effective_message
-            await self._safe_edit(status_msg, loading_text, parse_mode='HTML')
-        else:
-            status_msg = await self._safe_reply(update.effective_message, loading_text, parse_mode='HTML')
+        status_msg = update.effective_message if is_callback else None
+        
+        if not is_callback:
+            status_msg = await self._safe_reply(update.effective_message, "🔍 <b>[원격 진단]</b> 최근 시스템 에러 로그를 핀셋 추출 중...", parse_mode='HTML')
         
         log_path = "logs/bot_app.log" 
         def _grep_tail_logs(path, limit=50):
