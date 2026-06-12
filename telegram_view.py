@@ -2,9 +2,9 @@
 # FILE: telegram_view.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 38대 엣지 케이스 완벽 결속 교차 검증 완료
+# 🚨 MODIFIED: [Phase 3 암살자 선택권 복구] get_settlement_message 내 암살자 상태(is_avwap_hybrid) 동적 렌더링(ON/OFF) 및 토글 버튼 100% 수복 완료.
 # 🚨 MODIFIED: [UI 텍스트 맹독성 하드코딩 소각] 과거 암살자/스캘퍼 실전 매매 시절의 환영(Ghost Text) 및 복잡한 HA 휩소 상태 전이 텍스트 전면 파기.
-# 🚨 MODIFIED: [순수 리버전 팩트 롤오버] '세션 VWAP -3% 매수', '+2% 전량 익절', '15:59 강제 덤핑' 팩트를 시스템 UI 전역(관제탑 승인, 세팅 메뉴, 브리핑)에 100% 하드코딩 교체.
-# 🚨 MODIFIED: [수동 타겟팅 뇌관 영구 소각] get_settlement_message 내부의 KRW/PCT 듀얼 익절 모드 전환 버튼, 토글 버튼, 수동 입력 렌더링을 완전히 도려내어 팻핑거 개입 가능성 원천 차단.
+# 🚨 MODIFIED: [순수 리버전 팩트 롤오버] '세션 VWAP -3% 매수', '+2% 전량 익절', '15:59 강제 덤핑' 팩트를 시스템 UI 전역에 100% 동기화 교체.
 # 🚨 MODIFIED: [Float 정밀도 붕괴 원천 차단] 뷰어 클래스 내에 `_safe_float` 래퍼를 전격 이식하여 파편화된 인라인 캐스팅을 통합하고 NaN/Inf 맹독성 붕괴 원천 차단.
 # 🚨 MODIFIED: [Python 딕셔너리 평가 맹독성 수술] dict.get(key, default)에서 값이 None일 때 default가 무시되고 None이 반환되어 _safe_float(None) -> 0.0 으로 오염되는 치명적 버그를 `or default` 단락 평가로 완벽 교정.
 # 🚨 MODIFIED: [마크다운 리스트 붕괴 방어] 텍스트 내 숫자 리스트(1., 2.)를 이모지(1️⃣, 2️⃣)로 100% 치환하여 텔레그램 파서 안전성 극대화.
@@ -262,7 +262,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V86.00 순수 리버전 팩트 락온 에디션</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V92.00 순수 리버전 팩트 락온 에디션</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -546,6 +546,7 @@ class TelegramView:
             safe_t = html.escape(str(t))
             ver = str(config.get_version(t) or "")
             is_manual_vwap = getattr(config, 'get_manual_vwap_mode', lambda x: False)(t)
+            is_avwap_hybrid = getattr(config, 'get_avwap_hybrid_mode', lambda x: False)(t)
             fee_rate = self._safe_float(getattr(config, 'get_fee', lambda x: 0.25)(t))
             
             if ver == "V_REV":
@@ -560,12 +561,17 @@ class TelegramView:
             msg += f"{icon} <b>{safe_t} ({ver_display} 모드)</b>\n"
             
             if ver == "V_REV":
-                # 🚨 MODIFIED: [순수 리버전 팩트 롤오버] 수동 타겟팅 뇌관 영구 소각 및 1-Shot 1-Kill 아키텍처 브리핑 하드코딩
+                # 🚨 MODIFIED: [Phase 3 암살자 선택권 복구] 암살자 ON/OFF 상태 동적 표출
+                avwap_status = "🟢 ON (85% 배정)" if is_avwap_hybrid else "⚪ OFF (가동 대기)"
+                
                 msg += f"▫️ 본진 예산: 총 시드의 15% (고정 할당)\n▫️ 본진 목표: [가상1층]+0.6% / [상위층]+0.5%\n▫️ 자동복리: {comp_rate}% | 수수료: <b>{fee_rate}%</b>\n▫️ 갭 스위칭: <b>🤖 자율주행 (상승장 자동 가동)</b>\n"
-                msg += f"▫️ 암살자 예산: 총 시드의 85% (격리 할당)\n"
-                msg += f"▫️ 암살자 타점: <b>세션 VWAP -3% (1-Shot 1-Kill)</b>\n"
-                msg += f"▫️ 암살자 익절: <b>+2% 지정가 전량 익절 (절대 락온)</b>\n"
-                msg += f"▫️ 자본 잠김 차단: <b>15:59 EST 전량 최유리 지정가 덤핑</b>\n"
+                msg += f"▫️ 암살자 타격망: <b>{avwap_status}</b>\n"
+                
+                if is_avwap_hybrid:
+                    msg += f"▫️ 암살자 타점: <b>세션 VWAP -3% (1-Shot 1-Kill)</b>\n"
+                    msg += f"▫️ 암살자 익절: <b>+2% 지정가 전량 익절 (절대 락온)</b>\n"
+                    msg += f"▫️ 자본 잠김 차단: <b>15:59 EST 전량 최유리 지정가 덤핑</b>\n"
+                
                 msg += f"▫️ 데이 트레이딩 관제탑: <b>365일 상시 가동 📡</b>\n"
                 msg += "⚖️ <b>본진 스탠바이:</b> 15:26 EST 예약 덫 관측 ➔ 15:27 로컬 자체 슬라이싱 가동\n\n" 
             else:
@@ -581,7 +587,10 @@ class TelegramView:
             if ver == "V_REV":
                 if t == "SOXL": 
                     keyboard.append([InlineKeyboardButton(f"📡 {safe_t} 데이 트레이딩 관제탑 열기", callback_data=f"AVWAP:MENU:{t}")])
-                    # 🚨 MODIFIED: [수동 제어 뇌관 영구 소각] 암살자 토글, 목표 모드(KRW/PCT), 수동 목표액 입력 버튼 100% 완전 삭제
+                    # 🚨 MODIFIED: [Phase 3 암살자 선택권 복구] 암살자 ON/OFF 토글 버튼 팩트 복구
+                    keyboard.append([
+                        InlineKeyboardButton("⚔️ 암살자 ON/OFF 토글", callback_data=f"CONFIG_AVWAP:TOGGLE:{t}")
+                    ])
                     keyboard.append([
                         InlineKeyboardButton(f"💸 {safe_t} 복리", callback_data=f"INPUT:COMPOUND:{t}"),
                         InlineKeyboardButton(f"💳 {safe_t} 수수료", callback_data=f"INPUT:FEE:{t}")

@@ -2,6 +2,9 @@
 # FILE: telegram_avwap_console.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 3중 딥다이브 교차 검증(Syntax 붕괴, Async I/O 족쇄, Float 정밀도 사수) 통과 완료.
+# 🚨 MODIFIED: [Phase 2 관제탑 인텔리전스 동적 렌더링 팩트 교정] 암살자 ON/OFF(is_avwap_hybrid) 상태에 따라 관제탑 텍스트가 동적으로 변환되도록 UI 렌더링 로직을 전면 수술.
+# 🚨 MODIFIED: [UX 패러독스 원천 소각] 암살자가 OFF일 때 -3% 타점이 '진입 덫'으로 표출되던 오해를 막기 위해, OFF 시 "하방 이격(-3%) 감시선"으로 명칭을 강제 전환하는 동적 분기망 결속.
+# 🚨 MODIFIED: [암살자 셧다운 팩트 브리핑] 암살자가 OFF 상태일 경우, 하단 교전망 상태에 "⚠️ [ 암살자 타격망 OFF (단순 관측 모드) ]"를 명시하여 보조 타격망이 대기 상태임을 직관적으로 렌더링.
 # 🚨 MODIFIED: [UI 텍스트 맹독성 하드코딩 소각] 과거 휩소 방어(HA 컨펌), 다중 페이즈(Phase), 듀얼 섀도우 컷오프 등 낡은 텍스트 렌더링 100% 영구 삭제.
 # 🚨 MODIFIED: [Case 17 순수 리버전 관제탑 롤오버] '데이 트레이딩 리버전' 통제소로 UI를 리빌딩하고 세션별 VWAP, -3% 타점, +2% 익절가, 15:59 강제 청산 팩트만 직관적으로 렌더링.
 # 🚨 MODIFIED: [타 종목 오염 원천 차단] aVWAP 암살자 모듈의 SOXL 전용 가동 원칙에 따라 TQQQ 등 타 종목 유입 시 '관측망 오프라인' 처리 락온.
@@ -163,12 +166,25 @@ class AvwapConsolePlugin:
             safe_holdings = holdings if isinstance(holdings, dict) else {}
             kis_avg = self._safe_float(safe_holdings.get(t, {}).get('avg', 0.0))
 
+            # 🚨 NEW: [Phase 2 암살자 ON/OFF 플래그 동기화]
+            is_avwap_hybrid = bool(await _get_with_retry(getattr(self.cfg, 'get_avwap_hybrid_mode', lambda x: False), t))
+            
+            fee_rate = self._safe_float(await _get_with_retry(self.cfg.get_fee, t)) / 100.0
+            target_krw = self._safe_float(await _get_with_retry(self.cfg.get_avwap_target_krw, t))
+            target_mode = str(await _get_with_retry(getattr(self.cfg, 'get_avwap_target_mode', lambda x: "KRW"), t)).upper()
+            target_pct = self._safe_float(await _get_with_retry(getattr(self.cfg, 'get_avwap_target_pct', lambda x: 10.0), t))
+
         except Exception as e:
             logging.error(f"🚨 [{t}] 퀀트 관측망 데이터 추출 실패: {e}")
             curr_p, base_amp5, df_1m, ma_5day, kis_avg = 0.0, 0.0, None, 0.0, 0.0
+            is_avwap_hybrid = False
+            target_mode, target_pct, target_krw, fee_rate = "KRW", 10.0, 1000000.0, 0.0007
 
         # 🚨 [암살자 1-Shot 1-Kill 실전 렌더링 팩트 파싱]
-        avwap_qty, avwap_avg, target_usd = 0, 0.0, 0.0
+        avwap_qty, avwap_avg, target_usd, avwap_inv_usd = 0, 0.0, 0.0, 0.0
+        phase = 0
+        last_entry_price = 0.0
+        cut_loss = 0.0
         is_assassin_active = False
         
         state_file = f"data/avwap_trade_state_{t}.json"
@@ -185,13 +201,28 @@ class AvwapConsolePlugin:
             
             if isinstance(state_data, dict):
                 avwap_qty = int(self._safe_float(state_data.get('qty', 0)))
+                phase = int(self._safe_float(state_data.get('phase', 0)))
+                last_entry_price = self._safe_float(state_data.get('last_entry_price', 0.0))
                 
                 if avwap_qty > 0:
                     is_assassin_active = True
                     avwap_avg = self._safe_float(state_data.get('avg_price', 0.0))
+                    avwap_inv_usd = avwap_qty * avwap_avg
                     
-                    # 🚨 [+2% 전량 익절가 올림 연산]
-                    target_usd = math.ceil(avwap_avg * 1.02 * 100) / 100.0
+                    if last_entry_price > 0.0:
+                        cut_loss = round(last_entry_price * 0.99, 2)
+                    else:
+                        cut_loss = round(avwap_avg * 0.99, 2)
+                        
+                    # 🚨 [ZeroDivision 붕괴 수술]
+                    safe_denom = avwap_qty * max(0.0001, (1.0 - fee_rate))
+                    
+                    if target_mode == "PCT":
+                        gross_invest = avwap_inv_usd * (1.0 + fee_rate)
+                        target_usd = (gross_invest * (1.0 + target_pct / 100.0)) / safe_denom
+                    else:
+                        exchange_rate = 1400.0  # 관제탑은 로딩 속도를 위해 1400 고정 연산 (실매매는 실시간 환율 적용)
+                        target_usd = ((target_krw / exchange_rate) + (avwap_inv_usd * (1.0 + fee_rate))) / safe_denom
         except Exception:
             pass
 
@@ -263,11 +294,14 @@ class AvwapConsolePlugin:
         else:
             msg += f"▫️ 본진 물량 보유 없음 (관망)\n\n"
 
+        # 🚨 NEW: [Phase 2 암살자 상태 연동 동적 텍스트 결속]
+        target_label = "암살자(-3%) 진입 덫" if is_avwap_hybrid else "하방 이격(-3%) 감시선"
+
         msg += f"🌅 <b>[ 1세션 - 프리장 (04:00~09:29) ]</b>\n"
         if pre_vwap > 0:
             msg += f"▫️ 고가: ${pre_high:.2f} / 저가: ${pre_low:.2f} (진폭 {pre_amp:.2f}%)\n"
             msg += f"▫️ 누적 VWAP: <b>${pre_vwap:.2f}</b>\n"
-            msg += f"🔻 암살자(-3%) 진입 타점: <b>${pre_target:.2f}</b>\n\n"
+            msg += f"🔻 {target_label}: <b>${pre_target:.2f}</b>\n\n"
         else:
             msg += "▫️ 데이터 집계 대기 중...\n\n"
 
@@ -275,7 +309,7 @@ class AvwapConsolePlugin:
         if reg_vwap > 0:
             msg += f"▫️ 고가: ${reg_high:.2f} / 저가: ${reg_low:.2f} (진폭 {reg_amp:.2f}%)\n"
             msg += f"▫️ 누적 VWAP: <b>${reg_vwap:.2f}</b>\n"
-            msg += f"🔻 암살자(-3%) 진입 타점: <b>${reg_target:.2f}</b>\n\n"
+            msg += f"🔻 {target_label}: <b>${reg_target:.2f}</b>\n\n"
         else:
             msg += "▫️ 정규장 개장 대기 중...\n\n"
 
@@ -285,14 +319,48 @@ class AvwapConsolePlugin:
         else:
             msg += "▫️ 5일 평균가(SMA 5): 대기 중...\n\n"
 
-        msg += f"⚔️ <b>[ 암살자(aVWAP) 85% 예산 교전망 ]</b>\n"
-        if is_assassin_active:
-            msg += f"▫️ 교전 상태: <b>진입 완료 (1-Shot 1-Kill 타격)</b>\n"
-            msg += f"▫️ 보유 물량: <b>{avwap_qty}주</b> (진입 단가 ${avwap_avg:.2f})\n"
-            msg += f"▫️ 전량 익절: <b>목표가 ${target_usd:.2f}</b> (+2% 지정가 장전)\n"
-            msg += f"🛑 <b>경고: 15:59 EST까지 미체결 시 전량 강제 청산(Zero-Overnight) 예정</b>\n"
+        # 🚨 NEW: [Phase 2 암살자 ON/OFF 토글 상태 팩트 브리핑]
+        if is_avwap_hybrid or is_assassin_active:
+            msg += f"⚔️ <b>[ 암살자(aVWAP) 85% 예산 교전망 (🟢 가동중) ]</b>\n"
         else:
-            msg += f"▫️ 교전 상태: <b>대기 상태 (관망 중)</b>\n"
+            msg += f"⚠️ <b>[ 암살자 타격망 OFF (단순 관측 모드) ]</b>\n"
+
+        if is_assassin_active:
+            if phase == 1:
+                msg += f"▫️ 교전 상태: <b>1차 딥-매수 완료 (50% 투입, 휩소 방어를 위한 관망 중)</b>\n"
+            elif phase == 2:
+                msg += f"▫️ 교전 상태: <b>2차 딥-매수 완료 (100% 누적 투입, 1+2차 통합 연쇄 손절망 가동 중)</b>\n"
+            elif phase >= 3:
+                msg += f"▫️ 교전 상태: <b>무한 재진입 타격망 가동 중 (주문가능금액 100% 투입, 진입가 손절망 가동 중)</b>\n"
+            else:
+                msg += f"▫️ 교전 상태: <b>ON (OCO 듀얼 엑시트 대기 중)</b>\n"
+
+            msg += f"▫️ 투입 물량: <b>{avwap_qty}주</b> (진입 단가 ${avwap_avg:.2f} | 총 ${avwap_inv_usd:,.2f})\n"
+            
+            if target_mode == "PCT":
+                msg += f"▫️ 전량 익절: <b>목표가 ${target_usd:.2f}</b> (수익률 {target_pct}%)\n"
+            else:
+                msg += f"▫️ 전량 익절: <b>목표가 ${target_usd:.2f}</b> (환산 ₩{int(target_krw):,})\n"
+            
+            if phase >= 2:
+                msg += f"▫️ 하드 손절: <b>탈출가 ${cut_loss:.2f}</b> (-1% KIS 덫 장전 완료)\n"
+            elif phase == 1:
+                msg += f"▫️ 하드 손절: <b>장전 보류 (1차 물량 휩소 방어 차원 홀딩)</b>\n"
+            else:
+                msg += f"▫️ 하드 손절: <b>탈출가 ${cut_loss:.2f}</b> (-1% KIS 덫 장전 완료)\n"
+        else:
+            if is_avwap_hybrid:
+                if phase > 0:
+                    msg += f"▫️ 교전 상태: <b>듀얼 섀도우 트래킹 가동 중 (상단 V자 반등 / 하단 심해 줍줍 스캔)</b>\n"
+                else:
+                    msg += f"▫️ 교전 상태: <b>ON (타점 관통 대기 중)</b>\n"
+            else:
+                msg += f"▫️ 교전 상태: <b>OFF (수동 가동 대기)</b>\n"
+
+        if is_holiday:
+            keyboard.append([InlineKeyboardButton(f"💤 [{ticker_clean}] 증시 휴장일", callback_data="AVWAP_SET:REFRESH:NONE")])
+        elif status_code in ["CLOSE"]:
+            keyboard.append([InlineKeyboardButton(f"⛔ [{ticker_clean}] 장마감", callback_data="AVWAP_SET:REFRESH:NONE")])
 
         keyboard.append([
             InlineKeyboardButton("🔄 관제탑 새로고침", callback_data="AVWAP_SET:REFRESH:NONE"),
