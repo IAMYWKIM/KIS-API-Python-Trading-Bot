@@ -2,7 +2,9 @@
 # FILE: telegram_states.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 38대 엣지 케이스 완벽 결속 교차 검증 완료.
-# 🚨 MODIFIED: [암살자 수동 타겟팅 뇌관 영구 소각] 순수 리버전 데이 트레이딩 아키텍처 이식에 따라, 암살자의 원화(KRW) 및 수익률(PCT)을 수동으로 입력받던 CONF_AVWAP_KRW, CONF_AVWAP_PCT 팻핑거 뇌관을 100% 영구 삭제 (+2% 절대 익절 팩트 락온).
+# 🚨 MODIFIED: [암살자 수동 타겟팅 뇌관 영구 소각] 순수 리버전 데이 트레이딩 아키텍처 이식에 따라, 암살자의 원화(KRW) 및 수익률(PCT)을 수동으로 입력받던 CONF_AVWAP_KRW, CONF_AVWAP_PCT 팻핑거 뇌관 분기를 100% 영구 삭제 (+2% 절대 익절 팩트 락온).
+# 🚨 MODIFIED: [Scope Mismatch 파싱 버그 궁극 수술] CONF_STOCK_SPLIT 처리 시 언더바(_) 개수 초과로 인한 인덱스 밀림(IndexError 및 오염) 현상을 parts[-1] 매핑으로 100% 원천 차단.
+# 🚨 MODIFIED: [Thread-Safety 락온] _set_split, _set_target 등 내부 헬퍼 함수가 클로저 외부 변수(self)에 의존하지 않도록 명시적 파라미터(cfg_obj, t, v) 주입으로 스레드 오염 원천 차단.
 # 🚨 MODIFIED: [보안 무결성 팩트 교정] 관리자 검증 코루틴 호출 시 await 누락으로 인한 보안망 우회 맹점 완벽 수술.
 # 🚨 MODIFIED: [명령어 우회 라우팅 최신화] '관제탑', '로그' 등 한글 메뉴 클릭 시 상태(State) 락에 갇히지 않고 정상적으로 cmd_avwap, cmd_log 로 우회하도록 라우팅 팩트 결속.
 # 🚨 MODIFIED: [V44.30 수동 입력 렌더링 수술] 텔레그램 상태 제어 후 제자리 렌더링 및 응답 무결성 확보.
@@ -135,7 +137,7 @@ class TelegramStates:
                         except Exception:
                             if attempt == 2: curr_p = 0.0
                             else: await asyncio.sleep(1.0 * (2 ** attempt))
-                            
+                    
                         # 🚨 [Fat-Finger 쉴드 재조정] 3배수 레버리지 극단적 갭(Gap) 변동성 수용을 위해 ±30% -> ±60% 로 임계치 확장
                         if curr_p and curr_p > 0 and (price < curr_p * 0.4 or price > curr_p * 1.6):
                             del controller.user_states[chat_id]
@@ -166,6 +168,7 @@ class TelegramStates:
             # ⚙️ 관제탑 일반 설정 모드 (콤마 맹독성 방어 공통 적용)
             # ==========================================================
             # 🚨 [Insight 14 & 25] String-Float 콤마 및 NaN 맹독성 절대 방어 쉴드 래핑
+            # 🚨 MODIFIED: 암살자 팻핑거(AVWAP_KRW, AVWAP_PCT) 뇌관 100% 영구 소각 완료
             val = self._safe_float(text)
             parts = state.split("_")
             
@@ -175,7 +178,8 @@ class TelegramStates:
                     except Exception: pass
                     return
                     
-                action, ticker = parts[1], parts[2]
+                # 🚨 [Scope Mismatch 방어] 무조건 배열의 마지막 요소가 종목명
+                action, ticker = parts[1], parts[-1]
                 safe_ticker = html.escape(str(ticker))
                 
                 try: curr = self._safe_float(await asyncio.wait_for(asyncio.to_thread(self.cfg.get_seed, ticker), timeout=10.0))
@@ -202,18 +206,20 @@ class TelegramStates:
                     except Exception: pass
                     return
                     
-                ticker = parts[2]
+                # 🚨 [Scope Mismatch 방어] 무조건 배열의 마지막 요소가 종목명
+                ticker = parts[-1]
                 safe_ticker = html.escape(str(ticker))
                 
-                def _set_split():
+                # 🚨 [Thread-Safety 락온] 외부 스코프 의존성 제거를 위한 명시적 파라미터 패싱
+                def _set_split(cfg_obj, t, v):
                     # 🚨 [제4헌법] 다이렉트 I/O 시 TOCTOU 붕괴 방어용 스레드 잠금 결속
-                    with self.cfg._io_lock:
-                        d = self.cfg._load_json(self.cfg.FILES["SPLIT"], self.cfg.DEFAULT_SPLIT)
-                        d[ticker] = val
-                        self.cfg._save_json(self.cfg.FILES["SPLIT"], d)
+                    with cfg_obj._io_lock:
+                        d = cfg_obj._load_json(cfg_obj.FILES["SPLIT"], cfg_obj.DEFAULT_SPLIT)
+                        d[t] = v
+                        cfg_obj._save_json(cfg_obj.FILES["SPLIT"], d)
                 
                 # 🚨 [제1헌법] 파일 I/O 타임아웃 족쇄 래핑
-                try: await asyncio.wait_for(asyncio.to_thread(_set_split), timeout=10.0)
+                try: await asyncio.wait_for(asyncio.to_thread(_set_split, self.cfg, ticker, val), timeout=10.0)
                 except Exception as e: logging.error(f"🚨 분할 설정 에러: {e}")
                 
                 try: await asyncio.wait_for(update.effective_message.reply_text(f"✅ [{safe_ticker}] 분할: {int(val)}회"), timeout=10.0)
@@ -227,17 +233,19 @@ class TelegramStates:
                     except Exception: pass
                 
             elif state.startswith("CONF_TARGET"):
-                ticker = parts[2]
+                # 🚨 [Scope Mismatch 방어] 무조건 배열의 마지막 요소가 종목명
+                ticker = parts[-1]
                 safe_ticker = html.escape(str(ticker))
                 
-                def _set_target():
+                # 🚨 [Thread-Safety 락온] 외부 스코프 의존성 제거를 위한 명시적 파라미터 패싱
+                def _set_target(cfg_obj, t, v):
                     # 🚨 [제4헌법] 다이렉트 I/O 시 TOCTOU 붕괴 방어용 스레드 잠금 결속
-                    with self.cfg._io_lock:
-                        d = self.cfg._load_json(self.cfg.FILES["PROFIT_CFG"], self.cfg.DEFAULT_TARGET)
-                        d[ticker] = val
-                        self.cfg._save_json(self.cfg.FILES["PROFIT_CFG"], d)
+                    with cfg_obj._io_lock:
+                        d = cfg_obj._load_json(cfg_obj.FILES["PROFIT_CFG"], cfg_obj.DEFAULT_TARGET)
+                        d[t] = v
+                        cfg_obj._save_json(cfg_obj.FILES["PROFIT_CFG"], d)
                 
-                try: await asyncio.wait_for(asyncio.to_thread(_set_target), timeout=10.0)
+                try: await asyncio.wait_for(asyncio.to_thread(_set_target, self.cfg, ticker, val), timeout=10.0)
                 except Exception as e: logging.error(f"🚨 목표치 설정 에러: {e}")
                 
                 try: await asyncio.wait_for(update.effective_message.reply_text(f"✅ [{safe_ticker}] 목표 수익률: {val}%"), timeout=10.0)
@@ -256,7 +264,8 @@ class TelegramStates:
                     except Exception: pass
                     return
                     
-                ticker = parts[2]
+                # 🚨 [Scope Mismatch 방어] 무조건 배열의 마지막 요소가 종목명
+                ticker = parts[-1]
                 safe_ticker = html.escape(str(ticker))
                 
                 try: await asyncio.wait_for(asyncio.to_thread(self.cfg.set_compound_rate, ticker, val), timeout=10.0)
@@ -278,7 +287,8 @@ class TelegramStates:
                     except Exception: pass
                     return
                     
-                ticker = parts[2]
+                # 🚨 [Scope Mismatch 방어] 무조건 배열의 마지막 요소가 종목명
+                ticker = parts[-1]
                 safe_ticker = html.escape(str(ticker))
                 
                 try: await asyncio.wait_for(asyncio.to_thread(self.cfg.set_fee, ticker, val), timeout=10.0)
@@ -300,7 +310,8 @@ class TelegramStates:
                     except Exception: pass
                     return
 
-                ticker = parts[2]
+                # 🚨 [Scope Mismatch 파싱 버그 궁극 수술] 언더바(_) 개수 초과로 인한 Index 밀림 원천 차단
+                ticker = parts[-1]
                 safe_ticker = html.escape(str(ticker))
                 
                 try: await asyncio.wait_for(asyncio.to_thread(self.cfg.apply_stock_split, ticker, val), timeout=15.0)
@@ -324,14 +335,15 @@ class TelegramStates:
                     except Exception: pass
 
             elif state.startswith("VREV_GAP"):
-                ticker = parts[2]
+                # 🚨 [Scope Mismatch 방어] 무조건 배열의 마지막 요소가 종목명
+                ticker = parts[-1]
                 safe_ticker = html.escape(str(ticker))
                 if val > 0: val = -val
                 
                 if hasattr(self.cfg, 'set_vrev_gap_threshold'):
                     try: await asyncio.wait_for(asyncio.to_thread(self.cfg.set_vrev_gap_threshold, ticker, val), timeout=10.0)
                     except Exception as e: logging.error(f"🚨 VREV 갭 임계치 설정 에러: {e}")
-                     
+                    
                 try: await asyncio.wait_for(update.effective_message.reply_text(f"📉 <b>[{safe_ticker}] V-REV 장막판 갭 스위칭 임계치 설정 완료!</b>\n▫️ 팩트 타격선: 기초자산 VWAP 대비 <b>{val}%</b>\n▫️ 다음 타임 슬라이싱 스케줄부터 즉시 적용됩니다.", parse_mode='HTML'), timeout=10.0)
                 except Exception: pass
                 
@@ -341,7 +353,7 @@ class TelegramStates:
                     except BadRequest as e:
                         if "not modified" not in str(e).lower(): logging.warning(f"⚠️ UI 갱신 예외: {e}")
                     except Exception: pass
-                
+                 
         except Exception as e:
             safe_err = html.escape(str(e))
             try: await asyncio.wait_for(update.effective_message.reply_text(f"❌ 알 수 없는 오류 발생: {safe_err}"), timeout=10.0)
