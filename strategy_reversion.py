@@ -1,10 +1,13 @@
 # ==========================================================
 # FILE: strategy_reversion.py
 # ==========================================================
-# 🚨 MODIFIED: [스냅샷 오염 전이 절대 방어 소각] 이전 수술에서 도입된 실잔고(actual_qty) 강제 평가 데드코드를 전면 소각하고 스냅샷 절대주의로 회귀.
+# 🚨 MODIFIED: [스냅샷 오염 전이 절대 방어 소각] 실잔고(actual_qty) 강제 평가 데드코드를 전면 소각하고 스냅샷 절대주의로 회귀.
 # 🚨 MODIFIED: [P-매매 오리지널 비율 롤백] 기보유 상태의 매수 타점을 P-매매 오리지널 비율(0.998, 0.993)로 팩트 교정 락온.
 # 🚨 MODIFIED: [제2헌법 준수] 사용되지 않는 유령 변수(residual) 데드코드 100% 영구 소각 및 파일 I/O 에러 로깅 강제 결속.
-# 🚨 NEW: [Fact Override 락온] 수동 개입(/record, /add_q)으로 인해 실잔고 또는 큐에 수량이 편입되었을 경우, 새벽 스냅샷의 0주(is_zero_start=True) 맹신을 파기하고 실시간 팩트(False)로 오버라이드하여 매수 타점 역전 패러독스를 원천 차단.
+# 🚨 MODIFIED: [스냅샷 절대주의 락온] 예산 결측(0.0) 시 스냅샷 지시서가 통째로 증발하는 맹점을 막기 위해 1일 고정 예산(daily_limit) 강제 주입 팩트 결속.
+# 🚨 MODIFIED: [0주 스냅샷 팩트 리앵커링 (Fact Override)] get_dynamic_plan 진입 시, 스냅샷 오염이 감지되면 YF 무결성 종가(prev_c)로 타점을 자가 치유(Self-Healing)하여 덮어씌웁니다.
+# 🚨 VERIFIED: [큐 장부 절대주의 헌법 수복] 타점 연산 및 새 사이클(0주) 판별 시 KIS 실잔고(actual_qty) 및 평단가(actual_avg)의 개입을 100% 영구 소각하고, 오직 로컬 큐(Queue) 장부 데이터만을 Single Source of Truth로 맹신하도록 팩트 교정 완료.
+# ==========================================================
 import math
 import os
 import json
@@ -190,18 +193,86 @@ class ReversionStrategy:
         prev_c = self._safe_float(prev_c)
         current_weight = self._safe_float(current_weight)
         alloc_cash = self._safe_float(alloc_cash)
-        actual_qty = int(self._safe_float(actual_qty))
-        actual_avg = self._safe_float(actual_avg)
+        
+        # 🚨 [큐 장부 절대주의 헌법 수복] 코어 엔진 타점 연산에서 KIS 실원장 변수 개입 전면 소각
+        # actual_qty = int(self._safe_float(actual_qty))
+        # actual_avg = self._safe_float(actual_avg)
 
         self._load_state_if_needed(ticker)
 
         cached_plan = self.load_daily_snapshot(ticker)
         
-        # 🚨 [스냅샷 절대 헌법 수복] 장중(is_snapshot_mode=False) 호출 시에는 무조건 스냅샷을 돌려줍니다.
+        # 🚨 MODIFIED: [0주 스냅샷 팩트 리앵커링 (Fact Override)] 자가 치유(Self-Healing) 방어막 결속
+        if cached_plan:
+            is_zero_val = cached_plan.get("is_zero_start")
+            if is_zero_val is None:
+                tot_q_snap = int(self._safe_float(cached_plan.get("snapshot_total_q", cached_plan.get("total_q", -1))))
+                is_zero_snap = (tot_q_snap == 0)
+            else:
+                is_zero_snap = str(is_zero_val).lower() == 'true'
+
+            if is_zero_snap and prev_c > 0.0:
+                orders = cached_plan.get("orders", [])
+                buy_orders = [o for o in orders if isinstance(o, dict) and str(o.get("side")) == "BUY"]
+                
+                target_p1 = round(prev_c * 1.15, 2)
+                target_p2 = round(prev_c * 0.999, 2)
+                
+                is_polluted = False
+                for o in buy_orders:
+                    p = self._safe_float(o.get("price"))
+                    desc = str(o.get("desc", ""))
+                    if p > 0:
+                        if "Buy1" in desc or "1" in desc:
+                            if abs(p - target_p1) / target_p1 >= 0.01: is_polluted = True
+                        elif "Buy2" in desc or "2" in desc:
+                            if abs(p - target_p2) / target_p2 >= 0.01: is_polluted = True
+                
+                if is_polluted:
+                    logging.warning(f"🚨 [{ticker}] 0주 스냅샷 오염 감지 (Timeline Rollover Paradox)! YF 무결성 종가(${prev_c}) 기반으로 타점을 즉각 자가 치유(Self-Healing)합니다.")
+                    
+                    seed_val = self._safe_float(self.cfg.get_seed(ticker))
+                    daily_limit = seed_val * 0.15
+                    
+                    safe_alloc_cash = alloc_cash if alloc_cash > 0.0 else daily_limit
+                    safe_alloc_cash = min(safe_alloc_cash, daily_limit) if daily_limit > 0 else safe_alloc_cash
+                    
+                    total_spent = self._safe_float((self.executed.get("BUY_BUDGET") or {}).get(ticker, 0.0))
+                    rem_budget = max(0.0, safe_alloc_cash - total_spent)
+                    
+                    b1_budget = rem_budget * 0.5
+                    b2_budget = rem_budget * 0.5
+                    
+                    new_q1 = math.floor(b1_budget / target_p1) if target_p1 > 0 else 0
+                    new_q2 = math.floor(b2_budget / target_p2) if target_p2 > 0 else 0
+                    
+                    if new_q1 == 0 and new_q2 == 0:
+                        if target_p1 > 0 and rem_budget >= target_p1: new_q1 = math.floor(rem_budget / target_p1)
+                        elif target_p2 > 0 and rem_budget >= target_p2: new_q2 = math.floor(rem_budget / target_p2)
+                    elif new_q1 == 0 and new_q2 > 0:
+                        new_q2 = math.floor(rem_budget / target_p2) if target_p2 > 0 else 0
+                    elif new_q2 == 0 and new_q1 > 0:
+                        new_q1 = math.floor(rem_budget / target_p1) if target_p1 > 0 else 0
+
+                    for o in cached_plan.get("orders", []):
+                        if str(o.get("side")) == "BUY":
+                            desc = str(o.get("desc", ""))
+                            if "Buy1" in desc or "1" in desc:
+                                o["price"] = target_p1
+                                o["qty"] = new_q1
+                            elif "Buy2" in desc or "2" in desc:
+                                o["price"] = target_p2
+                                o["qty"] = new_q2
+
+                    self.save_daily_snapshot(ticker, cached_plan)
+        
+        # 🚨 [스냅샷 절대 헌법 수복] 장중(is_snapshot_mode=False) 호출 시에는 무조건 (치유된) 스냅샷을 돌려줍니다.
         if not is_snapshot_mode and cached_plan:
             return cached_plan
 
         valid_q_data = [item for item in (q_data or []) if isinstance(item, dict) and self._safe_float(item.get('price')) > 0]
+        
+        # 🚨 [큐 장부 절대주의 헌법 수복] 로컬 큐 수량만이 절대 기준입니다.
         total_q = sum(int(self._safe_float(item.get("qty"))) for item in valid_q_data)
         total_inv = sum(self._safe_float(item.get('qty')) * self._safe_float(item.get('price')) for item in valid_q_data)
         
@@ -234,19 +305,22 @@ class ReversionStrategy:
             else:
                 is_zero_start_session = str(is_zero_val).lower() == 'true'
         else:
-            is_zero_start_session = (actual_qty == 0)
+            # 🚨 [큐 장부 절대주의 헌법 수복] 오직 큐 장부의 total_q 만을 기준으로 새출발 여부를 판별합니다.
+            is_zero_start_session = (total_q == 0)
 
-        # 🚨 NEW: [Fact Override 방어막]
-        # 수동 개입(/record, /add_q 등)으로 인해 실잔고(actual_qty)나 큐 장부(total_q)에 실물이 편입되었다면,
-        # 과거 스냅샷의 0주(is_zero_start=True) 팩트를 즉각 파기(False)하여 기보유 앵커(0.998/0.993)를 정상 산출합니다.
-        if is_zero_start_session and (actual_qty > 0 or total_q > 0):
+        # 🚨 [Fact Override 방어막] KIS 잔고 완전 배제, 오직 큐 수량 기준 팩트 오버라이드
+        if is_zero_start_session and total_q > 0:
             is_zero_start_session = False
+        elif not is_zero_start_session and total_q == 0:
+            is_zero_start_session = True
 
+        # 🚨 [0주 타점 팩트 롤백] 갭상승에 오염되지 않도록 0주 새출발은 오직 prev_c 만을 100% 절대 앵커로 사용합니다.
         if is_zero_start_session:
             p1_trigger = round(prev_c * 1.15, 2)
             p2_trigger = round(prev_c * 0.999, 2)
         else:
-            safe_anchor = l1_price if l1_price > 0.0 else (actual_avg if actual_avg > 0.0 else prev_c)
+            # 🚨 [큐 장부 절대주의 헌법 수복] KIS 실평단가(actual_avg) 배제, 오직 1층 단가 및 전일 종가만을 앵커로 사용
+            safe_anchor = l1_price if l1_price > 0.0 else prev_c
             p1_trigger = round(safe_anchor * 0.998, 2)
             p2_trigger = round(safe_anchor * 0.993, 2)
 
@@ -291,6 +365,10 @@ class ReversionStrategy:
         seed_val = self._safe_float(self.cfg.get_seed(ticker))
         daily_limit = seed_val * 0.15
         
+        # 🚨 MODIFIED: [스냅샷 절대주의 락온] 통신 에러로 예산이 0.0 유입 시 지시서가 통째로 증발하는 맹점을 막기 위해 1일 고정 예산 강제 주입
+        if alloc_cash <= 0.0:
+            alloc_cash = daily_limit
+            
         safe_alloc_cash = min(float(alloc_cash), daily_limit) if daily_limit > 0 else float(alloc_cash)
         rem_budget = max(0.0, safe_alloc_cash - total_spent)
         

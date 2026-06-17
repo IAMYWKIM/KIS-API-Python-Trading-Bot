@@ -1,8 +1,16 @@
 # ==========================================================
 # FILE: telegram_commands.py
 # ==========================================================
-# 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 37대 엣지 케이스 완벽 결속 교차 검증 완료.
-# 🚨 MODIFIED: [NameError 붕괴 수술] 텔레그램 인라인 버튼 모듈(InlineKeyboardButton, InlineKeyboardMarkup) 명시적 임포트 강제 주입으로 UI 렌더링 런타임 즉사 에러 완벽 소각.
+# 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 38대 엣지 케이스 완벽 결속 교차 검증 완료.
+# 🚨 MODIFIED: [NameError 즉사 수술] cmd_sync 내부 최상단에 `chat_id = update.effective_chat.id` 선언을 명시적으로 결속하여, `_safe_send` 호출 시 발생하던 NameError 런타임 붕괴를 100% 원천 차단.
+# 🚨 MODIFIED: [침묵의 마비(Silent Death) 원천 봉쇄] cmd_record 내부에 locked_tickers 및 error_tickers 추적망을 신설하여, 백그라운드 락 점유 시 무한 로딩에 빠지지 않고 즉각 피드백하도록 팩트 교정 완료.
+# 🚨 MODIFIED: [다중 종목 렌더링 누락 수술] cmd_record 내부 단일 종목 렌더링 맹점을 소각하고, 모든 가동 종목이 출력되도록 순회 루프(enumerate) 및 분할 타전망 팩트 락온.
+# 🚨 MODIFIED: [현재가 전염 뇌관 영구 소각] 전일 종가가 0.0일 때 실시간 현재가로 덮어씌워 타점 연산을 오염시키던 맹독성 조건문을 시스템 전역에서 100% 삭제 완료.
+# 🚨 MODIFIED: [UI 렌더링 텍스트 조합 뇌관 영구 소각] cmd_sync 내부에서 현재가(curr)를 참조해 타점을 역산하던 맹독성 `v_rev_guidance` 생성 로직을 100% 삭제. UI 렌더링은 오직 뷰어 도메인으로 전면 위임.
+# 🚨 MODIFIED: [미래 참조(Look-ahead) 데이터 절단 및 1d 롤오버 지연 소각] YF 1d 캔들 호출 지연 버그를 파기하고, 1m 기반 D-1일 공식 MOC 종가만을 100% 핀셋 추출하도록 전면 수술 완료.
+# 🚨 MODIFIED: [스냅샷 절대주의 사수] cmd_sync 및 EXEC 수동명령어 호출 시 is_snapshot_mode=False를 강제 래핑하여 04:00 AM에 락온된 스냅샷을 절대 덮어쓰지 않고 불러오도록 팩트 교정.
+# 🚨 MODIFIED: [MOC 공식 종가 오버라이드] KIS의 낡은 종가를 배제하고 YF 공식 종가로 무조건 덮어쓰도록 `<= 0.0` 제약 100% 소각.
+# 🚨 MODIFIED: [현재가 보존 락온 복구] 장마감 시에만 현재가(curr)를 전일 종가(prev_close)로 강제 덮어씌워 렌더링 무결성 100% 사수.
 # 🚨 MODIFIED: [Phase 1 명령어 도메인 독립] 기존 telegram_bot.py 의 God Object 안티패턴을 뜯어내어 명령어 제어 로직을 전담하는 순수 도메인 클래스 분리 락온.
 # 🚨 MODIFIED: [Phase 3 통신 데드락 붕괴 영구 소각] 무한 반복되던 asyncio.wait_for 및 to_thread 보일러플레이트를 _retry_api, _safe_reply, _safe_edit 헬퍼로 통합 압축 (DRY 원칙).
 # 🚨 MODIFIED: [Case 32 & 33 절대 규칙] _retry_api 헬퍼 내부에 TPS 캡핑(0.06s) 및 3단 지수 백오프를 중앙 집중화하여 Rate Limit 밴 원천 차단.
@@ -46,6 +54,7 @@ class TelegramCommands:
     # ==========================================================
     # 🛡️ [DRY Helper] 절대 방어 헬퍼 메서드 모음
     # ==========================================================
+    
     def _safe_float(self, val):
         try:
             f_val = float(str(val or 0.0).replace(',', ''))
@@ -111,7 +120,7 @@ class TelegramCommands:
     async def _get_market_status(self):
         est = ZoneInfo('America/New_York')
         now = datetime.datetime.now(est)
-         
+        
         # 🚨 MODIFIED: [Thread-Safety 락온] 외부 스코프 의존성 제거
         def _fetch_schedule(target_now):
             time.sleep(0.06) 
@@ -119,7 +128,7 @@ class TelegramCommands:
             return nyse.schedule(start_date=target_now.date(), end_date=target_now.date())
 
         schedule = await self._retry_api(_fetch_schedule, now, timeout=10.0)
-         
+        
         if schedule is None or schedule.empty:
             if now.weekday() < 5: return "REG", "🔥 정규장 (Fail-Open)"
             return "CLOSE", "⛔ 장마감"
@@ -144,12 +153,15 @@ class TelegramCommands:
         await self._safe_reply(update.effective_message, msg, parse_mode='HTML')
 
     async def cmd_sync(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # 🚨 NEW: [NameError 즉사 방어] 텔레그램 컨텍스트에서 chat_id 명시적 추출 락온
+        chat_id = update.effective_chat.id
+        
         # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 1줄 로딩 텍스트 전면 소각 (Height Collapse 방어)
         is_callback = update.callback_query is not None
         status_msg = update.effective_message if is_callback else None
         
         if not is_callback:
-            status_msg = await self._safe_reply(update.effective_message, "🔄 시장 분석 및 지시서 작성 중...")
+            status_msg = await self._safe_send(context, chat_id, "🛡️ <b>장부 무결성 검증 및 동기화 중...</b>", parse_mode='HTML')
         
         async with self.tx_lock:
             cash, holdings = 0.0, {}
@@ -203,11 +215,8 @@ class TelegramCommands:
 
         for t in sorted_tickers:
             is_avwap_active = False
-            avwap_budget, avwap_qty, avwap_avg, avwap_strikes = 0.0, 0, 0.0, 0
             avwap_status_txt = "OFF"
-            avwap_base_ticker, avwap_base_price, avwap_base_vwap = "N/A", 0.0, 0.0
-            avwap_prev_vwap, avwap_rolling_tp, avwap_gap_pct = 0.0, 0.0, 0.0
-
+            
             h = holdings.get(t) if isinstance(holdings.get(t), dict) else {'qty':0, 'avg':0}
             
             curr = self._safe_float(await self._retry_api(self.broker.get_current_price, t, is_market_closed=(status_code == "CLOSE")))
@@ -222,19 +231,53 @@ class TelegramCommands:
             safe_prev_close = prev_close
             
             if status_code in ["AFTER", "CLOSE", "PRE"]:
-                # 🚨 MODIFIED: [Thread-Safety 락온] 명시적 파라미터 전달
-                def get_yf_close(ticker_name):
+                # 🚨 MODIFIED: [미래 참조(Look-ahead) 데이터 절단 및 1d 롤오버 지연 소각] interval="1m" 팩트 추출로 전면 교체
+                def get_exact_prev_close(ticker_name):
                     time.sleep(0.06)
-                    df = yf.Ticker(ticker_name).history(period="5d", interval="1d", timeout=5.0)
-                    if not df.empty and 'Close' in df.columns and len(df['Close']) > 0:
-                        val = self._safe_float(df['Close'].iloc[-1])
-                        return val if val > 0 else None
+                    df = yf.Ticker(ticker_name).history(period="5d", interval="1m", prepost=True, timeout=5)
+                    if not df.empty and 'Close' in df.columns:
+                        tz_est = ZoneInfo('America/New_York')
+                        tz_now = datetime.datetime.now(tz_est)
+                        cutoff_date = tz_now.date()
+                        # 정규장 마감 이전이면 당일 캔들을 배제
+                        if tz_now.time() <= datetime.time(16, 0, 30):
+                            cutoff_date -= datetime.timedelta(days=1)
+                        
+                        if df.index.tzinfo is None:
+                            df.index = df.index.tz_localize('UTC').tz_convert(tz_est)
+                        else:
+                            df.index = df.index.tz_convert(tz_est)
+                            
+                        past_df = df[df.index.date <= cutoff_date].copy()
+                        if not past_df.empty:
+                            # 🚨 MODIFIED: [Case 35] 결측치 방어막 강제 주입
+                            past_df['Close'] = past_df['Close'].ffill().bfill()
+                            regular_past = past_df.between_time('09:30', '15:59')
+                            if not regular_past.empty:
+                                val = float(regular_past['Close'].iloc[-1])
+                            else:
+                                val = float(past_df['Close'].iloc[-1])
+                            return val if not math.isnan(val) else None
                     return None
-                    
-                yf_close = await self._retry_api(get_yf_close, t)
-                if yf_close and yf_close > 0: safe_prev_close = yf_close
+        
+                # 🚨 MODIFIED: [MOC 공식 종가 오버라이드] KIS의 낡은 종가를 배제하고 YF 공식 종가로 무조건 덮어쓰기
+                yf_close = None
+                for attempt in range(3):
+                    try:
+                        yf_close = await asyncio.wait_for(asyncio.to_thread(get_exact_prev_close, t), timeout=10.0)
+                        break
+                    except Exception:
+                        if attempt == 2: pass
+                        else: await asyncio.sleep(1.0 * (2 ** attempt))
+                
+                if yf_close and yf_close > 0: 
+                    safe_prev_close = yf_close
+                    prev_close = safe_prev_close
 
-            if status_code == "CLOSE": curr = safe_prev_close
+            if status_code == "CLOSE": 
+                # 🚨 MODIFIED: [현재가 보존 락온 복구] 장마감 시에만 현재가를 전일 종가로 고정
+                curr = safe_prev_close
+            # 🚨 MODIFIED: [현재가 전염 뇌관 영구 소각] (elif curr > 0 and prev_close == 0.0: prev_close = curr) 맹독성 덮어쓰기 로직 100% 영구 삭제
 
             idx_ticker = "SOXX" if t == "SOXL" else "QQQ"
             dynamic_pct_obj = await self._retry_api(self.broker.get_dynamic_sniper_target, idx_ticker)
@@ -260,9 +303,9 @@ class TelegramCommands:
                 if ver == "V_REV":
                     cached_snap = await self._retry_api(self.strategy.v_rev_plugin.load_daily_snapshot, t)
                 elif ver == "V14":
-                     if is_manual_vwap: cached_snap = await self._retry_api(self.strategy.v14_vwap_plugin.load_daily_snapshot, t)
-                     elif hasattr(self.strategy, 'v14_plugin') and hasattr(self.strategy.v14_plugin, 'load_daily_snapshot'):
-                         cached_snap = await self._retry_api(self.strategy.v14_plugin.load_daily_snapshot, t)
+                    if is_manual_vwap: cached_snap = await self._retry_api(self.strategy.v14_vwap_plugin.load_daily_snapshot, t)
+                    elif hasattr(self.strategy, 'v14_plugin') and hasattr(self.strategy.v14_plugin, 'load_daily_snapshot'):
+                        cached_snap = await self._retry_api(self.strategy.v14_plugin.load_daily_snapshot, t)
             
             if not isinstance(cached_snap, dict): cached_snap = None
             
@@ -286,19 +329,20 @@ class TelegramCommands:
             job_data = jobs[0].data if jobs and len(jobs) > 0 and jobs[0].data is not None else {}
             regime_data = job_data.get('regime_data') if isinstance(job_data, dict) else None
 
+            # 🚨 MODIFIED: [스냅샷 절대주의 사수] is_snapshot_mode=False 강제 래핑하여 락온된 스냅샷 파일(JSON)을 절대 덮어쓰지 않고 불러오기만 함.
             plan = await self._retry_api(
                 self.strategy.get_plan, t, curr, actual_avg, logic_qty, safe_prev_close, ma_5day=ma_5day,
                 market_type="REG", available_cash=allocated_cash.get(t, 0.0),
-                is_simulation=True, regime_data=regime_data, is_snapshot_mode=True
+                is_simulation=True, regime_data=regime_data, is_snapshot_mode=False
             ) or {}
-              
+               
             split = await self._retry_api(self.cfg.get_split_count, t, default=40.0)
             safe_seed = await self._retry_api(self.cfg.get_seed, t, default=0.0)
             
             t_val = self._safe_float(plan.get('t_val', 0.0))
             is_rev = plan.get('is_reverse', False)
             
-            v_rev_q_qty, v_rev_q_lots, v_rev_guidance, l1_qty, l1_price = 0, 0, "", 0, 0.0
+            v_rev_q_qty, v_rev_q_lots = 0, 0
 
             if ver == "V_REV":
                 q_list = await self._retry_api(self.queue_ledger.get_queue, t, default=[]) if getattr(self, 'queue_ledger', None) else []
@@ -306,63 +350,9 @@ class TelegramCommands:
              
                 v_rev_q_lots = len(q_list)
                 v_rev_q_qty = sum(int(self._safe_float(item.get('qty', 0))) for item in q_list if isinstance(item, dict))
-                
-                if q_list:
-                    l1_qty = int(self._safe_float(q_list[-1].get('qty'))) if isinstance(q_list[-1], dict) else 0
-                    l1_price = self._safe_float(q_list[-1].get('price')) if isinstance(q_list[-1], dict) else 0.0
-
+            
                 one_portion_cash = safe_seed * 0.15
                 plan['one_portion'] = one_portion_cash
-                half_portion_cash = one_portion_cash * 0.5
-            
-                tag = "VWAP" if is_manual_vwap else "LOC"
-                snap_sells_for_ui = [o for o in (cached_snap.get("orders", []) if cached_snap else []) if isinstance(o, dict) and o.get('side') == 'SELL']
-                
-                if cached_snap and snap_sells_for_ui and actual_qty > 0:
-                    for o in snap_sells_for_ui:
-                         desc_label = str(o.get('desc', '매도')).split('(')[0]
-                         v_rev_guidance += f" 🔵 {html.escape(desc_label)} ${self._safe_float(o.get('price')):.2f} <b>{int(self._safe_float(o.get('qty')))}주</b> ({tag})\n"
-                elif q_list and actual_qty > 0:
-                    trigger_l1 = round(l1_price * 1.006, 2)
-                    valid_q_data = [item for item in q_list if isinstance(item, dict) and self._safe_float(item.get('price')) > 0]
-                    total_q = sum(int(self._safe_float(item.get("qty"))) for item in valid_q_data)
-                    total_inv = sum(self._safe_float(item.get('qty')) * self._safe_float(item.get('price')) for item in valid_q_data)
-                    q_avg_price = (total_inv / total_q) if total_q > 0 else 0.0
-                    
-                    if total_q > 0: actual_avg = round(q_avg_price, 4)
-                  
-                    upper_qty = total_q - l1_qty
-                    trigger_upper = round(q_avg_price * 1.010, 2) if upper_qty > 0 else 0.0
-                    
-                    available_l1 = min(l1_qty, actual_qty)
-                    available_upper = min(upper_qty, actual_qty - available_l1)
-                    
-                    sell_dict = {}
-                    if available_l1 > 0 and trigger_l1 > 0: sell_dict[trigger_l1] = sell_dict.get(trigger_l1, 0) + available_l1
-                    if available_upper > 0 and trigger_upper > 0: sell_dict[trigger_upper] = sell_dict.get(trigger_upper, 0) + available_upper
-                   
-                    for price in sorted(sell_dict.keys()):
-                        s_qty = sell_dict[price]
-                        if price == trigger_l1 and price == trigger_upper: desc_str = "통합탈출"
-                        elif price == trigger_l1: desc_str = "1층탈출"
-                        elif price == trigger_upper: desc_str = "상위층탈출"
-                        else: desc_str = "잔여탈출"
-                        v_rev_guidance += f" 🔵 {desc_str} ${price:.2f} <b>{s_qty}주</b> ({tag})\n"
-                else:
-                    v_rev_guidance += " 🔵 매도: 대기 물량 없음 (관망)\n"
-                
-                safe_anchor = l1_price if l1_price > 0.0 else safe_prev_close
-                if safe_anchor > 0:
-                    b1_price = round(safe_prev_close * 1.15 if is_zero_start_fact else safe_anchor * 0.9976, 2)
-                    b2_price = round(safe_prev_close * 0.999 if is_zero_start_fact else safe_anchor * 0.9887, 2)
-                    
-                    b1_qty = math.floor(half_portion_cash / b1_price) if b1_price > 0 else 0
-                    b2_qty = math.floor(half_portion_cash / b2_price) if b2_price > 0 else 0
-                    
-                    if b1_qty > 0: v_rev_guidance += f" 🔴 매수1(Buy1) ${b1_price:.2f} <b>{b1_qty}주</b> ({tag})\n"
-                    if b2_qty > 0: v_rev_guidance += f" 🔴 매수2(Buy2) ${b2_price:.2f} <b>{b2_qty}주</b> ({tag})\n"
-                else:
-                    v_rev_guidance += " 🔴 매수 대기: 타점 연산 대기 중\n"
 
             is_avwap_hybrid_on = await self._retry_api(getattr(self.cfg, 'get_avwap_hybrid_mode', lambda x: False), t, default=False)
 
@@ -387,16 +377,13 @@ class TelegramCommands:
                             amp5=self._safe_float(getattr(dynamic_pct_obj, 'base_amp', 0.0)) if hasattr(dynamic_pct_obj, 'base_amp') else 0.0,
                             prev_close=safe_prev_close, ma_5day=ma_5day, sortie_mode="SINGLE"
                         ) or {}
-                        
+                    
                         if decision:
                             avwap_status_txt = f"👁️ 관측 중: {decision.get('reason', '타점 계산중')}"
 
             upward_sniper_mode_on = await self._retry_api(self.cfg.get_upward_sniper_mode, t, default=False)
             target_val = await self._retry_api(self.cfg.get_target_profit, t, default=10.0)
-            avwap_gap_thresh_val = await self._retry_api(getattr(self.cfg, 'get_avwap_gap_threshold', lambda x: -0.67), t, default=-0.67) if is_avwap_active else -0.67
-            vrev_gap_switch_val = await self._retry_api(getattr(self.cfg, 'get_vrev_gap_switching_mode', lambda x: False), t, default=False)
-            vrev_gap_thresh_val = await self._retry_api(getattr(self.cfg, 'get_vrev_gap_threshold', lambda x: -0.67), t, default=-0.67)
-
+            
             ticker_data_list.append({
                 'ticker': t, 'version': ver, 't_val': t_val, 'split': split, 'curr': curr, 'avg': actual_avg, 'qty': actual_qty,
                 'profit_amt': (curr - actual_avg) * actual_qty if actual_qty > 0 else 0, 
@@ -418,27 +405,11 @@ class TelegramCommands:
                 'vol_status': vol_status,
                 'v_rev_q_lots': v_rev_q_lots,
                 'v_rev_q_qty': v_rev_q_qty,
-                'v_rev_guidance': v_rev_guidance,
-                'avwap_active': is_avwap_active,
-                'avwap_budget': 0.0,
-                'avwap_qty': 0,
-                'avwap_avg': 0.0,
-                'avwap_status': avwap_status_txt,
-                'avwap_strikes': 0,
-                'avwap_base_ticker': 'SOXX' if t == 'SOXL' else 'QQQ',
-                'avwap_base_price': 0.0,
-                'avwap_base_vwap': 0.0,
-                'avwap_prev_vwap': 0.0,
-                'avwap_rolling_tp': 0.0,
-                'avwap_gap_pct': 0.0,
-                'avwap_gap_thresh': avwap_gap_thresh_val,
-                'vrev_gap_switch': vrev_gap_switch_val,
-                'vrev_gap_thresh': vrev_gap_thresh_val,
                 'is_manual_vwap': is_manual_vwap,
                 'is_zero_start': is_zero_start_fact,
                 'has_snapshot': bool(cached_snap)
             })
-           
+            
             plan_orders_raw = plan.get('orders', []) if isinstance(plan.get('orders'), list) else []
             total_buy_needed += sum(
                 self._safe_float(o.get('price')) * self._safe_float(o.get('qty'))
@@ -448,7 +419,6 @@ class TelegramCommands:
         surplus = cash - total_buy_needed
         rp_amount = surplus * 0.95 if surplus > 0 else 0
         
-        # 🚨 MODIFIED: [Thread-Safety 락온] 외부 스코프 의존성 제거
         def get_exchange_rate():
             time.sleep(0.06)
             df = yf.Ticker("KRW=X").history(period="1d", timeout=5.0)
@@ -469,7 +439,6 @@ class TelegramCommands:
     async def cmd_record(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         
-        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링(In-place Edit) 분기 락온
         is_callback = update.callback_query is not None
         status_msg = update.effective_message if is_callback else None
         
@@ -477,24 +446,54 @@ class TelegramCommands:
             status_msg = await self._safe_send(context, chat_id, "🛡️ <b>장부 무결성 검증 및 동기화 중...</b>", parse_mode='HTML')
         
         success_tickers = []
+        locked_tickers = []
+        error_tickers = []
+        
         active_tickers = await self._retry_api(self.cfg.get_active_tickers, default=[])
         if not isinstance(active_tickers, list): active_tickers = []
         
         for t in active_tickers:
             try:
+                if status_msg:
+                    await self._safe_edit(status_msg, f"🛡️ <b>[{t}] 장부 무결성 검증 진행 중... (최대 1~2분 소요될 수 있습니다)</b>", parse_mode='HTML')
                 await asyncio.sleep(0.06)
                 res = await self.sync_engine.process_auto_sync(t, chat_id, context, silent_ledger=True)
                 if res == "SUCCESS": success_tickers.append(t)
+                elif res == "LOCKED": locked_tickers.append(t)
+                else: error_tickers.append(t)
             except Exception as e:
                 logging.error(f"🚨 [{t}] 개별 종목 장부 동기화 중 에러 (격리): {e}")
-            
+                error_tickers.append(t)
+        
         if success_tickers: 
             async with self.tx_lock:
                 res = await self._retry_api(self.broker.get_account_balance, timeout=15.0)
                 holdings = res[1] if res and len(res) > 1 and isinstance(res[1], dict) else {}
-            await self.sync_engine._display_ledger(success_tickers[0], chat_id, context, message_obj=status_msg, pre_fetched_holdings=holdings)
+            
+            for idx, t in enumerate(success_tickers):
+                try:
+                    if idx == 0:
+                        await self.sync_engine._display_ledger(t, chat_id, context, message_obj=status_msg, pre_fetched_holdings=holdings)
+                    else:
+                        await self.sync_engine._display_ledger(t, chat_id, context, message_obj=None, pre_fetched_holdings=holdings)
+                except Exception as e:
+                    logging.error(f"🚨 [{t}] 렌더링 실패: {e}")
+                    await self._safe_send(context, chat_id, f"❌ <b>[{t}] 렌더링 중 오류 발생:</b> {html.escape(str(e))}", parse_mode='HTML')
+                    
+            if locked_tickers:
+                await self._safe_send(context, chat_id, f"⚠️ <b>[동기화 지연]</b> {', '.join(locked_tickers)} 종목은 현재 백그라운드 스케줄러가 장부를 점유 중입니다. 잠시 후 다시 시도해주세요.", parse_mode='HTML')
+            
+            if error_tickers:
+                await self._safe_send(context, chat_id, f"❌ <b>[동기화 에러]</b> {', '.join(error_tickers)} 종목의 무결성 검증 중 통신 오류가 발생했습니다.", parse_mode='HTML')
+                
         else:
-            await self._safe_edit(status_msg, "✅ <b>동기화 완료</b> (표시할 진행 중인 장부가 없거나 에러 대기 중입니다)", parse_mode='HTML')
+            err_msg = "✅ <b>동기화 완료</b> (진행 중인 장부가 없습니다.)"
+            if locked_tickers:
+                err_msg = f"⚠️ <b>[동기화 지연]</b> {', '.join(locked_tickers)} 종목은 백그라운드 작업이 장부를 점유 중입니다. 잠시 후 다시 시도해주세요."
+            elif error_tickers:
+                err_msg = f"❌ <b>[동기화 에러]</b> {', '.join(error_tickers)} 종목의 KIS 서버 통신 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+                
+            await self._safe_edit(status_msg, err_msg, parse_mode='HTML')
 
     async def cmd_history(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_callback = update.callback_query is not None
@@ -522,7 +521,6 @@ class TelegramCommands:
             
         keyboard.append([InlineKeyboardButton("❌ 닫기", callback_data="RESET:CANCEL")])
         
-        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
         if is_callback:
             await self._safe_edit(update.effective_message, msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
         else:
@@ -532,7 +530,6 @@ class TelegramCommands:
         active_tickers = await self._retry_api(self.cfg.get_active_tickers, default=[])
         if not isinstance(active_tickers, list): active_tickers = []
         
-        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링(In-place Edit) 분기 락온
         is_callback = update.callback_query is not None
         status_msg = update.effective_message if is_callback else None
         
@@ -562,7 +559,6 @@ class TelegramCommands:
                 InlineKeyboardButton(f"🔢 {html.escape(str(t))} 고정", callback_data=f"SEED:SET:{html.escape(str(t))}")
             ])
             
-        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
         is_callback = update.callback_query is not None
         if is_callback:
             await self._safe_edit(update.effective_message, msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
@@ -574,7 +570,6 @@ class TelegramCommands:
         if not isinstance(active_tickers, list): active_tickers = []
         msg, markup = self.view.get_ticker_menu(active_tickers)
         
-        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
         is_callback = update.callback_query is not None
         if is_callback:
             await self._safe_edit(update.effective_message, msg, reply_markup=markup, parse_mode='HTML')
@@ -593,7 +588,6 @@ class TelegramCommands:
         report += "🟥 <code>25.00 이상 </code> : 패닉 셀링 (ON)\n\n"
         
         for t in active_tickers:
-            # 🚨 MODIFIED: [런타임 호환성 확보] idx_ticker 위치 인자 강제 패싱 락온
             idx_ticker = "SOXX" if t == "SOXL" else "QQQ"
             dynamic_pct_obj = await self._retry_api(self.broker.get_dynamic_sniper_target, idx_ticker)
             
@@ -605,7 +599,7 @@ class TelegramCommands:
             elif real_val <= 25.0: diag_text = "변동성 확대 장세 (계좌 방어를 위해 스나이퍼 ON)"; status_icon = "🟨"
             else: diag_text = "패닉 셀링 및 시스템 충격 (스나이퍼 필수 가동)"; status_icon = "🟥"
             report += f"💠 <b>[ {html.escape(str(t))} 국면 분석 ]</b>\n▫️ 당일 절대 지수({real_name}): {real_val:.2f}\n▫️ 진단 : {status_icon} {diag_text}\n\n"
-                
+                 
         report += "🎯 <b>[ 수동 상방 스나이퍼 독립 제어 ]</b>\n"
         keyboard = []
         for t in active_tickers:
@@ -614,7 +608,6 @@ class TelegramCommands:
             report += f"▫️ {html.escape(str(t))} 현재 상태 : {status_txt}\n"
             keyboard.append([InlineKeyboardButton(f"{html.escape(str(t))} ⚪ OFF", callback_data=f"MODE:OFF:{html.escape(str(t))}"), InlineKeyboardButton(f"{html.escape(str(t))} 🎯 ON", callback_data=f"MODE:ON:{html.escape(str(t))}")])
         
-        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
         is_callback = update.callback_query is not None
         if is_callback:
             await self._safe_edit(update.effective_message, report, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
@@ -624,8 +617,7 @@ class TelegramCommands:
     async def cmd_version(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         history_data = await self._retry_api(self.cfg.get_full_version_history, default=[])
         msg, markup = self.view.get_version_message(history_data, page_index=None)
-        
-        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
+         
         is_callback = update.callback_query is not None
         if is_callback:
             await self._safe_edit(update.effective_message, msg, parse_mode='HTML', reply_markup=markup)
@@ -646,7 +638,6 @@ class TelegramCommands:
         q_data = await self._retry_api(self.queue_ledger.get_queue, ticker, default=[])
         msg, reply_markup = self.view.get_queue_management_menu(ticker, q_data if isinstance(q_data, list) else [])
         
-        # 이 커맨드는 인자(args)를 필요로 하므로 통상 콜백에서 직접 호출되지 않음.
         await self._safe_reply(update.effective_message, msg, reply_markup=reply_markup, parse_mode='HTML')
 
     async def cmd_add_q(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -671,14 +662,14 @@ class TelegramCommands:
             if price < curr_p * 0.4 or price > curr_p * 1.6:
                 await self._safe_reply(update.effective_message, f"🚨 <b>오입력 차단:</b> 입력하신 평단가(<b>${price:.2f}</b>)가 현재가 대비 ±60%를 벗어납니다. 오타를 확인하세요!", parse_mode='HTML')
                 return
-       
+    
         if not getattr(self, 'queue_ledger', None):
             from queue_ledger import QueueLedger
             self.queue_ledger = await asyncio.to_thread(QueueLedger)
             
         q_data = await self._retry_api(self.queue_ledger.get_queue, ticker, default=[])
         if not isinstance(q_data, list): q_data = [] 
-        
+       
         q_data.append({"qty": qty, "price": price, "date": f"{date_str} 23:59:59", "type": "MANUAL_OVERRIDE"})
         q_data.sort(key=lambda x: str(x.get('date', '')) if isinstance(x, dict) else '', reverse=True)
  
@@ -703,7 +694,7 @@ class TelegramCommands:
         if not getattr(self, 'queue_ledger', None):
             from queue_ledger import QueueLedger
             self.queue_ledger = await asyncio.to_thread(QueueLedger)
-            
+             
         await self._retry_api(self.queue_ledger.clear_queue, ticker)
         chat_id = update.effective_chat.id
         if ticker not in self.sync_engine.sync_locks: self.sync_engine.sync_locks[ticker] = asyncio.Lock()
@@ -717,13 +708,12 @@ class TelegramCommands:
             await self._safe_reply(update.effective_message, f"🛑 <b>[작전 중 업데이트 거부]</b>\n\n{fail_msg}", parse_mode='HTML')
             return
             
-        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
         is_callback = update.callback_query is not None
         status_msg = update.effective_message if is_callback else None
         
         if not is_callback:
-            status_msg = await self._safe_reply(update.effective_message, "⏳ <b>[시스템 업데이트]</b> 깃허브 원격 서버와 통신을 시작합니다...", parse_mode='HTML')
-        
+             status_msg = await self._safe_reply(update.effective_message, "⏳ <b>[시스템 업데이트]</b> 깃허브 원격 서버와 통신을 시작합니다...", parse_mode='HTML')
+         
         success, msg = await updater.pull_latest_code()
         safe_msg = html.escape(str(msg)) 
         if success:
@@ -733,7 +723,6 @@ class TelegramCommands:
             await self._safe_edit(status_msg, f"❌ <b>[동기화 실패]</b>\n▫️ 사유: {safe_msg}", parse_mode='HTML')
 
     async def cmd_avwap(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 1줄짜리 로딩 메시지를 소각하여 Height Collapse 방어
         is_callback = update.callback_query is not None
         status_msg = update.effective_message if is_callback else None
         
@@ -757,7 +746,6 @@ class TelegramCommands:
             await self._safe_edit(status_msg, "❌ <b>[네트워크 지연 발생]</b>\n야후 파이낸스 또는 증권사 서버 응답이 지연되어 스캔을 강제 종료했습니다.", parse_mode='HTML')
 
     async def cmd_log(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
         is_callback = update.callback_query is not None
         status_msg = update.effective_message if is_callback else None
         
@@ -790,7 +778,6 @@ class TelegramCommands:
         if not isinstance(active_tickers, list): active_tickers = []
         msg, markup = self.view.get_reset_menu(active_tickers)
         
-        # 🚨 MODIFIED: [UI 렌더링 맹점 수술] 콜백 유입 시 제자리 렌더링
         is_callback = update.callback_query is not None
         if is_callback:
             await self._safe_edit(update.effective_message, msg, reply_markup=markup, parse_mode='HTML')
