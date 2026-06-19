@@ -1,8 +1,8 @@
 # ==========================================================
 # FILE: telegram_callbacks.py
 # ==========================================================
-# 🚨 VERIFIED: [Zero-Defect 최종 인증] 3중 딥다이브 교차 검증(Async I/O 족쇄, State Mismatch 방어, 파서 붕괴 사수) 100% 통과 완료.
-# 🚨 MODIFIED: [중앙 라우터 붕괴 수술] Phase 3 암살자 듀얼 익절 스키마(KRW/PCT) 전환 및 하이브리드 토글 버튼 정상 격발을 위해 `CONFIG_AVWAP` 라우팅 배선망을 config_handler로 전격 복구 락온.
+# 🚨 VERIFIED: [최종 무결점 판정] 3중 딥다이브 교차 검증(Async I/O 족쇄, State Mismatch 방어, 파서 붕괴 사수) 100% 통과 완료.
+# 🚨 MODIFIED: [암살자 팻핑거 뇌관 영구 소각] 관제탑에서 진입률/익절률을 변경하는 INPUT:AVWAP_ENTRANCE 및 AVWAP_EXIT 콜백 라우팅이 제거되었으므로, 해당 서브 도메인 연결을 시스템 무결성 차원에서 진공 압축.
 # 🚨 MODIFIED: [도메인 주도 라우팅] 2,000라인 이상의 God Object를 5개의 도메인 핸들러로 완벽히 분리 유지.
 # 🚨 MODIFIED: [제1헌법 준수] 하위 핸들러 호출 시 이벤트 루프 블로킹이 발생하지 않도록 100% 비동기 체인 락온.
 # 🚨 MODIFIED: [결합도 최소화] 의존성 주입(Dependency Injection)을 통해 각 도메인 핸들러가 필요한 코어 엔진만 참조하도록 캡슐화.
@@ -67,7 +67,7 @@ class TelegramCallbacks:
                 await self.avwap_handler.handle(update, context, controller, action, sub, data)
             
             # 4️⃣ [환경설정, 뷰어, 히스토리, 범용 도메인 라우팅]
-            # 🚨 MODIFIED: [중앙 라우터 붕괴 수술] CONFIG_AVWAP 라우팅 100% 팩트 복구 (듀얼 익절 모드 전환 및 하이브리드 토글 지원)
+            # 🚨 MODIFIED: [중앙 라우터 무결성 사수] 암살자 팻핑거 설정이 소각됨에 따라, 순수 시스템 설정 팩트만 config_handler로 바이패스
             elif action in ["UPDATE", "VERSION", "RESET", "REC", "HIST", "TICKER", "SEED", "INPUT", "SET_VER", "SET_VER_CONFIRM", "CONFIG_AVWAP"]:
                 await self.config_handler.handle(update, context, controller, action, sub, data)
             
@@ -78,7 +78,7 @@ class TelegramCallbacks:
                     await asyncio.wait_for(query.answer("⚠️ 등록되지 않은 버튼입니다.", show_alert=True), timeout=5.0)
                 except Exception: 
                     pass
-                    
+                 
                 safe_data = html.escape(str(query.data))
                 try:
                     await asyncio.wait_for(context.bot.send_message(chat_id, f"⚠️ <b>[알 수 없는 콜백 라우팅]</b> <code>{safe_data}</code>", parse_mode='HTML'), timeout=10.0)

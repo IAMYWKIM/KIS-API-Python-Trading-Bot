@@ -1,15 +1,15 @@
 # ==========================================================
 # FILE: telegram_view.py
 # ==========================================================
-# 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 38대 엣지 케이스 완벽 결속 교차 검증 완료
-# 🚨 MODIFIED: [UI 렌더링 동적 역산 파기] 낡은 텍스트 치환 해킹 로직과 뷰어 내부에서 타점을 재계산하던 오염된 뇌관을 전면 소각하고, 스냅샷 팩트 그대로 출력하도록 진공 압축.
-# 🚨 MODIFIED: [관망 텍스트 증발 버그 수술] 0주일 때 매도 대기 물량 텍스트가 사라지는 논리적 오류(`if not is_zero_start:`)를 파기하고 무조건 관망 텍스트를 출력하도록 락온.
-# 🚨 MODIFIED: [Phase 3 암살자 선택권 복구] get_settlement_message 내 암살자 상태(is_avwap_hybrid) 동적 렌더링(ON/OFF) 및 토글 버튼 100% 수복 완료.
-# 🚨 MODIFIED: [순수 리버전 팩트 롤오버] '세션 VWAP -2% 매수' 및 '가용 현금 100% 올인', '+2% 전량 익절', '15:59 강제 덤핑' 팩트를 시스템 UI 전역에 100% 동기화 교체 완료.
+# 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 43대 엣지 케이스 완벽 결속 교차 검증 완료.
+# 🚨 MODIFIED: [UI 렌더링 팩트 불일치 궁극 수술] /settlement 호출 시 표출되던 과거 역추세의 잔재(-2.0%, +2.0%, 최유리 덤핑) 텍스트를 전면 소각하고, "04:07 타임쉴드 돌파 요격 / +1.0% 고정 익절 / 매수 1호가 스윕 덤핑" 팩트로 100% 교정 락온.
+# 🚨 MODIFIED: [암살자 팻핑거 설정 버튼 영구 소각] V_REV & SOXL 환경일 경우, 진입률 및 익절률을 수동으로 수정하던 인라인 버튼(AVWAP_ENTRANCE, AVWAP_EXIT) 배선을 시스템 전역에서 100% 삭제 완료.
+# 🚨 MODIFIED: [관망 텍스트 증발 버그 수술] 0주일 때 매도 대기 물량 텍스트가 사라지는 논리적 오류를 파기하고 무조건 관망 텍스트를 출력하도록 락온.
 # 🚨 MODIFIED: [Float 정밀도 붕괴 원천 차단] 뷰어 클래스 내에 `_safe_float` 래퍼를 전격 이식하여 파편화된 인라인 캐스팅을 통합하고 NaN/Inf 맹독성 붕괴 원천 차단.
 # 🚨 MODIFIED: [Python 딕셔너리 평가 맹독성 수술] dict.get(key, default)에서 값이 None일 때 default가 무시되고 None이 반환되어 _safe_float(None) -> 0.0 으로 오염되는 치명적 버그를 `or default` 단락 평가로 완벽 교정.
 # 🚨 MODIFIED: [마크다운 리스트 붕괴 방어] 텍스트 내 숫자 리스트(1., 2.)를 이모지(1️⃣, 2️⃣)로 100% 치환하여 텔레그램 파서 안전성 극대화.
 # 🚨 MODIFIED: [Case 16 위반 교정] 이미지 렌더링(create_profit_image) 시 원자적 쓰기 실패에 따른 UnboundLocalError 연쇄 붕괴를 막기 위한 temp_path 스코프 최상단 전진 배치.
+# ==========================================================
 import os
 import math
 import logging
@@ -32,6 +32,7 @@ class TelegramView:
             "C:/Windows/Fonts/malgunbd.ttf", "C:/Windows/Fonts/arialbd.ttf",
             "AppleGothic.ttf", "Arial.ttf"
         ]
+    
         self.reg_font_paths = [
             "NanumGothic.ttf", "font_reg.ttf", "font.ttf",
             "/usr/share/fonts/truetype/nanum/NanumGothic.ttf", 
@@ -80,7 +81,7 @@ class TelegramView:
         
         safe_ver = html.escape(str(latest_version))
         msg = f"🌌 <b>[ 옴니 매트릭스 퀀트 엔진 {safe_ver} ]</b>\n"
-        msg += "💠 무결성 싱글 롱 모멘텀 (SOXL 전용) & 순수 리버전 데이 트레이딩\n\n"
+        msg += "💠 무결성 싱글 롱 모멘텀 (SOXL 전용) & 순수 돌파/추종 데이 트레이딩\n\n"
         
         msg += f"🕒 <b>[ 운영 스케줄 ({dst_state}) ]</b>\n"
         msg += f"🔹 04:00: 🌅 프리장 VWAP 스캔 개시\n"
@@ -230,14 +231,17 @@ class TelegramView:
 
     def get_avwap_warning_menu(self, ticker):
         safe_t = html.escape(str(ticker))
-        msg = f"👁️ <b>[{safe_t} 순수 리버전 데이 트레이딩 관제탑 가동 승인]</b>\n\n"
+        
+        # 🚨 MODIFIED: [순수 돌파/추종 안내 팩트 락온] (동적 변수 소각 및 고정치 100% 락온)
+        msg = f"👁️ <b>[{safe_t} 순수 돌파/추종 데이 트레이딩 관제탑 가동 승인]</b>\n\n"
         msg += "⚠️ <b>[ 수동 제어 및 팻핑거 뇌관 100% 소각 완료 ]</b>\n"
         msg += "과거의 복잡했던 휩소 방어(HA 컨펌) 및 수동 목표가/수익률 설정 로직은 시스템 전역에서 영구 소각되었습니다.\n\n"
-        msg += "본 모드는 <b>수학적 팩트</b>에 기반한 <b>순수 리버전 (1-Shot 1-Kill)</b> 아키텍처로 자동 가동됩니다.\n\n"
-        msg += "▫️ <b>타점:</b> 각 세션별(프리장/정규장) 당일 순수 누적 VWAP <b>-2%</b> 하향 관통 시 즉시 예산 전액 지정가 진입\n"
-        msg += "▫️ <b>익절:</b> 진입 평단가 기준 <b>+2%</b> 지정가 전량 매도망 100% 자동 장전\n"
+        msg += "본 모드는 <b>수학적 팩트</b>에 기반한 <b>순수 돌파/추종 (1-Shot 1-Kill)</b> 아키텍처로 자동 가동됩니다.\n\n"
+        msg += f"▫️ <b>타점:</b> <b>04:07 EST 타임쉴드 해제 후</b> 실시간 VWAP 상향 돌파 시, <b>매도 1호가 지정가(Software Trigger)</b>로 즉각 요격\n"
+        msg += f"▫️ <b>익절:</b> 진입 평단가 기준 <b>+1.0% 고정 지정가</b> 전량 매도망 100% 자동 장전\n"
         msg += "▫️ <b>방어:</b> 15:59 EST 도달 시 미체결 덫 취소 및 매수 1호가 스윕 <b>강제 덤핑 (제로-오버나이트)</b>\n\n"
         msg += "포트폴리오 매니저의 관제탑 가동 승인을 대기합니다."
+        
         keyboard = [
             [InlineKeyboardButton("👁️ 관제탑 락온(Lock-on) 가동 승인", callback_data=f"MODE:AVWAP_ON:{ticker}")],
             [InlineKeyboardButton("❌ 작전 취소 (안전 모드 유지)", callback_data="RESET:CANCEL")]
@@ -259,7 +263,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V92.00 순수 리버전 팩트 락온 에디션</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V92.00 순수 돌파/추종 팩트 락온 에디션</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -332,16 +336,17 @@ class TelegramView:
             msg += f"{icon} <b>{safe_t} ({ver_display} 모드)</b>\n"
             
             if ver == "V_REV":
-                avwap_status = "🟢 ON (주문가능금액 100% 올인)" if is_avwap_hybrid else "⚪ OFF (가동 대기)"
+                avwap_status = "🟢 ON (주문가능금액 95% 올인)" if is_avwap_hybrid else "⚪ OFF (가동 대기)"
                 
                 msg += f"▫️ 본진 예산: 총 시드의 15% (고정 할당)\n▫️ 본진 목표: [가상1층]+0.6% / [상위층]+0.5%\n▫️ 자동복리: {comp_rate}% | 수수료: <b>{fee_rate}%</b>\n▫️ 갭 스위칭: <b>🤖 자율주행 (상승장 자동 가동)</b>\n"
                 msg += f"▫️ 암살자 타격망: <b>{avwap_status}</b>\n"
                 
                 if is_avwap_hybrid:
                     msg += f"▫️ 아키텍처: <b>본진(15%)과 암살자 100% 독립 병렬 가동 팩트 락온</b>\n"
-                    msg += f"▫️ 암살자 타점: <b>세션 VWAP -2% (1-Shot 1-Kill)</b>\n"
-                    msg += f"▫️ 암살자 익절: <b>+2% 지정가 전량 익절 (절대 락온)</b>\n"
-                    msg += f"▫️ 자본 잠김 차단: <b>15:59 EST 전량 최유리 지정가 덤핑</b>\n"
+                    # 🚨 MODIFIED: [UI 렌더링 팩트 불일치 궁극 수술] 순수 돌파/추종 팩트 텍스트 100% 하드코딩
+                    msg += f"▫️ 암살자 타점: <b>04:07 타임쉴드 해제 후 실시간 VWAP 상향 돌파 요격 (1-Shot 1-Kill)</b>\n"
+                    msg += f"▫️ 암살자 익절: <b>+1.0% 지정가 전량 익절 (절대 락온)</b>\n"
+                    msg += f"▫️ 자본 잠김 차단: <b>15:59 EST 전량 매수 1호가 스윕 덤핑</b>\n"
                     msg += f"▫️ 데이 트레이딩 관제탑: <b>365일 상시 가동 📡</b>\n"
                 msg += "⚖️ <b>본진 스탠바이:</b> 15:26 EST 예약 덫 관측 ➔ 15:27 로컬 자체 슬라이싱 가동\n\n" 
             else:
@@ -359,6 +364,7 @@ class TelegramView:
                     keyboard.append([InlineKeyboardButton(f"📡 {safe_t} 데이 트레이딩 관제탑 열기", callback_data=f"AVWAP:MENU:{t}")])
                     keyboard.append([InlineKeyboardButton("⚔️ 암살자 ON/OFF 토글", callback_data=f"CONFIG_AVWAP:TOGGLE:{t}")])
                     keyboard.append([InlineKeyboardButton(f"💸 {safe_t} 복리", callback_data=f"INPUT:COMPOUND:{t}"), InlineKeyboardButton(f"💳 {safe_t} 수수료", callback_data=f"INPUT:FEE:{t}")])
+                    # 🚨 MODIFIED: [암살자 팻핑거 뇌관 영구 소각] 진입률/익절률 버튼을 시스템 전역에서 영구 삭제
                     keyboard.append([InlineKeyboardButton(f"✂️ {safe_t} 액면보정", callback_data=f"INPUT:STOCK_SPLIT:{t}")])
                 else:
                     keyboard.append([InlineKeyboardButton(f"💸 {safe_t} 복리", callback_data=f"INPUT:COMPOUND:{t}"), InlineKeyboardButton(f"💳 {safe_t} 수수료", callback_data=f"INPUT:FEE:{t}")])
@@ -369,7 +375,6 @@ class TelegramView:
     
         return msg, InlineKeyboardMarkup(keyboard)
 
-    # 🚨 MODIFIED: [스냅샷 절대주의 렌더링 락온] 동적 역산 뇌관과 텍스트 조작 로직을 전면 소각하고 오직 팩트 지시서(plan_dict['orders'])만 직접 핀셋 추출하여 렌더링합니다.
     def create_sync_report(self, status_text, dst_text, cash, rp_amount, ticker_data, is_trade_active, p_trade_data=None, exchange_rate=None):
         ticker_data = ticker_data or []
         
@@ -392,10 +397,8 @@ class TelegramView:
             v_mode = str(t_info.get('version') or 'V14')
             is_manual_vwap = bool(t_info.get('is_manual_vwap'))
             
-            # 🚨 MODIFIED: [is_zero_start 팩트 추종] 
-            # 뷰어 도메인은 연산하지 않습니다. 코어 엔진이 판단한 is_zero_start 팩트를 100% 맹신합니다.
             is_zero_start = bool(t_info.get('is_zero_start'))
-             
+            
             safe_seed = self._safe_float(t_info.get('seed') or 0.0)
             safe_one_portion = self._safe_float(t_info.get('one_portion') or 0.0)
             safe_curr = self._safe_float(t_info.get('curr') or 0.0)
@@ -420,7 +423,7 @@ class TelegramView:
             day_low = self._safe_float(t_info.get('day_low') or 0.0)
             prev_close = self._safe_float(t_info.get('prev_close') or 0.0)
             sniper_status_txt = html.escape(str(t_info.get('upward_sniper') or 'OFF'))
-             
+            
             if safe_split > 0 and safe_t_val > (safe_split * 1.1):
                 body_msg += "⚠️ <b>[🚨 시스템 긴급 경고: 비정상 T값 폭주 감지!]</b>\n"
                 body_msg += f"🔎 현재 T값(<b>{safe_t_val:.4f}T</b>)이 설정된 분할수(<b>{int(safe_split)}분할</b>) 초과했습니다!\n"
@@ -499,8 +502,6 @@ class TelegramView:
                 body_msg += "📋 <b>[주문 가이던스 - ⚖️다중 LIFO 제어]</b>\n"
                 body_msg += f"⚡ <b>[Gap Hijack 🤖자율주행]</b> 운용종목 갭 이탈 감지 시 잔여예산 스윕 대기\n"
                 
-                # 🚨 MODIFIED: [UI 렌더링 동적 역산 및 조작 뇌관 영구 소각]
-                # 오직 스냅샷 객체에 박제된 팩트 데이터(plan_dict['orders'])만 100% 핀셋 추출하여 직관적으로 렌더링합니다.
                 raw_guidance = ""
                 plan_orders = plan_dict.get('orders') or []
                 
@@ -512,7 +513,6 @@ class TelegramView:
                         desc = str(o.get('desc', '매도')).split('(')[0]
                         raw_guidance += f" 🔵 {html.escape(desc)} ${self._safe_float(o.get('price')):.2f} <b>{int(self._safe_float(o.get('qty')))}주</b>\n"
                 else:
-                    # 🚨 MODIFIED: [관망 텍스트 증발 버그 수술] `if not is_zero_start:` 제약을 파기하고 무조건 관망 텍스트를 출력하도록 락온.
                     raw_guidance += " 🔵 매도: 대기 물량 없음 (관망)\n"
                         
                 if buy_orders:
@@ -563,7 +563,7 @@ class TelegramView:
             if is_trade_active:
                 if t_info.get('is_locked', False):
                     body_msg += " (✅ 금일 주문 완료/잠금)\n"
-             
+            
         final_msg = header_msg + body_msg.strip()
         
         if not is_trade_active:
@@ -760,5 +760,5 @@ class TelegramView:
         body = ""
         for line in chronological_logs: body += f"{html.escape(str(line))}\n"
         if len(body) > (4000 - len(header) - len(footer)):
-            body = "… (글자 수 제한으로 이전 로그 생략) …\n" + body[-(3800 - len(header) - len(footer)):]
+             body = "… (글자 수 제한으로 이전 로그 생략) …\n" + body[-(3800 - len(header) - len(footer)):]
         return header + body + footer

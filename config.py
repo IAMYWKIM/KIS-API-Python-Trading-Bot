@@ -3,7 +3,7 @@
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 3중 딥다이브 교차 검증(Syntax 붕괴, Async I/O 족쇄, Float 정밀도 사수) 통과 완료.
 # 🚨 MODIFIED: [Indentation 붕괴 수술] set_seed, get_secret_mode, get_chat_id 등 내부의 13칸/17칸 들여쓰기 엇갈림 오차를 4칸 배수 표준으로 정밀 교정하여 파이썬 컴파일러 즉사 버그 완벽 차단.
-# 🚨 MODIFIED: [암살자 수동 타겟팅 뇌관 영구 소각] 순수 리버전 데이 트레이딩 아키텍처 이식에 따라, 암살자의 원화(KRW)/수익률(PCT) 수동 설정 스키마 및 관련 Getter/Setter 100% 영구 삭제 (+2% 절대 익절 팩트 락온).
+# 🚨 MODIFIED: [암살자 수동 타겟팅 뇌관 영구 소각] 순수 돌파/추종 데이 트레이딩 아키텍처 이식에 따라, 암살자의 진입률/익절률을 수동으로 입력받던 동적 타점 제어 스키마 및 관련 Getter/Setter를 100% 영구 삭제 (VWAP 돌파 & +1.0% 고정 익절 절대 락온).
 # 🚨 MODIFIED: [V-REV 슬라이싱 수학 무결성 락온] VWAP_PROFILES 누적 가중치(Cumulative, CDF) 100% 교정 유지.
 # 🚨 MODIFIED: [V54.03 JSON 락온(Mutex) 방어막 전면 이식] Thread-safe 한 로컬 파일 동기화 사수.
 # 🚨 MODIFIED: [Case 34] 락온 센티널 파일 고아화(Orphan Lock) 맹점 영구 소각 유지.
@@ -11,9 +11,10 @@
 # 🚨 MODIFIED: [TOCTOU 레이스 컨디션 수술] os.path.exists 동기스캔 전면 소각 및 EAFP 패턴 100% 락온 유지.
 # 🚨 MODIFIED: [AttributeError 붕괴 방어] JSON 내부 요소 오염 시 발생하는 타입 캐스팅 에러 원천 차단.
 # 🚨 MODIFIED: [Case 16] tempfile 스코프 전진 배치로 UnboundLocalError 붕괴 차단.
-# 🚨 NEW: [명예의 전당 소각] delete_history 메서드 신설 및 중복 타격(Double Tap) 멱등성 100% 팩트 보장.
+# 🚨 NEW: [명예의 전당 소각] delete_history 메서 신설 및 중복 타격(Double Tap) 멱등성 100% 팩트 보장.
 # 🚨 MODIFIED: [제2헌법 절대 준수] get_chat_id 내부에 잔존하던 ValueError 의존성을 _safe_float 캐스팅으로 100% 영구 소각.
 # 🚨 MODIFIED: [Gap Hijack 타점 오버라이드] get_vrev_gap_threshold 및 get_avwap_gap_threshold의 디폴트 반환값을 -0.67에서 -2.0으로 100% 상향 팩트 교정 완료.
+# 🚨 MODIFIED: [State Mismatch 붕괴 수술] get_avwap_anchor_date 결측 시 디폴트 반환값을 "당월 1일"에서 "AUTO"로 팩트 교정하여 자율주행(Auto-Anchoring) 엔진이 정상 격발되도록 락온.
 # ==========================================================
 
 import json
@@ -84,7 +85,8 @@ class ConfigManager:
             "SNIPER_SELL_LOCKED": "data/sniper_sell_locked.json",
             "VREV_GAP_SWITCH_CFG": "data/vrev_gap_switch.json",     
             "VREV_GAP_THRESH_CFG": "data/vrev_gap_thresh.json",
-            "AVWAP_GAP_THRESH_CFG": "data/avwap_gap_thresh.json"
+            "AVWAP_GAP_THRESH_CFG": "data/avwap_gap_thresh.json",
+            "AVWAP_ANCHOR_CFG": "data/avwap_anchor.json"
         }
         
         self.DEFAULT_SEED = {"SOXL": 6720.0, "TQQQ": 6720.0}
@@ -170,7 +172,7 @@ class ConfigManager:
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 fd = None
                 json.dump(data, f, ensure_ascii=False, indent=2)
-                f.flush()  
+                f.flush() 
                 os.fsync(f.fileno()) 
       
             os.replace(temp_path, filename)
@@ -222,7 +224,6 @@ class ConfigManager:
                 try: os.remove(temp_path)
                 except OSError: pass
 
-    # 🚨 MODIFIED: [Gap Hijack 임계치 팩트 교정] -0.67 ➔ -2.0
     def get_vrev_gap_threshold(self, ticker):
         return self._safe_float(self._load_json(self.FILES["VREV_GAP_THRESH_CFG"], {}).get(ticker, -2.0))
 
@@ -241,7 +242,6 @@ class ConfigManager:
             d[ticker] = bool(v)
             self._save_json(self.FILES["VREV_GAP_SWITCH_CFG"], d)
       
-    # 🚨 MODIFIED: [Gap Hijack 임계치 팩트 교정] -0.67 ➔ -2.0
     def get_avwap_gap_threshold(self, ticker):
         return self._safe_float(self._load_json(self.FILES["AVWAP_GAP_THRESH_CFG"], {}).get(ticker, -2.0))
 
@@ -410,7 +410,7 @@ class ConfigManager:
             if len(target_recs) > 0:
                 logging.warning(f"⚠️ [보안 차단] {ticker}의 장부 기록이 이미 존재하여 파괴적 INIT 덮어쓰기를 차단했습니다.")
                 return
-                  
+                
             est = ZoneInfo('America/New_York')
             today_str = datetime.datetime.now(est).strftime('%Y-%m-%d')
             new_id = 1 if not ledger else max([int(self._safe_float(r.get('id', 0))) for r in ledger] + [0]) + 1
@@ -434,7 +434,7 @@ class ConfigManager:
     def calibrate_ledger_prices(self, ticker, target_date_str, exec_history):
         if not exec_history:
             return 0
-             
+           
         buy_qty = 0
         buy_amt = 0.0
         sell_qty = 0
@@ -478,7 +478,7 @@ class ConfigManager:
                         if abs(self._safe_float(r.get('price', 0.0)) - actual_sell_price) >= 0.01:
                             r['price'] = actual_sell_price
                             changed_count += 1
-                               
+                                
             if changed_count > 0:
                 self._save_json(self.FILES["LEDGER"], ledger)
             
@@ -496,7 +496,7 @@ class ConfigManager:
             records = self.get_ledger()
         target_recs = [r for r in (records or []) if isinstance(r, dict) and r.get('ticker') == ticker]
         
-        total_qty, total_invested, total_sold = 0, 0.0, 0.0    
+        total_qty, total_invested, total_sold = 0, 0.0, 0.0     
         
         running_qty = 0
         running_cost = 0.0
@@ -619,7 +619,7 @@ class ConfigManager:
         holdings = 0
         rem_cash = seed
         total_invested = 0.0
-         
+        
         for r in target_recs:
             if holdings == 0:
                 rem_cash = seed
@@ -735,7 +735,6 @@ class ConfigManager:
         raw_data = self._load_json(self.FILES["HISTORY"], [])
         return [h for h in raw_data if isinstance(h, dict)]
 
-    # 🚨 NEW: [명예의 전당 소각] 특정 졸업 기록(ID) 영구 소각 및 중복 타격(Double Tap) 붕괴 방어 팩트 결속
     def delete_history(self, hist_id: int) -> bool:
         with self._io_lock:
             history = self.get_history()
@@ -743,7 +742,6 @@ class ConfigManager:
                 return False
                 
             original_len = len(history)
-            # 🚨 MODIFIED: [타입 오염 붕괴 방어] id 값 비교 시 _safe_float 후 int 캐스팅을 거쳐 JSON 파싱 타입 불일치 즉사 버그 차단
             safe_target_id = int(self._safe_float(hist_id))
             remaining_history = [
                 h for h in history 
@@ -751,7 +749,7 @@ class ConfigManager:
             ]
             
             if len(remaining_history) == original_len:
-                return False # 삭제 대상 없음 (중복 타격 붕괴 패러독스 방어 멱등성 보장)
+                return False 
                 
             self._save_json(self.FILES["HISTORY"], remaining_history)
             return True
@@ -826,7 +824,7 @@ class ConfigManager:
 
     def get_upward_sniper_mode(self, ticker): 
         return bool(self._load_json(self.FILES["UPWARD_SNIPER"], {}).get(ticker, False))
-        
+         
     def set_upward_sniper_mode(self, ticker, v):
         with self._io_lock:
              d = self._load_json(self.FILES["UPWARD_SNIPER"], {})
@@ -889,7 +887,7 @@ class ConfigManager:
 
     def get_secret_mode(self): 
         return self._load_file(self.FILES["SECRET_MODE"]) == 'True'
-        
+         
     def set_secret_mode(self, v): 
          with self._io_lock:
             self._save_file(self.FILES["SECRET_MODE"], str(v))
@@ -901,9 +899,8 @@ class ConfigManager:
         
     def set_active_tickers(self, v): 
         with self._io_lock:
-            self._save_json(self.FILES["TICKER"], v)
+             self._save_json(self.FILES["TICKER"], v)
     
-    # 🚨 MODIFIED: [제2헌법 절대 준수] get_chat_id 내부에 잔존하던 ValueError 의존성을 _safe_float 캐스팅으로 100% 영구 소각.
     def get_chat_id(self): 
         v = self._load_file(self.FILES["CHAT_ID"])
         if v:
@@ -912,5 +909,14 @@ class ConfigManager:
         return None
         
     def set_chat_id(self, v): 
-         with self._io_lock:
+        with self._io_lock:
             self._save_file(self.FILES["CHAT_ID"], v)
+
+    def get_avwap_anchor_date(self, ticker):
+        return str(self._load_json(self.FILES["AVWAP_ANCHOR_CFG"], {}).get(ticker, "AUTO"))
+
+    def set_avwap_anchor_date(self, ticker, date_str):
+        with self._io_lock:
+            d = self._load_json(self.FILES["AVWAP_ANCHOR_CFG"], {})
+            d[ticker] = str(date_str)
+            self._save_json(self.FILES["AVWAP_ANCHOR_CFG"], d)
