@@ -14,7 +14,8 @@
 # 🚨 MODIFIED: [이벤트 루프 교착 완벽 차단] 텔레그램 send_message 및 edit_text 통신 전역에 asyncio.wait_for(timeout=15.0) 족쇄 래핑 유지.
 # 🚨 MODIFIED: [Double-Spending 붕괴 방어] get_budget_allocation 연산 시 V14 다중 종목 잉여금 중복 할당 차단.
 # 🚨 MODIFIED: [AttributeError 궁극 수술] context.job 객체 파손/결측 시 발생하는 연쇄 속성 접근(get/data/chat_id) 즉사 버그를 스케줄러 전역(force_reset, auto_sync 등)에서 getattr 단락 평가로 완벽 교정 완료.
-# 🚨 NEW: [스냅샷 조기 락온 수술] scheduled_force_reset 내 새벽 4시 초기화 루프에서 is_snapshot_mode=True를 강제 래핑하여 그날의 팩트 지시서를 무조건 박제하도록 아키텍처 교정.
+# 🚨 MODIFIED: [스냅샷 락온 타임라인 이동] 새벽 4시 스냅샷 강제 생성(is_snapshot_mode=True)을 16:05 EST로 이관함에 따라 해당 로직 전면 영구 소각 (Bypass).
+# 🚨 MODIFIED: [ImportError 붕괴 수술] 렌더링 중 증발했던 scheduled_auto_sync 함수 블록을 100% 팩트 복구 완료.
 # ==========================================================
 import logging
 import datetime
@@ -337,17 +338,8 @@ async def scheduled_force_reset(context):
                 else:
                     await asyncio.wait_for(asyncio.to_thread(cfg.increment_reverse_day, t), timeout=5.0)
 
-                # 🚨 NEW: [스냅샷 조기 락온 수술] 새벽 4시 팩트 지시서 무조건 박제
-                if strategy:
-                    avail_cash = _safe_float(alloc_cash_dict.get(t, 0.0))
-                    try:
-                        await asyncio.wait_for(asyncio.to_thread(
-                            strategy.get_plan, t, curr_p, actual_avg, actual_qty, prev_c, ma_5day=ma_5day,
-                            market_type="REG", available_cash=avail_cash, is_simulation=True, is_snapshot_mode=True
-                        ), timeout=15.0)
-                        logging.info(f"📸 [{t}] 새벽 4시 스냅샷(is_snapshot_mode=True) 조기 락온 성공.")
-                    except Exception as e:
-                        logging.error(f"🚨 [{t}] 새벽 4시 스냅샷 조기 락온 에러: {e}")
+                # 🚨 MODIFIED: [스냅샷 락온 타임라인 이동] 새벽 4시 스냅샷 강제 생성(is_snapshot_mode=True)을 16:05 EST로 이관함에 따라 해당 로직 전면 영구 소각 (Bypass).
+                logging.info(f"📸 [{t}] 04:00 AM 기상 완료. (스냅샷은 전일 16:05 EST에 사전 박제(Forward-Lock)되었으므로 생성을 바이패스합니다.)")
 
             except Exception as e:
                 logging.error(f"🚨 [{t}] 일일 초기화 단일 종목 에러 (Cascade 방어): {e}")
@@ -606,10 +598,6 @@ async def scheduled_auto_sync(context):
     for t in active_tickers:
         try:
             await asyncio.sleep(0.06)
-        
-            # 🚨 MODIFIED: [암살자 오버나이트 스캔 디커플링 팩트 소각] 
-            # 15:59 제로-오버나이트 덤핑 완료를 전제로 무조건 16:05 정산을 진행하도록 스킵(Skip) 로직 영구 삭제 완료.
-                
             res = await bot.sync_engine.process_auto_sync(t, chat_id, context, silent_ledger=True)
             if res == "SUCCESS": success_tickers.append(t)
         except Exception as e:
