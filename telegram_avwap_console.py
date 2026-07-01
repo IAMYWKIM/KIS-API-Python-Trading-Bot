@@ -5,7 +5,8 @@
 # 🚨 MODIFIED: [제2헌법 단일 책임 수호] 파일 내에 잘못 병합되었던 글로벌 UI 렌더링 메서드를 100% 영구 소각하고, 오직 '데이 트레이딩 레이더 스캔' 본연의 기능으로 진공 압축 완료.
 # 🚨 MODIFIED: [관제탑 UI 팩트 롤오버] 암살자 지정 예산($) 및 오버나이트 허용 상태를 관제탑 대시보드에 100% 팩트로 표출.
 # 🚨 MODIFIED: [Case 26 절대 헌법 준수] 텔레그램 HTML 파서 붕괴 방어를 위한 html.escape 쉴드 전역 강제 주입.
-# 🚨 MODIFIED: [AVWAP 당일 기점 UI 팩트 롤오버] 초단기 당일 앵커링(04:00 EST) 아키텍처에 맞추어 관제탑의 AVWAP 표출 텍스트를 직관적으로 100% 팩트 교정 완료.
+# 🚨 MODIFIED: [UI 진공 압축 프로토콜] 인지 부하 감소를 위해 초단기 당일 누적 VWAP 및 숏 스퀴즈 감시망 UI 렌더링 텍스트 블록 100% 영구 소각 (백그라운드 연산은 완벽 보존).
+# 🚨 MODIFIED: [데드 버튼 영구 소각 (NEW)] 텍스트 지표가 제거됨에 따라, 하단에 잔존해 있던 '💡 숏 스퀴즈 지표 읽는 법' 인라인 버튼을 시스템 UI에서 100% 완전 삭제.
 # ==========================================================
 import logging
 import datetime
@@ -159,7 +160,6 @@ class AvwapConsolePlugin:
             anchor_date = await _get_with_retry(getattr(self.cfg, 'get_avwap_anchor_date', lambda x: "AUTO"), t)
             tier_reason = "수동 지정"
             
-            # 🚨 MODIFIED: [초단기 당일 AVWAP 롤오버] 당일 프리장 개장(04:00 EST) 팩트 기반 표출 적용
             if not anchor_date or str(anchor_date).upper() == "AUTO":
                 anchor_res = await _get_with_retry(getattr(self.broker, 'get_auto_anchor_date', lambda x: (now_est.strftime('%Y-%m-%d'), "당일 프리장 개장 (04:00 EST)")), t)
                 if isinstance(anchor_res, tuple) and len(anchor_res) == 2:
@@ -172,7 +172,6 @@ class AvwapConsolePlugin:
 
             is_avwap_hybrid = bool(await _get_with_retry(getattr(self.cfg, 'get_avwap_hybrid_mode', lambda x: False), t))
             
-            # 🚨 NEW: [Phase 4] 암살자 지정 예산 및 오버나이트 정보 추출
             avwap_budget = self._safe_float(await _get_with_retry(getattr(self.cfg, 'get_avwap_budget', lambda x: 10000.0), t))
             is_overnight = bool(await _get_with_retry(getattr(self.cfg, 'get_avwap_overnight_mode', lambda x: False), t))
             
@@ -283,23 +282,6 @@ class AvwapConsolePlugin:
         else:
             msg += "▫️ 정규장 개장 대기 중...\n\n"
 
-        # 🚨 MODIFIED: [AVWAP 당일 기점 표출] UI 포맷 팩트 교정 완료
-        msg += f"⚓ <b>[ 초단기 당일 누적 VWAP ]</b>\n"
-        if anchored_vwap > 0:
-            msg += f"▫️ 기점(04:00 EST): <b>${anchored_vwap:.2f}</b> ({html.escape(tier_reason)})\n\n"
-        else:
-            msg += "▫️ 기점(04:00 EST): 데이터 집계 중...\n\n"
-
-        msg += f"🔥 <b>[ 기초자산({base_t_clean}) 숏 스퀴즈 감시망 ]</b>\n"
-        si_float = self._safe_float(sq_metrics.get("SI_Float", 0.0))
-        if sq_metrics and si_float > 0.0:
-            dtc = self._safe_float(sq_metrics.get("DTC", 0.0))
-            status_txt = str(sq_metrics.get("Status", "데이터 집계 대기 중..."))
-            msg += f"▫️ 공매도 잔고율(SI): <b>{si_float:.2f}%</b> | 숏 커버링(DTC): <b>{dtc:.2f}일</b>\n"
-            msg += f"▫️ 판정: {status_txt}\n\n"
-        else:
-            msg += "▫️ 공매도 감시망: 데이터 집계 대기 중...\n\n"
-
         if is_avwap_hybrid or is_assassin_active:
             msg += f"⚔️ <b>[ 암살자(aVWAP) 1-Shot 교전망 (🟢 가동중) ]</b>\n"
         else:
@@ -334,10 +316,7 @@ class AvwapConsolePlugin:
         elif status_code in ["CLOSE"]:
             keyboard.append([InlineKeyboardButton(f"⛔ [{ticker_clean}] 장마감", callback_data="AVWAP_SET:REFRESH:NONE")])
 
-        keyboard.append([
-            InlineKeyboardButton("💡 숏 스퀴즈 지표 읽는 법", callback_data=f"AVWAP_SET:SQUEEZE_GUIDE:{t}")
-        ])
-
+        # 🚨 MODIFIED: '💡 숏 스퀴즈 지표 읽는 법' 버튼 영구 소각 완료
         keyboard.append([
             InlineKeyboardButton("🔄 관제탑 새로고침", callback_data="AVWAP_SET:REFRESH:NONE"),
             InlineKeyboardButton("🔙 닫기", callback_data="RESET:CANCEL")
