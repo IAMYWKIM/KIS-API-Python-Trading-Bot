@@ -6,6 +6,7 @@
 # 🚨 MODIFIED: [상태 기억 상실(State Amnesia) 붕괴 궁극 수술] JSONDecodeError 등으로 상태 캐시 파일이 비정상 초기화되는 현상을 원천 차단하기 위해 듀얼 세이프티(.bak) 원자적 백업 및 자가 치유(Self-Healing) 파이프라인 100% 결속.
 # 🚨 MODIFIED: [KST 타임라인 롤오버 맹점 수술] EST 기준 장중(예: 11:00 AM)에 KST 자정이 지나 날짜가 변경될 경우, 당일 체결 내역 조회(get_execution_history) 시 주문이 증발(Ghost Order)한 것으로 오인하는 치명적 KIS API 패러독스를 방어하기 위해 검색 기간을 D-2 ~ D-0으로 강제 확장 락온.
 # 🚨 MODIFIED: [부활(Resurrection) 패러독스 차단] 암살자가 임무를 완수(전량 익절)하여 셧다운될 때, buy_odno 캐시도 원자적으로 초기화("")하여 유령 주문 추적기가 이미 청산된 물량을 재진입(부활)시키는 대참사 원천 봉쇄.
+# 🚨 MODIFIED: [암살자 팩트 타전 오염 수술] 15:59 EST 컷오프 시, 이미 전량 익절했거나 진입 실패로 퇴근(Shutdown)한 상태라면 허위 알림(오버나이트 관망 등)을 띄우지 않고 조용히 컷오프(Bypass)하도록 팩트 방어망 결속 완료.
 # ==========================================================
 import logging
 import datetime
@@ -300,6 +301,11 @@ async def scheduled_sniper_monitor(context):
                         curr_t_obj = now_est.time()
                     
                         if curr_t_obj >= datetime.time(15, 59, 0) and not t_state.get('dumped'):
+                            # 🚨 MODIFIED: [암살자 팩트 타전 오염 수술] 이미 전량 익절하여 퇴근했거나(shutdown=True), 진입 실패한 경우 허위 덤핑 알림 생략 및 조용히 컷오프 처리
+                            if t_state.get('shutdown') or (t_state.get('qty', 0) == 0 and not t_state.get('buy_odno')):
+                                await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {'dumped': True}), timeout=10.0)
+                                continue
+
                             if is_overnight_allowed:
                                 logging.info(f"🌙 [{t}] 15:59 EST 컷오프 도달. 오버나이트 모드 ON ➔ 애프터장 감시망을 보존합니다.")
                                 if t_state.get('buy_odno'):
