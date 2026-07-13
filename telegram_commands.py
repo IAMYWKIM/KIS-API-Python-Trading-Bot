@@ -643,14 +643,16 @@ class TelegramCommands:
  
         await self._retry_api(self.queue_ledger.overwrite_queue, ticker, q_data)
         
-        # 🚨 MODIFIED: [중복 매도 패러독스 궁극 수술] 와일드카드(Glob) 기반 '당일 체결 기억(vwap_state)' 및 스냅샷 진공 청소 락온
+        # 🚨 MODIFIED: [중복 매도 패러독스 궁극 수술] 파일 뮤텍스 100% 래핑
         def _nuke_snapshot_and_state():
             for f in glob.glob(f"data/daily_snapshot_*_{ticker}.json"):
-                try: os.remove(f)
-                except OSError: pass
+                with GlobalThrottle.get_file_lock(f):
+                    try: os.remove(f)
+                    except OSError: pass
             for f in glob.glob(f"data/vwap_state_*_{ticker}.json"):
-                try: os.remove(f)
-                except OSError: pass
+                with GlobalThrottle.get_file_lock(f):
+                    try: os.remove(f)
+                    except OSError: pass
         await asyncio.to_thread(_nuke_snapshot_and_state)
         
         chat_id = update.effective_chat.id
@@ -676,14 +678,16 @@ class TelegramCommands:
             
         await self._retry_api(self.queue_ledger.clear_queue, ticker)
         
-        # 🚨 MODIFIED: [중복 매도 패러독스 궁극 수술] 와일드카드(Glob) 기반 '당일 체결 기억(vwap_state)' 및 스냅샷 진공 청소 락온
+        # 🚨 MODIFIED: [중복 매도 패러독스 궁극 수술] 파일 뮤텍스 100% 래핑
         def _nuke_snapshot_and_state():
             for f in glob.glob(f"data/daily_snapshot_*_{ticker}.json"):
-                try: os.remove(f)
-                except OSError: pass
+                with GlobalThrottle.get_file_lock(f):
+                    try: os.remove(f)
+                    except OSError: pass
             for f in glob.glob(f"data/vwap_state_*_{ticker}.json"):
-                try: os.remove(f)
-                except OSError: pass
+                with GlobalThrottle.get_file_lock(f):
+                    try: os.remove(f)
+                    except OSError: pass
         await asyncio.to_thread(_nuke_snapshot_and_state)
         
         chat_id = update.effective_chat.id

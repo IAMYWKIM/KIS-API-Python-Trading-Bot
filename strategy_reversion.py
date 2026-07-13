@@ -3,6 +3,7 @@
 # ==========================================================
 # 🚨 MODIFIED: [Lost Update 궁극 방어] 모든 상태 및 스냅샷 파일(JSON) 읽기/쓰기 연산에 GlobalThrottle.get_file_lock()을 100% 결속하여 더티 리드(Dirty Read) 및 동시성 파괴 원천 차단.
 # 🚨 MODIFIED: [메모리 유령화(Ghost Memory) 붕괴 궁극 수술] 디스크 파일의 존재 여부 및 유효성을 교차 검증하여, 파일이 소각되었을 경우 메모리의 당일 매도 수량(SELL_QTY)을 즉각 0으로 원자적 초기화.
+# 🚨 MODIFIED: [데드코드 소각] `_save_state` 메서드 내부에 잔존하던 과거 데드락 경고 주석을 100% 영구 삭제.
 # ==========================================================
 import math
 import os
@@ -73,7 +74,7 @@ class ReversionStrategy:
             if not is_disk_valid:
                 self.executed["BUY_BUDGET"][ticker] = 0.0
                 self.executed["SELL_QTY"][ticker] = 0
-                self._save_state(ticker) # File Mutex 락 획득 중 호출되지만, 파이썬 RLock이 아니면 문제됨. _save_state 내부 락을 분리.
+                self._save_state(ticker)
         
         self.state_loaded[ticker] = today_str
 
@@ -88,10 +89,7 @@ class ReversionStrategy:
             }
         }
         
-        # 🚨 MODIFIED: File Mutex 결속. 
-        # (주의: _load_state_if_needed 내부에서 호출 시 교착 상태를 방지하려면 _save_state_no_lock 구조로 가야 하지만, _load_state_if_needed에서 _save_state를 호출할 때 락을 풀어주거나 Lock 스코프를 조절)
-        # 위 _load_state_if_needed 코드를 수정하여 File Mutex 밖에서 _save_state를 호출하도록 하거나 _save_state 자체에 Mutex를 적용.
-        
+        # 🚨 MODIFIED: File Mutex 결속 및 낡은 데드락 주석 영구 소각
         with GlobalThrottle.get_file_lock(state_file):
             fd = None
             temp_path = None

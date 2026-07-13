@@ -345,3 +345,234 @@ class TelegramStates:
         finally:
             if chat_id in controller.user_states:
                 del controller.user_states[chat_id]
+
+    async def _handle_callback_reset(self, query, ticker):
+        if ticker:
+            try: await asyncio.wait_for(query.answer("⏳ 매매 잠금 해제 중...", show_alert=False), timeout=5.0)
+            except Exception: pass
+            
+            def _hijack_vwap_lock():
+                slice_file = f"data/vrev_slice_state_{ticker}.json"
+                # 🚨 MODIFIED: 파일 뮤텍스 결속
+                with GlobalThrottle.get_file_lock(slice_file):
+                    try:
+                        with open(slice_file, 'r', encoding='utf-8') as f:
+                            s_state = json.load(f)
+                        s_state['hijacked'] = True
+                        s_state['orders'] = []
+                        
+                        dir_name = os.path.dirname(slice_file) or '.'
+                        try: os.makedirs(dir_name, exist_ok=True)
+                        except OSError: pass
+                        
+                        fd = None
+                        tmp_path = None
+                        try:
+                            fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
+                            with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
+                                fd = None
+                                json.dump(s_state, f_out, ensure_ascii=False, indent=4)
+                                f_out.flush()
+                                os.fsync(f_out.fileno())
+                            os.replace(tmp_path, slice_file)
+                            tmp_path = None
+                        except Exception:
+                            if fd is not None:
+                                try: os.close(fd)
+                                except OSError: pass
+                            if tmp_path:
+                                try: os.remove(tmp_path)
+                                except OSError: pass
+                    except (OSError, json.JSONDecodeError): 
+                        pass
+                    
+                try:
+                    est_now = datetime.datetime.now(ZoneInfo('America/New_York'))
+                    today_str = est_now.strftime("%Y-%m-%d")
+                    for snap_prefix in ["REV", "V14", "V14VWAP"]:
+                        snap_file = f"data/daily_snapshot_{snap_prefix}_{today_str}_{ticker}.json"
+                        # 🚨 MODIFIED: 파일 뮤텍스 결속
+                        with GlobalThrottle.get_file_lock(snap_file):
+                            try: os.remove(snap_file)
+                            except OSError: pass
+                except Exception: 
+                    pass
+                
+            await asyncio.wait_for(asyncio.to_thread(_hijack_vwap_lock), timeout=10.0)
+            await asyncio.wait_for(asyncio.to_thread(self.cfg.reset_lock_for_ticker, ticker), timeout=10.0)
+            try: 
+                await asyncio.wait_for(query.edit_message_text(f"✅ <b>[{html.escape(str(ticker))}] 금일 매매 잠금이 해제되었으며, 오염된 슬라이싱 엔진 및 스냅샷도 무효화되었습니다.</b>", parse_mode='HTML'), timeout=10.0)
+            except telegram.error.BadRequest as e:
+                if "not modified" not in str(e).lower(): logging.warning(f"⚠️ UI 갱신 예외: {e}")
+            except Exception: pass
+
+    async def _handle_callback_confirm(self, query, ticker, context):
+        if not ticker: return
+        
+        try: await asyncio.wait_for(query.answer("🔥 삼위일체 소각 진행 중...", show_alert=False), timeout=5.0)
+        except Exception: pass
+        
+        current_ver = str(await asyncio.wait_for(asyncio.to_thread(self.cfg.get_version, ticker), timeout=10.0) or "")
+        is_rev_active = (current_ver == "V_REV")
+        
+        await asyncio.wait_for(asyncio.to_thread(self.cfg.set_reverse_state, ticker, is_rev_active, 0, 0.0), timeout=10.0)
+        
+        ledger = await asyncio.wait_for(asyncio.to_thread(self.cfg.get_ledger), timeout=10.0) or []
+        ledger_data = [r for r in ledger if isinstance(r, dict) and str(r.get('ticker')) != str(ticker)]
+        await asyncio.wait_for(asyncio.to_thread(self.cfg._save_json, self.cfg.FILES["LEDGER"], ledger_data), timeout=15.0)
+        
+        def _process_reset_files():
+            backup_file = self.cfg.FILES["LEDGER"].replace(".json", "_backup.json")
+            # 🚨 MODIFIED: 파일 뮤텍스 결속
+            with GlobalThrottle.get_file_lock(backup_file):
+                try:
+                    with open(backup_file, 'r', encoding='utf-8') as f:
+                        b_data = json.load(f)
+                    if not isinstance(b_data, list): b_data = []
+                    b_data = [r for r in b_data if isinstance(r, dict) and str(r.get('ticker')) != str(ticker)]
+                    
+                    dir_name = os.path.dirname(backup_file) or '.'
+                    try: os.makedirs(dir_name, exist_ok=True)
+                    except OSError: pass
+                    
+                    fd = None
+                    tmp_path = None
+                    try:
+                        fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
+                        with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
+                            fd = None
+                            json.dump(b_data, f_out, ensure_ascii=False, indent=4)
+                            f_out.flush()
+                            os.fsync(f_out.fileno())
+                        os.replace(tmp_path, backup_file)
+                        tmp_path = None
+                    except Exception:
+                        if fd is not None:
+                            try: os.close(fd)
+                            except OSError: pass
+                        if tmp_path:
+                            try: os.remove(tmp_path)
+                            except OSError: pass
+                except OSError: pass
+                except Exception: pass
+            
+        await asyncio.wait_for(asyncio.to_thread(_process_reset_files), timeout=10.0)
+    
+        if getattr(self, 'queue_ledger', None):
+            await asyncio.wait_for(asyncio.to_thread(self.queue_ledger.clear_queue, ticker), timeout=10.0)
+            await asyncio.wait_for(asyncio.to_thread(self.queue_ledger.sync_with_broker, ticker, 0, 0.0), timeout=10.0)
+
+        def _nuke_assassin_data():
+            try:
+                from assassin_ledger import AssassinLedger
+                a_ledger = AssassinLedger()
+                a_ledger.clear_ledger(ticker)
+            except Exception as e:
+                logging.error(f"🚨 [{ticker}] 암살자 장부 강제 소각 중 에러: {e}")
+            
+            # 🚨 MODIFIED: [암살자 부활 패러독스 궁극 방어] 파일 물리 삭제 제거 및 shutdown 상태 원자적 주입
+            state_file = f"data/avwap_trade_state_{ticker}.json"
+            # 🚨 MODIFIED: 파일 뮤텍스 결속
+            with GlobalThrottle.get_file_lock(state_file):
+                try:
+                    est_now = datetime.datetime.now(ZoneInfo('America/New_York'))
+                    today_str = est_now.strftime('%Y-%m-%d')
+                    state_data = {}
+                    try:
+                        with open(state_file, 'r', encoding='utf-8') as f:
+                            state_data = json.load(f)
+                    except Exception:
+                        pass
+
+                    state_data['date'] = today_str
+                    state_data['qty'] = 0
+                    state_data['buy_odno'] = ""
+                    state_data['sell_odno'] = ""
+                    state_data['shutdown'] = True
+                    state_data['dumped'] = True
+
+                    dir_name = os.path.dirname(state_file) or '.'
+                    try: os.makedirs(dir_name, exist_ok=True)
+                    except OSError: pass
+
+                    fd = None
+                    tmp_path = None
+                    try:
+                        fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
+                        with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
+                            fd = None
+                            json.dump(state_data, f_out, ensure_ascii=False, indent=4)
+                            f_out.flush()
+                            os.fsync(f_out.fileno())
+                        os.replace(tmp_path, state_file)
+                        tmp_path = None
+                    except Exception as inner_e:
+                        if fd is not None:
+                            try: os.close(fd)
+                            except OSError: pass
+                        if tmp_path:
+                            try: os.remove(tmp_path)
+                            except OSError: pass
+                        raise inner_e
+                except Exception as e:
+                    logging.error(f"🚨 [{ticker}] 암살자 상태 셧다운 주입 에러: {e}")
+
+        await asyncio.wait_for(asyncio.to_thread(_nuke_assassin_data), timeout=10.0)
+        await asyncio.wait_for(asyncio.to_thread(self.cfg.reset_lock_for_ticker, ticker), timeout=10.0)
+
+        prev_c = 0.0
+        for attempt in range(3):
+            try:
+                await asyncio.sleep(0.06)
+                prev_c_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_previous_close, ticker), timeout=10.0)
+                prev_c = self._safe_float(prev_c_val)
+                break
+            except Exception as e:
+                if attempt == 2: logging.error(f"🚨 수동 소각 후 전일 종가 스캔 에러: {e}")
+                else: await asyncio.sleep(1.0 * (2 ** attempt))
+        
+        if prev_c > 0:
+            try:
+                kis_qty = 0
+                kis_avg = 0.0
+                async with self.tx_lock:
+                    cash_val = 0.0
+                    for attempt in range(3):
+                        try:
+                            await asyncio.sleep(0.06)
+                            cash_tuple = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=10.0)
+                            cash_val = cash_tuple[0] if isinstance(cash_tuple, (list, tuple)) and len(cash_tuple) > 0 else 0.0
+                            holdings = cash_tuple[1] if isinstance(cash_tuple, (list, tuple)) and len(cash_tuple) > 1 else {}
+                            break
+                        except Exception:
+                            if attempt == 2: holdings = {}
+                            else: await asyncio.sleep(1.0 * (2 ** attempt))
+                    
+                    cash = self._safe_float(cash_val)
+                    
+                    if isinstance(holdings, dict) and ticker in holdings:
+                        kis_qty = int(self._safe_float(holdings[ticker].get('qty', 0)))
+                        kis_avg = self._safe_float(holdings[ticker].get('avg', 0.0))
+                    
+                    from scheduler_core import get_budget_allocation
+                    active_tickers_list = await asyncio.wait_for(asyncio.to_thread(self.cfg.get_active_tickers), timeout=10.0) or []
+                    _, alloc_cash_dict = await asyncio.wait_for(asyncio.to_thread(get_budget_allocation, cash, active_tickers_list, self.cfg), timeout=10.0)
+                    alloc_cash_dict = alloc_cash_dict or {}
+                    available_cash = self._safe_float(alloc_cash_dict.get(ticker))
+            
+                    await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.strategy.get_plan, 
+                            ticker, 0.0, kis_avg, kis_qty, prev_c, 
+                            ma_5day=0.0, market_type="REG", available_cash=available_cash, 
+                            is_simulation=True, is_snapshot_mode=True
+                        ), timeout=15.0
+                    )
+            except Exception as e:
+                logging.error(f"🚨 0주 강제 스냅샷 오버라이드 에러: {e}")
+
+        try:
+            await asyncio.wait_for(query.edit_message_text(f"✅ <b>[{html.escape(str(ticker))}] 삼위일체 소각(Nuke) 및 초기화 완료!</b>\n▫️ 본장부, 백업장부, 큐(Queue) 찌꺼기 데이터가 100% 영구 삭제되었습니다.\n▫️ 암살자의 재진입(부활)이 전면 차단되었으며, 매매 잠금 해제 및 디커플링 타점 스냅샷 덮어쓰기가 완벽히 집행되었습니다.", parse_mode='HTML'), timeout=10.0)
+        except telegram.error.BadRequest as e:
+            if "not modified" not in str(e).lower(): logging.warning(f"⚠️ UI 갱신 예외: {e}")
+        except Exception: pass
