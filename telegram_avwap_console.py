@@ -10,6 +10,7 @@
 # 🚨 MODIFIED: [Thundering Herd 영구 소각] `_get_with_retry` 및 `_fetch_schedule`에 산재하던 파편화된 `sleep(0.06)`을 전면 소각하고 `GlobalThrottle` 중앙 통제소로 비동기 딜레이 100% 위임.
 # 🚨 MODIFIED: [Lost Update 궁극 방어] JSON 상태 파일 읽기(`_read_state`) 시 `GlobalThrottle.get_file_lock()` 기반 파일 뮤텍스를 래핑하여 더티 리드(Dirty Read) 붕괴 원천 차단.
 # 🚨 MODIFIED: [SSOT 락온 수술] 관제탑 UI가 지연된 구형 캐시 상태 파일(avwap_trade_state)의 수량을 참조하던 패러독스를 소각하고, 즉각 반영되는 AssassinLedger를 단일 진실 공급원(SSOT)으로 100% 팩트 락온.
+# 🚨 MODIFIED: [임무 완수 렌더링 오버라이드] 암살자가 +1.0% 전량 익절을 달성하거나 15:59 덤핑을 완수한 경우, '대기 중' 또는 '프리장 미진입 차단'으로 오인 표출되던 패러독스를 원천 차단하고 '당일 임무 완수' 상태를 100% 팩트로 명시적 렌더링하도록 UI 디커플링 로직 결속 완료.
 # ==========================================================
 import logging
 import datetime
@@ -194,6 +195,10 @@ class AvwapConsolePlugin:
         is_assassin_active = False
         is_early_shutdown = False 
         
+        # 🚨 MODIFIED: [당일 임무 완수 렌더링 전용 플래그 수복]
+        is_mission_complete = False   
+        is_dump_cleared = False       
+        
         state_file = f"data/avwap_trade_state_{t}.json"
         try:
             def _read_state():
@@ -209,7 +214,15 @@ class AvwapConsolePlugin:
             is_shutdown = False
             
             if isinstance(state_data, dict):
-                is_shutdown = bool(state_data.get('shutdown', False))
+                # 🚨 MODIFIED: [State Mismatch 방어] 오늘 날짜인 경우에만 셧다운 및 완료 상태를 인정하여 과거 캐시 오염에 의한 무한 대기 패러독스 방어
+                if state_data.get('date') == today_est_date.strftime('%Y-%m-%d'):
+                    is_shutdown = bool(state_data.get('shutdown', False))
+                    
+                    if int(self._safe_float(state_data.get('last_filled_sell_qty', 0))) > 0:
+                        is_mission_complete = True
+                        
+                    if bool(state_data.get('dumped', False)):
+                        is_dump_cleared = True
 
             # 🚨 MODIFIED: [SSOT 락온] 구형 캐시 파일(avwap_trade_state)의 지연된 수량을 무시하고 AssassinLedger에서 100% 팩트 도출
             from assassin_ledger import AssassinLedger
@@ -300,8 +313,14 @@ class AvwapConsolePlugin:
         else:
             msg += "▫️ 정규장 개장 대기 중...\n\n"
 
+        # 🚨 MODIFIED: [임무 완수 상태 명시적 디커플링 표출] 대기 중으로 표출되는 패러독스를 원천 차단하고 '목표가 도달 당일 퇴근'을 100% 팩트로 명시.
         if is_avwap_hybrid or is_assassin_active:
-            msg += f"⚔️ <b>[ 암살자(aVWAP) 1-Shot 교전망 (🟢 가동중) ]</b>\n"
+            if is_mission_complete:
+                msg += f"🏆 <b>[ 암살자(aVWAP) 1-Shot 교전망 (당일 임무 완수) ]</b>\n"
+            elif is_dump_cleared:
+                msg += f"🏁 <b>[ 암살자(aVWAP) 1-Shot 교전망 (당일 청산 완료) ]</b>\n"
+            else:
+                msg += f"⚔️ <b>[ 암살자(aVWAP) 1-Shot 교전망 (🟢 가동중) ]</b>\n"
         else:
             msg += f"⚠️ <b>[ 암살자 타격망 OFF (단순 관측 모드) ]</b>\n"
 
@@ -316,7 +335,11 @@ class AvwapConsolePlugin:
             msg += f"▫️ 본진 타격망: <b>⏳ 자본 잠김 감지 ➔ 애프터장 16:01 일괄 타격으로 이연 대기 중</b>\n"
         else:
             if is_avwap_hybrid:
-                if is_early_shutdown:
+                if is_mission_complete:
+                    msg += f"▫️ 교전 상태: <b>OFF (+1.0% 전량 익절 성공 - 당일 퇴근)</b>\n"
+                elif is_dump_cleared:
+                    msg += f"▫️ 교전 상태: <b>OFF (15:59 매수 1호가 스윕 청산 - 당일 퇴근)</b>\n"
+                elif is_early_shutdown:
                     msg += f"▫️ 교전 상태: <b>OFF (프리장 미진입으로 인한 진입 차단 - 조기 퇴근)</b>\n"
                 else:
                     if now_est.time() < datetime.time(4, 7):
