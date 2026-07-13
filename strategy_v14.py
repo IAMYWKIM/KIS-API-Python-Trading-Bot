@@ -1,11 +1,8 @@
 # ==========================================================
 # FILE: strategy_v14.py
 # ==========================================================
-# 🚨 MODIFIED: [TypeError 런타임 붕괴 궁극 수술] `from datetime import datetime` 선언 환경에서 `datetime.time(16,0)` 호출 시 발생하는 'descriptor time... int object' 에러를 막기 위해, 순수 정수 연산인 `now_est.hour >= 16`으로 100% 팩트 교체 완료.
-# 🚨 MODIFIED: [Case 08 절대 규칙 준수] 스냅샷 무결성 파이프라인 팩트 교정 - os.path.exists 방어막 100% 소각 및 EAFP 원자적 접근 강제
-# 🚨 MODIFIED: [Case 16] 임시 파일 변수 스코프 전진 배치(Hoisting)로 UnboundLocalError 런타임 붕괴 완벽 차단
-# 🚨 MODIFIED: [Date Schema Mismatch 방어] 16:05 EST에 스냅샷을 생성할 경우, 내일 자 스냅샷으로 락온(Forward-Lock)되도록 팩트 수술.
-# 🚨 MODIFIED: [NameError 즉사 버그 소각] `is_jackpot_reached` 변수 선언 누락으로 인해 플랜 생성이 붕괴되며 빈 지시서를 반환하던 맹독성 결함을 100% 팩트 수술 완료.
+# 🚨 MODIFIED: [Lost Update 궁극 방어] 스냅샷 파일 I/O 전역에 GlobalThrottle.get_file_lock()을 100% 팩트 래핑 완료.
+# 🚨 MODIFIED: [TypeError 런타임 붕괴 방어] datetime.time 충돌 소각 및 정수 연산 락온 유지.
 # ==========================================================
 import math
 import os
@@ -14,6 +11,7 @@ import tempfile
 import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from global_throttle import GlobalThrottle # 🚨 NEW: 중앙 통제소 결속
 
 class V14Strategy:
     def __init__(self, config):
@@ -32,17 +30,15 @@ class V14Strategy:
     def _floor(self, val): return math.floor(self._safe_float(val) * 100) / 100.0
 
     def _get_logical_date_str(self):
-        """ 🚨 [미래 참조 방어막 100% 수술] 16:00 이후 생성 시 D+1(명일)로 포워드 락온. 주말이면 차주 월요일로 정밀 매핑. """
         now_est = datetime.now(ZoneInfo('America/New_York'))
         
         if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 4):
             target_date = now_est - timedelta(days=1)
-        elif now_est.hour >= 16: # 🚨 MODIFIED: [TypeError 즉사 방어] datetime.time 충돌 소각 및 정수 연산 락온
+        elif now_est.hour >= 16: 
             target_date = now_est + timedelta(days=1)
         else:
             target_date = now_est
             
-        # 🚨 [주말(토/일) 보정] 16:05 금요일에 찍힌 스냅샷은 다음 거래일(월요일)을 타겟으로 락온
         if target_date.weekday() == 5: 
             target_date += timedelta(days=2)
         elif target_date.weekday() == 6: 
@@ -74,43 +70,47 @@ class V14Strategy:
             "process_status": str(safe_plan.get('process_status', ''))
         }
         
-        dir_name = os.path.dirname(snap_file)
-        if dir_name:
-            try: os.makedirs(dir_name, exist_ok=True)
-            except OSError: pass
-            
-        fd = None
-        temp_path = None
-        try:
-            fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                fd = None
-                json.dump(data, f, ensure_ascii=False, indent=4)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, snap_file)
+        # 🚨 MODIFIED: File Mutex 결속
+        with GlobalThrottle.get_file_lock(snap_file):
+            dir_name = os.path.dirname(snap_file)
+            if dir_name:
+                try: os.makedirs(dir_name, exist_ok=True)
+                except OSError: pass
+                
+            fd = None
             temp_path = None
-        except Exception as e:
-            logging.error(f"🚨 [{ticker}] 스냅샷 파일 저장 실패: {e}")
-            if fd is not None:
-                try: os.close(fd)
-                except OSError: pass
-            if temp_path:
-                try: os.remove(temp_path)
-                except OSError: pass
+            try:
+                fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    fd = None
+                    json.dump(data, f, ensure_ascii=False, indent=4)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temp_path, snap_file)
+                temp_path = None
+            except Exception as e:
+                logging.error(f"🚨 [{ticker}] 스냅샷 파일 저장 실패: {e}")
+                if fd is not None:
+                    try: os.close(fd)
+                    except OSError: pass
+                if temp_path:
+                    try: os.remove(temp_path)
+                    except OSError: pass
 
     def load_daily_snapshot(self, ticker):
         today_str = self._get_logical_date_str()
         snap_file = f"data/daily_snapshot_V14_{today_str}_{ticker}.json"
         
-        try:
-            with open(snap_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                if isinstance(data, dict) and data.get("date") == today_str:
-                    return data
-        except Exception:
-            pass
-        return None
+        # 🚨 MODIFIED: File Mutex 결속
+        with GlobalThrottle.get_file_lock(snap_file):
+            try:
+                with open(snap_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, dict) and data.get("date") == today_str:
+                        return data
+            except Exception:
+                pass
+            return None
 
     def _apply_wash_trade_shield(self, c_orders, b_orders):
         all_o = c_orders + b_orders
@@ -181,7 +181,6 @@ class V14Strategy:
 
         target_price = self._ceil(avg_price * (1 + target_ratio)) if avg_price > 0 else 0.0
         
-        # 🚨 MODIFIED: [NameError 즉사 방어] 누락되었던 is_jackpot_reached 변수 선언 팩트 복구
         is_jackpot_reached = target_price > 0 and current_price >= target_price
         
         one_portion_amt = portion

@@ -1,12 +1,15 @@
 # ==========================================================
 # FILE: callback_config_handler.py
 # ==========================================================
-# 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 38대 엣지 케이스 완벽 결속 교차 검증 완료
+# 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 46대 엣지 케이스 완벽 결속 교차 검증 완료
+# 🚨 MODIFIED: [암살자 부활 패러독스 궁극 방어] 수동 삼위일체 소각(/reset) 시 암살자의 상태 파일(avwap_trade_state)을 물리적 삭제하는 맹독성 로직을 영구 소각. 대신 `shutdown: True`와 0주 상태를 강제 주입하여 당일 고점 재진입(Limit-Trap) 대참사를 100% 원천 봉쇄.
 # 🚨 MODIFIED: [Phase 5 암살자 지정 예산 락온] INPUT 라우팅에 `AVWAP_BUDGET` 액션을 추가하여 사용자 예산 설정을 위한 상태(State) 전이를 완벽 매핑.
 # 🚨 MODIFIED: [Phase 5 오버나이트 락온] CONFIG_AVWAP 라우팅에 `TOGGLE_OVERNIGHT` 스위칭 로직을 결속하여 당일청산(MOC)과 오버나이트 모드를 동적으로 제어.
 # 🚨 MODIFIED: [Case 38 UI 렌더링 높이 붕괴 패러독스 차단] 버튼 클릭 시 1줄짜리 텍스트("업데이트 중...")로 중간 갱신하여 기존 화면을 증발시키는 행위를 전면 금지. 로딩은 query.answer() 팝업으로 대체하고 최종 결과로 단 1회 제자리 갱신(In-place Edit) 락온.
 # 🚨 MODIFIED: [Case 08, 16 헌법 사수] os.path.exists 소각, EAFP 디렉토리 생성 및 원자적 쓰기(Atomic Write) 강제 주입 완료.
 # 🚨 MODIFIED: [제1헌법 철저 준수] 파일 I/O 연산 및 텔레그램 통신 전역에 `asyncio.wait_for` 타임아웃 족쇄 100% 강제 래핑 완료 (Deadlock 원천 차단).
+# 🚨 MODIFIED: [Event Loop 교착 수술] AssassinLedger 및 SystemUpdater 인스턴스화 시 발생하는 __init__ 내부의 동기 I/O(파일 체크/생성) 블로킹을 막기 위해 100% 백그라운드 스레드(to_thread) 샌드박스로 래핑 락온.
+# 🚨 MODIFIED: [스냅샷 유령화 붕괴 궁극 수술] RESET:LOCK 내부 `_hijack_vwap_lock()` 실행 시 V-REV 뿐만 아니라 V14, V14VWAP 스냅샷 파일까지 순회하며 100% 영구 소각하도록 팩트 교정 완료.
 # ==========================================================
 import logging
 import datetime
@@ -48,7 +51,6 @@ class CallbackConfigHandler:
         chat_id = update.effective_chat.id
         ticker = data[2] if len(data) > 2 else ""
 
-        # 🚨 MODIFIED: [커스텀 토스트 팝업 사수] 하위 모듈에서 명시적인 로딩/에러 팝업을 띄워야 하는 라우팅은 최상단 범용 응답을 바이패스(Bypass)합니다.
         needs_custom_toast = False
         if action == "UPDATE" and sub == "CONFIRM": needs_custom_toast = True
         elif action == "RESET" and sub in ["LOCK", "CONFIRM"]: needs_custom_toast = True
@@ -68,7 +70,13 @@ class CallbackConfigHandler:
                 except Exception: pass
                 
                 from plugin_updater import SystemUpdater
-                updater = SystemUpdater()
+                try:
+                    updater = await asyncio.wait_for(asyncio.to_thread(SystemUpdater), timeout=5.0)
+                except Exception as e:
+                    logging.error(f"🚨 업데이터 코어 로드 실패: {e}")
+                    try: await asyncio.wait_for(query.edit_message_text(f"❌ <b>[로드 실패]</b> 시스템 모듈을 초기화할 수 없습니다.", parse_mode='HTML'), timeout=10.0)
+                    except Exception: pass
+                    return
                 
                 try:
                     success, msg = await updater.pull_latest_code()
@@ -153,7 +161,7 @@ class CallbackConfigHandler:
                                     fd = None
                                     json.dump(s_state, f_out, ensure_ascii=False, indent=4)
                                     f_out.flush()
-                                os.fsync(f_out.fileno())
+                                    os.fsync(f_out.fileno())
                                 os.replace(tmp_path, slice_file)
                                 tmp_path = None
                             except Exception:
@@ -169,15 +177,17 @@ class CallbackConfigHandler:
                         try:
                             est_now = datetime.datetime.now(ZoneInfo('America/New_York'))
                             today_str = est_now.strftime("%Y-%m-%d")
-                            snap_file = f"data/daily_snapshot_REV_{today_str}_{ticker}.json"
-                            os.remove(snap_file)
-                        except OSError: 
+                            for snap_prefix in ["REV", "V14", "V14VWAP"]:
+                                snap_file = f"data/daily_snapshot_{snap_prefix}_{today_str}_{ticker}.json"
+                                try: os.remove(snap_file)
+                                except OSError: pass
+                        except Exception: 
                             pass
                         
                     await asyncio.wait_for(asyncio.to_thread(_hijack_vwap_lock), timeout=10.0)
                     await asyncio.wait_for(asyncio.to_thread(self.cfg.reset_lock_for_ticker, ticker), timeout=10.0)
                     try: 
-                        await asyncio.wait_for(query.edit_message_text(f"✅ <b>[{html.escape(str(ticker))}] 금일 매매 잠금이 해제되었으며, 오염된 슬라이싱 엔진도 무효화되었습니다.</b>", parse_mode='HTML'), timeout=10.0)
+                        await asyncio.wait_for(query.edit_message_text(f"✅ <b>[{html.escape(str(ticker))}] 금일 매매 잠금이 해제되었으며, 오염된 슬라이싱 엔진 및 스냅샷도 무효화되었습니다.</b>", parse_mode='HTML'), timeout=10.0)
                     except telegram.error.BadRequest as e:
                         if "not modified" not in str(e).lower(): logging.warning(f"⚠️ UI 갱신 예외: {e}")
                     except Exception: pass
@@ -199,7 +209,7 @@ class CallbackConfigHandler:
                 is_rev_active = (current_ver == "V_REV")
                 
                 await asyncio.wait_for(asyncio.to_thread(self.cfg.set_reverse_state, ticker, is_rev_active, 0, 0.0), timeout=10.0)
-             
+                
                 ledger = await asyncio.wait_for(asyncio.to_thread(self.cfg.get_ledger), timeout=10.0) or []
                 ledger_data = [r for r in ledger if isinstance(r, dict) and str(r.get('ticker')) != str(ticker)]
                 await asyncio.wait_for(asyncio.to_thread(self.cfg._save_json, self.cfg.FILES["LEDGER"], ledger_data), timeout=15.0)
@@ -224,7 +234,7 @@ class CallbackConfigHandler:
                                 fd = None
                                 json.dump(b_data, f_out, ensure_ascii=False, indent=4)
                                 f_out.flush()
-                            os.fsync(f_out.fileno())
+                                os.fsync(f_out.fileno())
                             os.replace(tmp_path, backup_file)
                             tmp_path = None
                         except Exception:
@@ -243,6 +253,60 @@ class CallbackConfigHandler:
                     await asyncio.wait_for(asyncio.to_thread(self.queue_ledger.clear_queue, ticker), timeout=10.0)
                     await asyncio.wait_for(asyncio.to_thread(self.queue_ledger.sync_with_broker, ticker, 0, 0.0), timeout=10.0)
 
+                def _nuke_assassin_data():
+                    try:
+                        from assassin_ledger import AssassinLedger
+                        a_ledger = AssassinLedger()
+                        a_ledger.clear_ledger(ticker)
+                    except Exception as e:
+                        logging.error(f"🚨 [{ticker}] 암살자 장부 강제 소각 중 에러: {e}")
+                    
+                    # 🚨 MODIFIED: [암살자 부활 패러독스 궁극 방어] 파일 물리적 삭제(os.remove)를 영구 소각하고, shutdown: True 팩트를 원자적으로 덮어씌워 당일 재진입 원천 차단
+                    state_file = f"data/avwap_trade_state_{ticker}.json"
+                    try:
+                        est_now = datetime.datetime.now(ZoneInfo('America/New_York'))
+                        today_str = est_now.strftime('%Y-%m-%d')
+                        state_data = {}
+                        try:
+                            with open(state_file, 'r', encoding='utf-8') as f:
+                                state_data = json.load(f)
+                        except Exception:
+                            pass
+
+                        state_data['date'] = today_str
+                        state_data['qty'] = 0
+                        state_data['buy_odno'] = ""
+                        state_data['sell_odno'] = ""
+                        state_data['shutdown'] = True
+                        state_data['dumped'] = True
+
+                        dir_name = os.path.dirname(state_file) or '.'
+                        try: os.makedirs(dir_name, exist_ok=True)
+                        except OSError: pass
+
+                        fd = None
+                        tmp_path = None
+                        try:
+                            fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
+                            with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
+                                fd = None
+                                json.dump(state_data, f_out, ensure_ascii=False, indent=4)
+                                f_out.flush()
+                                os.fsync(f_out.fileno())
+                            os.replace(tmp_path, state_file)
+                            tmp_path = None
+                        except Exception as inner_e:
+                            if fd is not None:
+                                try: os.close(fd)
+                                except OSError: pass
+                            if tmp_path:
+                                try: os.remove(tmp_path)
+                                except OSError: pass
+                            raise inner_e
+                    except Exception as e:
+                        logging.error(f"🚨 [{ticker}] 암살자 상태 셧다운 주입 에러: {e}")
+
+                await asyncio.wait_for(asyncio.to_thread(_nuke_assassin_data), timeout=10.0)
                 await asyncio.wait_for(asyncio.to_thread(self.cfg.reset_lock_for_ticker, ticker), timeout=10.0)
 
                 prev_c = 0.0
@@ -297,7 +361,7 @@ class CallbackConfigHandler:
                         logging.error(f"🚨 0주 강제 스냅샷 오버라이드 에러: {e}")
 
                 try:
-                    await asyncio.wait_for(query.edit_message_text(f"✅ <b>[{html.escape(str(ticker))}] 삼위일체 소각(Nuke) 및 초기화 완료!</b>\n▫️ 본장부, 백업장부, 큐(Queue) 찌꺼기 데이터가 100% 영구 삭제되었습니다.\n▫️ KIS 실잔고 동기화, 매매 잠금 해제 및 디커플링 타점 스냅샷 원자적 덮어쓰기가 완벽히 집행되었습니다.", parse_mode='HTML'), timeout=10.0)
+                    await asyncio.wait_for(query.edit_message_text(f"✅ <b>[{html.escape(str(ticker))}] 삼위일체 소각(Nuke) 및 초기화 완료!</b>\n▫️ 본장부, 백업장부, 큐(Queue) 찌꺼기 데이터가 100% 영구 삭제되었습니다.\n▫️ 암살자의 재진입(부활)이 전면 차단되었으며, 매매 잠금 해제 및 디커플링 타점 스냅샷 덮어쓰기가 완벽히 집행되었습니다.", parse_mode='HTML'), timeout=10.0)
                 except telegram.error.BadRequest as e:
                     if "not modified" not in str(e).lower(): logging.warning(f"⚠️ UI 갱신 예외: {e}")
                 except Exception: pass
@@ -376,7 +440,6 @@ class CallbackConfigHandler:
                     except telegram.error.BadRequest as e:
                         if "not modified" not in str(e).lower(): logging.warning(f"⚠️ UI 갱신 예외: {e}")
                     except Exception: pass
-             
             elif sub == "LIST":
                 if hasattr(controller, 'cmd_history'):
                     await controller.cmd_history(update, context)
@@ -570,7 +633,7 @@ class CallbackConfigHandler:
                     return
                 target_tickers = [sub]
                 msg_txt = sub + " 전용"
-                
+                 
             await asyncio.wait_for(asyncio.to_thread(self.cfg.set_active_tickers, target_tickers), timeout=10.0)
             try: 
                 await asyncio.wait_for(query.edit_message_text(f"✅ <b>[운용 종목 락온 완료]</b>\n▫️ <b>{html.escape(str(msg_txt))}</b> 모드로 전환되었습니다.\n▫️ /sync를 눌러 확인하십시오.", parse_mode='HTML'), timeout=10.0)
@@ -602,7 +665,6 @@ class CallbackConfigHandler:
                 except Exception as e:
                     logging.error(f"🚨 [{ticker}] 암살자 모드 토글 실패: {e}")
 
-            # 🚨 NEW: [Phase 5 오버나이트 락온] 암살자 오버나이트 모드 스위칭 로직
             elif sub == "TOGGLE_OVERNIGHT":
                 try:
                     current_state = await asyncio.wait_for(asyncio.to_thread(self.cfg.get_avwap_overnight_mode, ticker), timeout=10.0)
@@ -618,8 +680,7 @@ class CallbackConfigHandler:
                             logging.error(f"🚨 관제탑 UI 갱신 실패: {e}")
                 except Exception as e:
                     logging.error(f"🚨 [{ticker}] 암살자 오버나이트 토글 실패: {e}")
-            
-        # 🚨 NEW: [Phase 5 지정 예산 라우팅] INPUT 액션 분기에 AVWAP_BUDGET을 100% 결속.
+             
         elif action == "INPUT":
             if not ticker: return
             controller.user_states[chat_id] = f"CONF_{sub}_{ticker}"

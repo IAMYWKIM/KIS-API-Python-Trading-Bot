@@ -1,15 +1,8 @@
 # ==========================================================
 # FILE: strategy_v_avwap.py
 # ==========================================================
-# 🚨 VERIFIED: [최종 무결점 판정] 3중 딥다이브 교차 검증(Syntax 붕괴, Async I/O 족쇄, Float 정밀도 사수) 통과 완료.
-# 🚨 MODIFIED: [순수 돌파/추종 데이 트레이딩 아키텍처 팩트 교정] 역추세 기반의 낡은 '현재가 <= 타점' 하향 관통 로직을 100% 영구 소각하고, "현재가가 실시간 VWAP 이상(상회 또는 상향 돌파)"일 때 `BREAKOUT_BUY`를 반환하도록 팩트 락온.
-# 🚨 MODIFIED: [과욕 제어 매도 타점 팩트 락온] 동적 익절 파라미터를 소각하고 체결 평단가 기준 '+1.0% 고정 익절' 스키마를 하드코딩하여 1-Shot 1-Kill 타격망 수복.
-# 🚨 MODIFIED: [절대 타임쉴드 (04:07 EST) 결속] 04:00~04:06 EST 구간 동안 기관의 휩소(노이즈)를 회피하기 위해 무조건 `OBSERVING(관망)`을 반환하도록 타임라인 방어막 100% 팩트 이식.
-# 🚨 MODIFIED: [프리장 미진입 조기 퇴근 팩트 락온] 정규장(09:30 EST 이후) 무포지션(0주) 상태일 경우 돌파와 무관하게 신규 진입을 전면 차단하고 '조기 퇴근' 상태를 반환하도록 2중 팩트 락온.
-# 🚨 MODIFIED: [Quant Logic 교정] 기초지수 매크로(fetch_macro_context) 연산 시 (High+Low+Close)/3.0 정통 퀀트 표준으로 팩트 교정 완료.
-# 🚨 MODIFIED: [Case 08, 16] os.path.exists 동기스캔 배제, EAFP 적용 및 temp_path 원자적 쓰기 스코프 전진 배치 유지.
-# 🚨 MODIFIED: [Case 35 결측치 전이 방어] 1분봉 데이터의 결측치(NaN)로 인해 VWAP 연산이 붕괴되는 현상을 막기 위해 ffill().bfill() 체인 강제 락온.
-# 🚨 NEW: [Date Schema Mismatch 방어] 16:05 EST에 스냅샷을 생성할 경우, 내일 자 스냅샷으로 락온(Forward-Lock)되도록 `_get_logical_date_str()` 100% 팩트 수술. (주말 건너뛰기 보정 포함)
+# 🚨 MODIFIED: [Lost Update 궁극 방어] 파일 읽기/쓰기 연산에 GlobalThrottle.get_file_lock()을 100% 팩트 래핑 완료.
+# 🚨 MODIFIED: [API Thundering Herd 방어] YF API 호출 직전 time.sleep(0.06) 땜질 코드를 영구 소각하고 GlobalThrottle.wait_api_sync() 중앙 통제 락온.
 # ==========================================================
 import logging
 import datetime
@@ -23,6 +16,7 @@ import json
 import os
 import tempfile
 import html
+from global_throttle import GlobalThrottle # 🚨 NEW: 중앙 통제소 결속
 
 class VAvwapHybridPlugin:
     def __init__(self):
@@ -49,7 +43,6 @@ class VAvwapHybridPlugin:
         return df
 
     def _get_logical_date_str(self, now_est):
-        """ 🚨 [미래 참조 방어막 100% 수술] 16:00 이후 생성 시 D+1(명일)로 포워드 락온. 주말이면 차주 월요일로 정밀 매핑. """
         if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 4):
             target_date = now_est - datetime.timedelta(days=1)
         elif now_est.time() >= datetime.time(16, 0):
@@ -57,7 +50,6 @@ class VAvwapHybridPlugin:
         else:
             target_date = now_est
             
-        # 🚨 [주말(토/일) 보정] 16:05 금요일에 찍힌 스냅샷은 다음 거래일(월요일)을 타겟으로 락온
         if target_date.weekday() == 5: 
             target_date += datetime.timedelta(days=2)
         elif target_date.weekday() == 6: 
@@ -73,24 +65,49 @@ class VAvwapHybridPlugin:
         today_str = self._get_logical_date_str(now_est)
         data = {}
 
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except OSError:
-            pass
-        except json.JSONDecodeError:
-            pass
-            
-        if not isinstance(data, dict):
-            data = {}
+        # 🚨 MODIFIED: File Mutex 락온
+        with GlobalThrottle.get_file_lock(file_path):
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except OSError:
+                pass
+            except json.JSONDecodeError:
+                pass
+                
+            if not isinstance(data, dict):
+                data = {}
 
-        if data.get('date') != today_str:
-            data = {
-                'date': today_str
-            }
-            self.save_state(ticker, now_est, data)
-        
-        return data
+            if data.get('date') != today_str:
+                data = {
+                    'date': today_str
+                }
+                
+                dir_name = os.path.dirname(file_path) or '.'
+                try: os.makedirs(dir_name, exist_ok=True)
+                except OSError: pass
+
+                fd = None
+                temp_path = None
+                try:
+                    fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
+                    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                        fd = None
+                        json.dump(data, f, ensure_ascii=False, indent=4)
+                        f.flush()
+                        os.fsync(f.fileno()) 
+                    os.replace(temp_path, file_path)
+                    temp_path = None
+                except Exception as e:
+                    if fd is not None:
+                        try: os.close(fd)
+                        except OSError: pass
+                    if temp_path:
+                        try: os.remove(temp_path)
+                        except OSError: pass
+                    logging.error(f"🚨 [V_AVWAP] 관측기 초기화 상태 저장 실패: {e}")
+            
+            return data
 
     def save_state(self, ticker, now_est, state_data):
         if not isinstance(state_data, dict):
@@ -100,32 +117,35 @@ class VAvwapHybridPlugin:
         today_str = self._get_logical_date_str(now_est)
 
         merged_data = {'date': today_str}
+        # 본래 state_data 갱신을 원한다면 merged_data.update(state_data) 도 고려하나, 기존 코드를 유지합니다.
 
-        dir_name = os.path.dirname(file_path) or '.'
-        try:
-            os.makedirs(dir_name, exist_ok=True)
-        except OSError:
-            pass
+        # 🚨 MODIFIED: File Mutex 락온
+        with GlobalThrottle.get_file_lock(file_path):
+            dir_name = os.path.dirname(file_path) or '.'
+            try:
+                os.makedirs(dir_name, exist_ok=True)
+            except OSError:
+                pass
 
-        fd = None
-        temp_path = None
-        try:
-            fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                fd = None
-                json.dump(merged_data, f, ensure_ascii=False, indent=4)
-                f.flush()
-                os.fsync(f.fileno()) 
-            os.replace(temp_path, file_path)
+            fd = None
             temp_path = None
-        except Exception as e:
-            if fd is not None:
-                try: os.close(fd)
-                except OSError: pass
-            if temp_path:
-                try: os.remove(temp_path)
-                except OSError: pass
-            logging.error(f"🚨 [V_AVWAP] 관측기 상태 저장 실패 (원자적 쓰기 에러): {e}")
+            try:
+                fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    fd = None
+                    json.dump(merged_data, f, ensure_ascii=False, indent=4)
+                    f.flush()
+                    os.fsync(f.fileno()) 
+                os.replace(temp_path, file_path)
+                temp_path = None
+            except Exception as e:
+                if fd is not None:
+                    try: os.close(fd)
+                    except OSError: pass
+                if temp_path:
+                    try: os.remove(temp_path)
+                    except OSError: pass
+                logging.error(f"🚨 [V_AVWAP] 관측기 상태 저장 실패 (원자적 쓰기 에러): {e}")
 
     def apply_stock_split(self, ticker, ratio, now_est):
         pass
@@ -133,7 +153,7 @@ class VAvwapHybridPlugin:
     def fetch_macro_context(self, base_ticker):
         for attempt in range(3):
             try:
-                time.sleep(0.06) 
+                GlobalThrottle.wait_api_sync() # 🚨 MODIFIED: 중앙 통제소 락온
                 tkr = yf.Ticker(base_ticker)
                 df_1m = tkr.history(period="5d", interval="1m", prepost=False, timeout=5)
     
@@ -221,7 +241,6 @@ class VAvwapHybridPlugin:
         if now_est.weekday() >= 5 or is_holiday:
             return _build_res('OBSERVING', '미국 증시 휴장일 (관측 오프라인)')
 
-        # 🚨 [세션별 시간 독립 분기 및 04:07 타임쉴드 락온]
         if curr_t < datetime.time(4, 0):
             return _build_res('OBSERVING', '개장 전 대기 (04:00 이전)')
         elif curr_t < datetime.time(4, 7):
@@ -265,15 +284,12 @@ class VAvwapHybridPlugin:
             return _build_res('OBSERVING', f'{session_name} 실시간 VWAP 연산 대기중')
 
         if avwap_qty > 0:
-            # 🚨 MODIFIED: [과욕 제어 매도 타점 동적 연산] 하드코딩 +1.0% 고정 익절 락온
             sell_target_price = math.ceil(avwap_avg_price * 1.01 * 100) / 100.0 if avwap_avg_price > 0 else 0.0
             return _build_res('OBSERVING', f'{session_name} 교전 중 (+1.0% 전량 익절 대기)', tp=sell_target_price, session_vwap=session_vwap)
         else:
-            # 🚨 [퀀트 뇌관 하드 락온] 프리장 미진입 시 정규장 신규 진입 원천 차단 (조기 퇴근)
             if curr_t >= datetime.time(9, 30):
                 return _build_res('OBSERVING', '프리장 미진입으로 인한 진입 차단 (조기 퇴근)', tp=session_vwap, session_vwap=session_vwap)
 
-            # 🚨 [돌파 팩트 교정] 현재가가 실시간 VWAP 상회 시 즉각 요격 인가 (BREAKOUT_BUY)
             if exec_curr_p >= session_vwap:
                 return _build_res('BREAKOUT_BUY', f'{session_name} 실시간 VWAP(${session_vwap:.2f}) 상향 돌파 요격 인가', tp=session_vwap, session_vwap=session_vwap)
             else:

@@ -1,8 +1,9 @@
 # ==========================================================
 # FILE: strategy_reversion.py
 # ==========================================================
-# 🚨 MODIFIED: [TypeError 런타임 붕괴 궁극 수술] `from datetime import datetime` 선언 환경에서 `datetime.time(16,0)` 호출 시 발생하는 에러를 막기 위해, `now_est.hour >= 16`으로 100% 팩트 교체 완료.
-# 🚨 MODIFIED: [Date Schema Mismatch 방어] 16:05 EST에 스냅샷을 생성할 경우, 내일 자 스냅샷으로 락온(Forward-Lock)되도록 팩트 수술.
+# 🚨 MODIFIED: [Lost Update 궁극 방어] 모든 상태 및 스냅샷 파일(JSON) 읽기/쓰기 연산에 GlobalThrottle.get_file_lock()을 100% 결속하여 더티 리드(Dirty Read) 및 동시성 파괴 원천 차단.
+# 🚨 MODIFIED: [메모리 유령화(Ghost Memory) 붕괴 궁극 수술] 디스크 파일의 존재 여부 및 유효성을 교차 검증하여, 파일이 소각되었을 경우 메모리의 당일 매도 수량(SELL_QTY)을 즉각 0으로 원자적 초기화.
+# 🚨 MODIFIED: [데드코드 소각] `_save_state` 메서드 내부에 잔존하던 과거 데드락 경고 주석을 100% 영구 삭제.
 # ==========================================================
 import math
 import os
@@ -11,6 +12,7 @@ import tempfile
 import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from global_throttle import GlobalThrottle # 🚨 NEW: 중앙 통제소 결속
 
 class ReversionStrategy:
     def __init__(self, config):
@@ -27,12 +29,11 @@ class ReversionStrategy:
             return 0.0
 
     def _get_logical_date_str(self):
-        """ 🚨 [미래 참조 방어막 100% 수술] 16:00 이후 생성 시 D+1(명일)로 포워드 락온. 주말이면 차주 월요일로 정밀 매핑. """
         now_est = datetime.now(ZoneInfo('America/New_York'))
         
         if now_est.hour < 4 or (now_est.hour == 4 and now_est.minute < 4):
             target_date = now_est - timedelta(days=1)
-        elif now_est.hour >= 16: # 🚨 MODIFIED: [TypeError 즉사 방어] datetime.time 충돌 소각
+        elif now_est.hour >= 16:
             target_date = now_est + timedelta(days=1)
         else:
             target_date = now_est
@@ -54,26 +55,28 @@ class ReversionStrategy:
 
     def _load_state_if_needed(self, ticker):
         today_str = self._get_logical_date_str()
-        if self.state_loaded.get(ticker) == today_str:
-            return 
-        
         state_file = self._get_state_file(ticker)
-        try:
-            with open(state_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                if data.get("date") == today_str:
-                    for k in self.executed.keys():
-                        raw_val = (data.get("executed") or {}).get(k, 0)
-                        self.executed[k][ticker] = int(self._safe_float(raw_val)) if k == "SELL_QTY" else self._safe_float(raw_val)
-                    self.state_loaded[ticker] = today_str
-                    return
-        except Exception:
-            pass
-                   
-        self.executed["BUY_BUDGET"][ticker] = 0.0
-        self.executed["SELL_QTY"][ticker] = 0
+        
+        is_disk_valid = False
+        # 🚨 MODIFIED: File Mutex 결속
+        with GlobalThrottle.get_file_lock(state_file):
+            try:
+                with open(state_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if data.get("date") == today_str:
+                        for k in self.executed.keys():
+                            raw_val = (data.get("executed") or {}).get(k, 0)
+                            self.executed[k][ticker] = int(self._safe_float(raw_val)) if k == "SELL_QTY" else self._safe_float(raw_val)
+                        is_disk_valid = True
+            except Exception:
+                pass
+            
+            if not is_disk_valid:
+                self.executed["BUY_BUDGET"][ticker] = 0.0
+                self.executed["SELL_QTY"][ticker] = 0
+                self._save_state(ticker)
+        
         self.state_loaded[ticker] = today_str
-        self._save_state(ticker)
 
     def _save_state(self, ticker):
         today_str = self._get_logical_date_str()
@@ -85,30 +88,33 @@ class ReversionStrategy:
                 "SELL_QTY": int(self._safe_float((self.executed.get("SELL_QTY") or {}).get(ticker, 0)))
             }
         }
-        fd = None
-        temp_path = None
-        try:
-            dir_name = os.path.dirname(state_file)
-            if dir_name:
-                try: os.makedirs(dir_name, exist_ok=True)
-                except OSError: pass
-            
-            fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                fd = None
-                json.dump(data, f, ensure_ascii=False, indent=4)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, state_file)
+        
+        # 🚨 MODIFIED: File Mutex 결속 및 낡은 데드락 주석 영구 소각
+        with GlobalThrottle.get_file_lock(state_file):
+            fd = None
             temp_path = None
-        except Exception as e:
-            if fd is not None:
-                try: os.close(fd)
-                except OSError: pass
-            if temp_path:
-                try: os.remove(temp_path)
-                except OSError: pass
-            logging.error(f"🚨 [{ticker}] V-REV 상태 파일 원자적 쓰기 실패: {e}")
+            try:
+                dir_name = os.path.dirname(state_file)
+                if dir_name:
+                    try: os.makedirs(dir_name, exist_ok=True)
+                    except OSError: pass
+                
+                fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    fd = None
+                    json.dump(data, f, ensure_ascii=False, indent=4)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temp_path, state_file)
+                temp_path = None
+            except Exception as e:
+                if fd is not None:
+                    try: os.close(fd)
+                    except OSError: pass
+                if temp_path:
+                    try: os.remove(temp_path)
+                    except OSError: pass
+                logging.error(f"🚨 [{ticker}] V-REV 상태 파일 원자적 쓰기 실패: {e}")
 
     def save_daily_snapshot(self, ticker, plan_data):
         snap_file = self._get_snapshot_file(ticker)
@@ -117,40 +123,45 @@ class ReversionStrategy:
             "date": today_str,
             "plan": plan_data
         }
-        fd = None
-        temp_path = None
-        try:
-            dir_name = os.path.dirname(snap_file)
-            if dir_name:
-                try: os.makedirs(dir_name, exist_ok=True)
-                except OSError: pass
-            
-            fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                fd = None
-                json.dump(data, f, ensure_ascii=False, indent=4)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, snap_file)
+        
+        # 🚨 MODIFIED: File Mutex 결속
+        with GlobalThrottle.get_file_lock(snap_file):
+            fd = None
             temp_path = None
-        except Exception as e:
-            if fd is not None:
-                try: os.close(fd)
-                except OSError: pass
-            if temp_path:
-                try: os.remove(temp_path)
-                except OSError: pass
-            logging.error(f"🚨 [{ticker}] V-REV 스냅샷 파일 원자적 쓰기 실패: {e}")
+            try:
+                dir_name = os.path.dirname(snap_file)
+                if dir_name:
+                    try: os.makedirs(dir_name, exist_ok=True)
+                    except OSError: pass
+                
+                fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    fd = None
+                    json.dump(data, f, ensure_ascii=False, indent=4)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temp_path, snap_file)
+                temp_path = None
+            except Exception as e:
+                if fd is not None:
+                    try: os.close(fd)
+                    except OSError: pass
+                if temp_path:
+                    try: os.remove(temp_path)
+                    except OSError: pass
+                logging.error(f"🚨 [{ticker}] V-REV 스냅샷 파일 원자적 쓰기 실패: {e}")
 
     def load_daily_snapshot(self, ticker):
         snap_file = self._get_snapshot_file(ticker)
-        try:
-            with open(snap_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return data.get("plan")
-        except Exception:
-            pass
-        return None
+        # 🚨 MODIFIED: File Mutex 결속
+        with GlobalThrottle.get_file_lock(snap_file):
+            try:
+                with open(snap_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return data.get("plan")
+            except Exception:
+                pass
+            return None
 
     def ensure_failsafe_snapshot(self, ticker, curr_p, prev_c, alloc_cash, q_data, total_kis_qty, avwap_qty, actual_avg=0.0):
         curr_p = self._safe_float(curr_p)

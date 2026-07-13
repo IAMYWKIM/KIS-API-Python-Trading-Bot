@@ -1,14 +1,9 @@
 # ==========================================================
 # FILE: volatility_engine.py
 # ==========================================================
-# 🚨 MODIFIED: [원샷 딥다이브] TOCTOU 레이스 컨디션 차단 및 EAFP 파일 I/O 전면 교체
-# 🚨 MODIFIED: [Case 16 위반 교정] 원자적 쓰기 실패 시 UnboundLocalError 연쇄 붕괴를 막기 위한 temp_path 스코프 최상단 전진 배치(Hoisting)
-# 🚨 MODIFIED: [Float 정밀도 붕괴 방어] np.inf 및 NaN 맹독성 데이터를 0.0으로 강제 치환하는 np.nan_to_num 절대 쉴드 락온
-# 🚨 MODIFIED: [Insight 25] np.inf 수학적 예외 차단. log_returns 연산 중 발생하는 무한대 값을 np.nan으로 치환하여 ZeroDivision 크래시를 완벽 차단.
-# 🚨 MODIFIED: [V40.XX 옴니 매트릭스 전면 수술] 후행성 60MA/120MA 엔진 전면 소각 및 동행 지표(Coincident Indicator) 듀얼 모멘텀 엔진 100% 교체.
-# 🚨 MODIFIED: [Case 04 절대 헌법 준수] 횡보장 락다운 영구 소각 및 롱(SOXL) 진입 무조건 허용 락온
-# 🚨 MODIFIED: [Case 05] ZeroDivision 런타임 붕괴 방어용 replace(0, np.nan) 락온 결속
-# 🚨 NEW: [Case 32 & 33] yfinance 타임아웃 3단 지수 백오프 및 TPS 캡핑 방어막 전면 이식 완료
+# 🚨 MODIFIED: [API Thundering Herd 방어] YF 모듈 통신 직전 하드코딩된 time.sleep(0.06)을 영구 소각하고, GlobalThrottle.wait_api_sync()로 100% 위임 락온.
+# 🚨 MODIFIED: [Lost Update 궁극 방어] 캐시 파일(CACHE_FILE) 읽기/쓰기 시 GlobalThrottle.get_file_lock()을 래핑하여 경쟁 조건(Race Condition) 원천 차단.
+# 🚨 MODIFIED: [TOCTOU 레이스 컨디션 차단] EAFP 파일 I/O 및 원자적 쓰기 스코프 전진 배치 유지.
 # ==========================================================
 import yfinance as yf
 import pandas as pd
@@ -21,6 +16,7 @@ import asyncio
 import time
 from zoneinfo import ZoneInfo
 from datetime import datetime
+from global_throttle import GlobalThrottle # 🚨 NEW: 중앙 통제소 결속
 
 CACHE_FILE = "data/volatility_cache.json"
 
@@ -43,62 +39,61 @@ def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def _load_cache(key, default_val):
-    # 🚨 MODIFIED: [TOCTOU 레이스 컨디션 방어] os.path.exists 데드코드 소각 및 EAFP 적용
-    try:
-        with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            val = data.get(key)
-            if val is not None and float(val) > 0:
-                return float(val)
-    except Exception:
-        pass
-    return default_val
-
-# 🚨 MODIFIED: [제4헌법 준수] 원자적 쓰기(Atomic Write) 강제 락온 및 스코프 전진 배치
-def _save_cache(key, value):
-    data = {}
-    try:
-        with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    except Exception:
-        pass
-    
-    data[key] = value
-    
-    dir_name = os.path.dirname(CACHE_FILE) or '.'
-    if dir_name:
-        # 🚨 MODIFIED: TOCTOU 방어를 위한 EAFP 패턴 락온
+    # 🚨 MODIFIED: File Mutex 결속
+    with GlobalThrottle.get_file_lock(CACHE_FILE):
         try:
-            os.makedirs(dir_name, exist_ok=True)
-        except OSError:
+            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                val = data.get(key)
+                if val is not None and float(val) > 0:
+                    return float(val)
+        except Exception:
             pass
-         
-    fd = None
-    temp_path = None
-    try:
-        fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            fd = None
-            json.dump(data, f, ensure_ascii=False, indent=4)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_path, CACHE_FILE)
-        temp_path = None
-    except Exception as e:
-        if fd is not None:
-            try: os.close(fd)
-            except OSError: pass
-        if temp_path:
-            # 🚨 MODIFIED: TOCTOU 맹독성 차단. 무조건 삭제 시도 후 예외 무시
-            try: os.remove(temp_path)
-            except OSError: pass
-        logging.error(f"⚠️ [Engine] 캐시 저장 실패 및 임시 파일 소각: {e}")
+        return default_val
 
-# 🚨 NEW: [Case 33] 3단 지수 백오프 이식
+def _save_cache(key, value):
+    # 🚨 MODIFIED: File Mutex 결속 및 원자적 쓰기 유지
+    with GlobalThrottle.get_file_lock(CACHE_FILE):
+        data = {}
+        try:
+            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception:
+            pass
+        
+        data[key] = value
+        
+        dir_name = os.path.dirname(CACHE_FILE) or '.'
+        if dir_name:
+            try:
+                os.makedirs(dir_name, exist_ok=True)
+            except OSError:
+                pass
+             
+        fd = None
+        temp_path = None
+        try:
+            fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                fd = None
+                json.dump(data, f, ensure_ascii=False, indent=4)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, CACHE_FILE)
+            temp_path = None
+        except Exception as e:
+            if fd is not None:
+                try: os.close(fd)
+                except OSError: pass
+            if temp_path:
+                try: os.remove(temp_path)
+                except OSError: pass
+            logging.error(f"⚠️ [Engine] 캐시 저장 실패 및 임시 파일 소각: {e}")
+
 def _calculate_1y_atr(ticker, cache_key, default_atr):
     for attempt in range(3):
         try:
-            time.sleep(0.06) # 🚨 NEW: [Case 32] TPS 캡핑
+            GlobalThrottle.wait_api_sync() # 🚨 MODIFIED: 중앙 통제소 락온
             df = yf.download(ticker, period="2y", interval="1d", progress=False, timeout=5)
             if df.empty:
                 if attempt < 2:
@@ -117,7 +112,6 @@ def _calculate_1y_atr(ticker, cache_key, default_atr):
             df['TR'] = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
             df['ATR14'] = df['TR'].rolling(window=14).mean()
             
-            # 🚨 MODIFIED: [Case 05] ZeroDivision 런타임 붕괴 방어 및 Infinity(무한대) 예외 차단
             df['Close'] = df['Close'].replace(0, np.nan)
             df['ATR14_pct'] = (df['ATR14'] / df['Close']) * 100
             
@@ -143,7 +137,7 @@ def _calculate_1y_atr(ticker, cache_key, default_atr):
 def get_tqqq_target_drop_full():
     for attempt in range(3):
         try:
-            time.sleep(0.06)
+            GlobalThrottle.wait_api_sync() # 🚨 MODIFIED: 중앙 통제소 락온
             vxn_data = yf.download("^VXN", period="2y", interval="1d", progress=False, timeout=5)
             
             if vxn_data.empty: 
@@ -197,7 +191,7 @@ def get_tqqq_target_drop_full():
 def get_soxl_target_drop_full():
     for attempt in range(3):
         try:
-            time.sleep(0.06)
+            GlobalThrottle.wait_api_sync() # 🚨 MODIFIED: 중앙 통제소 락온
             soxx_data = yf.download("SOXX", period="2y", interval="1d", progress=False, timeout=5)
             if soxx_data.empty or len(soxx_data) < 21: 
                 if attempt < 2:
@@ -210,7 +204,6 @@ def get_soxl_target_drop_full():
                     
             closes = soxx_data['Close'].replace(0, np.nan).dropna()
             
-            # 🚨 MODIFIED: [Insight 25] np.inf 수학적 예외 차단
             log_returns = np.log(closes / closes.shift(1)).replace([np.inf, -np.inf], np.nan)
             hv_20d = log_returns.rolling(window=20).std() * np.sqrt(252) * 100
             
@@ -256,7 +249,7 @@ def get_soxl_target_drop_full():
 def _fetch_vwap_momentum_regime_sync(broker_instance=None) -> dict:
     for attempt in range(3):
         try:
-            time.sleep(0.06)
+            GlobalThrottle.wait_api_sync() # 🚨 MODIFIED: 중앙 통제소 락온
             ticker = yf.Ticker("SOXX")
             df = ticker.history(period="1d", interval="1m", prepost=False, timeout=5)
             
@@ -292,12 +285,10 @@ def _fetch_vwap_momentum_regime_sync(broker_instance=None) -> dict:
                 target_ticker = "SOXL"
                 msg_desc = "상승장 (VWAP 상승 & 양봉)"
             elif curr_vwap < prev_vwap and current_price < day_open:
-                # 🚨 MODIFIED: [Case 04] SOXS 운용 영구 소각, NONE 타겟 락온
                 regime = "BEAR"
                 target_ticker = "NONE" 
                 msg_desc = "하락장 (VWAP 하락 & 음봉) - 숏 타격 영구 소각"
             else:
-                # 🚨 MODIFIED: [Case 04] 횡보장 락다운 영구 소각, SOXL 진입 무조건 허용
                 regime = "SIDEWAYS"
                 target_ticker = "SOXL"
                 msg_desc = "횡보장 (VWAP과 캔들 방향 충돌)"

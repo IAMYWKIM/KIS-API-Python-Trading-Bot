@@ -1,13 +1,11 @@
 # ==========================================================
 # FILE: market_data_provider.py
 # ==========================================================
+# 🚨 MODIFIED: [제1헌법 철저 준수] get_1min_candles_df 내의 data/avwap_cache.json 조작을 GlobalThrottle.get_file_lock으로 100% 파일 뮤텍스 래핑 완료 (Dirty Read 원천 봉쇄).
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 41대 엣지 케이스 완벽 결속 교차 검증 완료.
-# 🚨 MODIFIED: [IndentationError 궁극 수술] 파일 내부에 산재하던 17칸 들여쓰기 엇갈림 맹점을 16칸 규격으로 100% 정밀 교정.
 # 🚨 MODIFIED: [Thundering Herd 영구 소각] yfinance 등 모든 외부 통신 지연(time.sleep)을 제거하고 `GlobalThrottle.wait_api_sync()` 중앙 통제소로 100% 위임 락온.
 # 🚨 MODIFIED: [스냅샷 오염 전이 절대 방어] YF 1d 캔들 롤오버 지연 맹점을 파기하고 1m 기반 D-1 공식 종가 핀셋 추출 락온.
 # 🚨 MODIFIED: [프리장 데이터 공백 패러독스 방어] YF 1d 롤오버 지연 버그 원천 차단을 위해 period="1d" -> "5d" 상향 락온.
-# 🚨 MODIFIED: [5d 롤오버 교정 연계 State 방어] 5일 치 데이터 중 당일(Today) 팩트만 정밀 필터링하여 당일 고/저점(day_high, day_low) 캐싱 오염 원천 차단.
-# 🚨 MODIFIED: [16:05 스냅샷 미래 참조 방어] 16:00:30 이전에만 하루를 빼서 어제 종가를 가져오고, 16:00:30 이후(즉 16:05 스냅샷 시점)에는 오늘(방금 마감된) 종가를 내일의 '전일 종가'로 가져오도록 타임라인 팩트 락온.
 # 🚨 VERIFIED: [Case 35 절대 방어망 결속] 내부 ffill 주입으로 결측치(NaN) 런타임 에러 차단 무결성 100% 확보.
 # ==========================================================
 
@@ -309,7 +307,7 @@ class MarketDataProvider(KisApiClient):
                     now_est = datetime.datetime.now(est)
                     cutoff_date = now_est.date()
                 
-                    # 🚨 MODIFIED: 16:00:30 이후(16:05 스냅샷 시점)에는 오늘 캔들을 포함하여 5일선을 연산하도록 타임라인 팩트 락온.
+                    # 🚨 MODIFIED: 16:00:30 이후(16:05 스냅샷 시점)에는 오늘 캔문을 포함하여 5일선을 연산하도록 타임라인 팩트 락온.
                     if now_est.time() <= datetime.time(16, 0, 30): 
                         cutoff_date -= datetime.timedelta(days=1)
                         
@@ -402,41 +400,42 @@ class MarketDataProvider(KisApiClient):
                         time_low_str = str(time_low_raw.iloc[0] if isinstance(time_low_raw, pd.Series) else time_low_raw)
             
                         cache_file = "data/avwap_cache.json"
-                        cache_data = {}
         
-                        # 🚨 MODIFIED: [Case 08] TOCTOU 레이스 컨디션 차단 os.path.exists 소각 및 EAFP 적용
-                        try:
-                            with open(cache_file, 'r', encoding='utf-8') as f: 
-                                cache_data = json.load(f)
-                        except OSError: pass
-                        except json.JSONDecodeError: pass
+                        # 🚨 MODIFIED: [제1헌법] File Mutex 100% 팩트 래핑으로 더티 리드(Dirty Read) 및 동시성 붕괴 원천 차단
+                        with GlobalThrottle.get_file_lock(cache_file):
+                            cache_data = {}
+                            try:
+                                with open(cache_file, 'r', encoding='utf-8') as f: 
+                                    cache_data = json.load(f)
+                            except OSError: pass
+                            except json.JSONDecodeError: pass
 
-                        cache_data[ticker] = {'day_high': max_high, 'day_low': min_low, 'time_high': time_high_str, 'time_low': time_low_str, 'date': datetime.datetime.now(est).strftime("%Y-%m-%d")}
-   
-                        # 🚨 MODIFIED: [Case 16] 디렉토리 파싱 무결성 강화 및 스토리지 고갈 방어 락온
-                        dir_name = os.path.dirname(cache_file) or '.'
-                        try: os.makedirs(dir_name, exist_ok=True)
-                        except OSError: pass
+                            cache_data[ticker] = {'day_high': max_high, 'day_low': min_low, 'time_high': time_high_str, 'time_low': time_low_str, 'date': datetime.datetime.now(est).strftime("%Y-%m-%d")}
        
-                        fd = None
-                        tmp_path = None
-                        try:
-                            fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
-                            with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
-                                fd = None
-                                json.dump(cache_data, f_out, ensure_ascii=False, indent=4)
-                                f_out.flush()
-                                os.fsync(f_out.fileno())
-                            os.replace(tmp_path, cache_file)
+                            # 🚨 MODIFIED: [Case 16] 디렉토리 파싱 무결성 강화 및 스토리지 고갈 방어 락온
+                            dir_name = os.path.dirname(cache_file) or '.'
+                            try: os.makedirs(dir_name, exist_ok=True)
+                            except OSError: pass
+           
+                            fd = None
                             tmp_path = None
-                        except Exception as e:
-                            if fd is not None:
-                                try: os.close(fd)
-                                except OSError: pass
-                            if tmp_path:
-                                try: os.remove(tmp_path)
-                                except OSError: pass
-                            logging.debug(f"🚨 [{ticker}] 시계열 체력 팩트 캐싱 실패: {e}")
+                            try:
+                                fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
+                                with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
+                                    fd = None
+                                    json.dump(cache_data, f_out, ensure_ascii=False, indent=4)
+                                    f_out.flush()
+                                    os.fsync(f_out.fileno())
+                                os.replace(tmp_path, cache_file)
+                                tmp_path = None
+                            except Exception as e:
+                                if fd is not None:
+                                    try: os.close(fd)
+                                    except OSError: pass
+                                if tmp_path:
+                                    try: os.remove(tmp_path)
+                                    except OSError: pass
+                                logging.debug(f"🚨 [{ticker}] 시계열 체력 팩트 캐싱 실패: {e}")
            
                 except Exception as e: 
                     logging.debug(f"🚨 [{ticker}] 체력 팩트 캐싱 연산 에러: {e}")
