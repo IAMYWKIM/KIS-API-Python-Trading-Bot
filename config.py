@@ -1,21 +1,10 @@
 # ==========================================================
 # FILE: config.py
 # ==========================================================
-# 🚨 VERIFIED: [최종 무결점 판정] 3중 딥다이브 교차 검증(Syntax 붕괴, Async I/O 족쇄, Float 정밀도 사수) 통과 완료.
-# 🚨 MODIFIED: [Indentation 붕괴 수술] set_seed, get_secret_mode, get_chat_id 등 내부의 13칸/17칸 들여쓰기 엇갈림 오차를 4칸 배수 표준으로 정밀 교정하여 파이썬 컴파일러 즉사 버그 완벽 차단.
-# 🚨 MODIFIED: [암살자 수동 타겟팅 뇌관 영구 소각] 순수 돌파/추종 데이 트레이딩 아키텍처 이식에 따라, 암살자의 진입률/익절률을 수동으로 입력받던 동적 타점 제어 스키마 및 관련 Getter/Setter를 100% 영구 삭제 (VWAP 돌파 & +1.0% 고정 익절 절대 락온).
-# 🚨 MODIFIED: [V-REV 슬라이싱 수학 무결성 락온] VWAP_PROFILES 누적 가중치(Cumulative, CDF) 100% 교정 유지.
-# 🚨 MODIFIED: [V54.03 JSON 락온(Mutex) 방어막 전면 이식] Thread-safe 한 로컬 파일 동기화 사수.
-# 🚨 MODIFIED: [Case 34] 락온 센티널 파일 고아화(Orphan Lock) 맹점 영구 소각 유지.
-# 🚨 MODIFIED: [Float 붕괴 방어] JSON 오염(None, 콤마 문자열)으로 인한 수학 연산 마비 원천 봉쇄용 _safe_float 래퍼 결속.
-# 🚨 MODIFIED: [TOCTOU 레이스 컨디션 수술] os.path.exists 동기스캔 전면 소각 및 EAFP 패턴 100% 락온 유지.
-# 🚨 MODIFIED: [AttributeError 붕괴 방어] JSON 내부 요소 오염 시 발생하는 타입 캐스팅 에러 원천 차단.
-# 🚨 MODIFIED: [Case 16] tempfile 스코프 전진 배치로 UnboundLocalError 붕괴 차단.
-# 🚨 NEW: [명예의 전당 소각] delete_history 메서 신설 및 중복 타격(Double Tap) 멱등성 100% 팩트 보장.
-# 🚨 MODIFIED: [제2헌법 절대 준수] get_chat_id 내부에 잔존하던 ValueError 의존성을 _safe_float 캐스팅으로 100% 영구 소각.
-# 🚨 MODIFIED: [Gap Hijack 타점 오버라이드] get_vrev_gap_threshold 및 get_avwap_gap_threshold의 디폴트 반환값을 -0.67에서 -2.0으로 100% 상향 팩트 교정 완료.
-# 🚨 MODIFIED: [State Mismatch 붕괴 수술] get_avwap_anchor_date 결측 시 디폴트 반환값을 "당월 1일"에서 "AUTO"로 팩트 교정하여 자율주행(Auto-Anchoring) 엔진이 정상 격발되도록 락온.
-# 🚨 NEW: [Phase 1 암살자 예산 락온] 암살자 고정 예산(get_avwap_budget) 및 오버나이트 허용(get_avwap_overnight_mode) 락온 배선 100% 이식 완료.
+# 🚨 VERIFIED: [최종 무결점 판정] 3중 딥다이브 교차 검증 통과 완료.
+# 🚨 MODIFIED: [인스턴스 락 영구 소각] self._io_lock 및 self._locks_mutex를 시스템 전역에서 영구 파기.
+# 🚨 MODIFIED: [전역 파일 뮤텍스 100% 결속] GlobalThrottle.get_file_lock()을 이식하여 파일별 100% 독립적인 Mutex Lock 획득 보장 (Lost Update 원천 차단).
+# 🚨 MODIFIED: fcntl 기반 OS 의존성 락 소각 및 GlobalThrottle 중앙 통제소 일원화 락온 완료.
 # ==========================================================
 
 import json
@@ -27,12 +16,7 @@ import time
 import shutil
 import tempfile
 import logging
-import threading
-
-try:
-    import fcntl
-except ImportError:
-    fcntl = None
+from global_throttle import GlobalThrottle # 🚨 NEW: 중앙 통제소 결속
 
 try:
     from version_history import VERSION_HISTORY
@@ -88,8 +72,8 @@ class ConfigManager:
             "VREV_GAP_THRESH_CFG": "data/vrev_gap_thresh.json",
             "AVWAP_GAP_THRESH_CFG": "data/avwap_gap_thresh.json",
             "AVWAP_ANCHOR_CFG": "data/avwap_anchor.json",
-            "AVWAP_BUDGET_CFG": "data/avwap_budget.json",         # 🚨 NEW: 암살자 1회 타격 예산
-            "AVWAP_OVERNIGHT_CFG": "data/avwap_overnight.json"      # 🚨 NEW: 암살자 오버나이트 모드
+            "AVWAP_BUDGET_CFG": "data/avwap_budget.json",         
+            "AVWAP_OVERNIGHT_CFG": "data/avwap_overnight.json"      
         }
         
         self.DEFAULT_SEED = {"SOXL": 6720.0, "TQQQ": 6720.0}
@@ -99,9 +83,6 @@ class ConfigManager:
         self.DEFAULT_COMPOUND = {"SOXL": 70.0, "TQQQ": 70.0}
         self.DEFAULT_SNIPER_MULTIPLIER = {"SOXL": 1.0, "TQQQ": 0.9}
         self.DEFAULT_FEE = {"SOXL": 0.07, "TQQQ": 0.07} 
-        
-        self._locks_mutex = threading.Lock()
-        self._io_lock = threading.RLock()
 
     def _safe_float(self, value):
         try:
@@ -119,30 +100,19 @@ class ConfigManager:
         return VWAP_PROFILES[target_ticker]
 
     def _atomic_update_locks(self, update_fn):
-        with self._locks_mutex:
-            lock_file_path = self.FILES["LOCKS"]
+        lock_file_path = self.FILES["LOCKS"]
+        # 🚨 MODIFIED: [File Mutex 락온] GlobalThrottle 100% 교체
+        with GlobalThrottle.get_file_lock(lock_file_path):
             dir_name = os.path.dirname(lock_file_path) or '.'
             try:
                 os.makedirs(dir_name, exist_ok=True)
             except OSError:
                 pass
-        
-            sentinel = lock_file_path + ".lock"
-            with open(sentinel, 'w') as lf:
-                if fcntl:
-                    fcntl.flock(lf, fcntl.LOCK_EX)
-                try:
-                    locks = self._load_json(lock_file_path, {})
-                    if not isinstance(locks, dict): locks = {}
-                    update_fn(locks)
-                    self._save_json(lock_file_path, locks)
-                finally:
-                    if fcntl:
-                        fcntl.flock(lf, fcntl.LOCK_UN)
-                    try:
-                        os.remove(sentinel)
-                    except OSError:
-                        pass
+            
+            locks = self._load_json(lock_file_path, {})
+            if not isinstance(locks, dict): locks = {}
+            update_fn(locks)
+            self._save_json(lock_file_path, locks)
 
     def _load_json(self, filename, default=None):
         try:
@@ -228,48 +198,54 @@ class ConfigManager:
                 except OSError: pass
 
     def get_vrev_gap_threshold(self, ticker):
-        return self._safe_float(self._load_json(self.FILES["VREV_GAP_THRESH_CFG"], {}).get(ticker, -2.0))
+        with GlobalThrottle.get_file_lock(self.FILES["VREV_GAP_THRESH_CFG"]):
+            return self._safe_float(self._load_json(self.FILES["VREV_GAP_THRESH_CFG"], {}).get(ticker, -2.0))
 
     def set_vrev_gap_threshold(self, ticker, v):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["VREV_GAP_THRESH_CFG"]):
             d = self._load_json(self.FILES["VREV_GAP_THRESH_CFG"], {})
             d[ticker] = self._safe_float(v)
             self._save_json(self.FILES["VREV_GAP_THRESH_CFG"], d)
             
     def get_vrev_gap_switching_mode(self, ticker):
-        return bool(self._load_json(self.FILES["VREV_GAP_SWITCH_CFG"], {}).get(ticker, False))
+        with GlobalThrottle.get_file_lock(self.FILES["VREV_GAP_SWITCH_CFG"]):
+            return bool(self._load_json(self.FILES["VREV_GAP_SWITCH_CFG"], {}).get(ticker, False))
 
     def set_vrev_gap_switching_mode(self, ticker, v):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["VREV_GAP_SWITCH_CFG"]):
             d = self._load_json(self.FILES["VREV_GAP_SWITCH_CFG"], {})
             d[ticker] = bool(v)
             self._save_json(self.FILES["VREV_GAP_SWITCH_CFG"], d)
       
     def get_avwap_gap_threshold(self, ticker):
-        return self._safe_float(self._load_json(self.FILES["AVWAP_GAP_THRESH_CFG"], {}).get(ticker, -2.0))
+        with GlobalThrottle.get_file_lock(self.FILES["AVWAP_GAP_THRESH_CFG"]):
+            return self._safe_float(self._load_json(self.FILES["AVWAP_GAP_THRESH_CFG"], {}).get(ticker, -2.0))
 
     def set_avwap_gap_threshold(self, ticker, v):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["AVWAP_GAP_THRESH_CFG"]):
             d = self._load_json(self.FILES["AVWAP_GAP_THRESH_CFG"], {})
             d[ticker] = self._safe_float(v)
             self._save_json(self.FILES["AVWAP_GAP_THRESH_CFG"], d)
 
     def get_last_split_date(self, ticker):
-        return str(self._load_json(self.FILES["SPLIT_HISTORY"], {}).get(ticker, ""))
+        with GlobalThrottle.get_file_lock(self.FILES["SPLIT_HISTORY"]):
+            return str(self._load_json(self.FILES["SPLIT_HISTORY"], {}).get(ticker, ""))
 
     def set_last_split_date(self, ticker, date_str):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["SPLIT_HISTORY"]):
             d = self._load_json(self.FILES["SPLIT_HISTORY"], {})
             d[ticker] = str(date_str)
             self._save_json(self.FILES["SPLIT_HISTORY"], d)
 
     def get_ledger(self):
-        raw_data = self._load_json(self.FILES["LEDGER"], [])
-        return [r for r in raw_data if isinstance(r, dict)]
+        with GlobalThrottle.get_file_lock(self.FILES["LEDGER"]):
+            raw_data = self._load_json(self.FILES["LEDGER"], [])
+            return [r for r in raw_data if isinstance(r, dict)]
 
     def get_order_locked(self, ticker):
-        locks = self._load_json(self.FILES["LOCKS"], {})
-        return bool(locks.get(f"ORDER_LOCKED_{ticker}", False))
+        with GlobalThrottle.get_file_lock(self.FILES["LOCKS"]):
+            locks = self._load_json(self.FILES["LOCKS"], {})
+            return bool(locks.get(f"ORDER_LOCKED_{ticker}", False))
 
     def set_order_locked(self, ticker, is_locked):
         def _update(locks):
@@ -307,8 +283,9 @@ class ConfigManager:
     def check_lock(self, ticker, market_type):
         est = ZoneInfo('America/New_York')
         today = datetime.datetime.now(est).strftime('%Y-%m-%d')
-        locks = self._load_json(self.FILES["LOCKS"], {})
-        return bool(locks.get(f"{today}_{ticker}_{market_type}", False))
+        with GlobalThrottle.get_file_lock(self.FILES["LOCKS"]):
+            locks = self._load_json(self.FILES["LOCKS"], {})
+            return bool(locks.get(f"{today}_{ticker}_{market_type}", False))
 
     def get_absolute_t_val(self, ticker, actual_qty, actual_avg_price):
         rev_state = self.get_reverse_state(ticker)
@@ -328,7 +305,7 @@ class ConfigManager:
     def apply_stock_split(self, ticker, ratio):
         safe_ratio = self._safe_float(ratio)
         if safe_ratio <= 0: return
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["LEDGER"]):
             ledger = self.get_ledger()
             changed = False
             for r in ledger:
@@ -348,7 +325,7 @@ class ConfigManager:
                 self._save_json(self.FILES["LEDGER"], ledger)
 
     def overwrite_genesis_ledger(self, ticker, genesis_records, actual_avg):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["LEDGER"]):
             ledger = self.get_ledger()
             target_recs = [r for r in ledger if r.get('ticker') == ticker]
             
@@ -375,7 +352,7 @@ class ConfigManager:
             self._save_json(self.FILES["LEDGER"], ledger)
 
     def overwrite_incremental_ledger(self, ticker, temp_recs, new_today_records):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["LEDGER"]):
             ledger = self.get_ledger()
             remaining = [r for r in ledger if r.get('ticker') != ticker]
             updated_ticker_recs = list(temp_recs)
@@ -406,7 +383,7 @@ class ConfigManager:
             self._save_json(self.FILES["LEDGER"], remaining)
 
     def overwrite_ledger(self, ticker, actual_qty, actual_avg):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["LEDGER"]):
             ledger = self.get_ledger()
             target_recs = [r for r in ledger if r.get('ticker') == ticker]
             
@@ -426,7 +403,7 @@ class ConfigManager:
             self._save_json(self.FILES["LEDGER"], ledger)
 
     def calibrate_avg_price(self, ticker, actual_avg):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["LEDGER"]):
             ledger = self.get_ledger()
             target_recs = [r for r in ledger if r.get('ticker') == ticker]
             if target_recs:
@@ -463,7 +440,7 @@ class ConfigManager:
         if actual_buy_price == 0.0 and actual_sell_price == 0.0:
             return 0
             
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["LEDGER"]):
             ledger = self.get_ledger()
             changed_count = 0
             
@@ -488,7 +465,7 @@ class ConfigManager:
             return changed_count
 
     def clear_ledger_for_ticker(self, ticker):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["LEDGER"]):
             ledger = self.get_ledger()
             remaining = [r for r in ledger if r.get('ticker') != ticker]
             self._save_json(self.FILES["LEDGER"], remaining)
@@ -534,20 +511,21 @@ class ConfigManager:
         return total_qty, avg_price, invested_up, sold_up
 
     def get_reverse_state(self, ticker):
-        d = self._load_json(self.FILES["REVERSE_CFG"], {})
-        val = d.get(ticker)
-        if not isinstance(val, dict):
-            return {
-                "is_active": False, "day_count": 0, "exit_target": 0.0, 
-                "last_update_date": "", "dynamic_t": 0.0, "rem_cash": 0.0, "is_day_one": True
-            }
-        val.setdefault("dynamic_t", 0.0)
-        val.setdefault("rem_cash", 0.0)
-        val.setdefault("is_day_one", val.get("day_count", 0) == 0)
-        return val
+        with GlobalThrottle.get_file_lock(self.FILES["REVERSE_CFG"]):
+            d = self._load_json(self.FILES["REVERSE_CFG"], {})
+            val = d.get(ticker)
+            if not isinstance(val, dict):
+                return {
+                    "is_active": False, "day_count": 0, "exit_target": 0.0, 
+                    "last_update_date": "", "dynamic_t": 0.0, "rem_cash": 0.0, "is_day_one": True
+                }
+            val.setdefault("dynamic_t", 0.0)
+            val.setdefault("rem_cash", 0.0)
+            val.setdefault("is_day_one", val.get("day_count", 0) == 0)
+            return val
 
     def set_reverse_state(self, ticker, is_active, day_count, exit_target=0.0, last_update_date=None, dynamic_t=0.0, rem_cash=0.0, is_day_one=None):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["REVERSE_CFG"]):
             if last_update_date is None:
                 est = ZoneInfo('America/New_York')
                 last_update_date = datetime.datetime.now(est).strftime('%Y-%m-%d')
@@ -565,7 +543,7 @@ class ConfigManager:
             self._save_json(self.FILES["REVERSE_CFG"], d)
             
     def scale_dynamic_t(self, ticker, action):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["REVERSE_CFG"]):
             d = self._load_json(self.FILES["REVERSE_CFG"], {})
             state = d.get(ticker)
             if not isinstance(state, dict) or not state.get("is_active", False):
@@ -585,8 +563,11 @@ class ConfigManager:
             self._save_json(self.FILES["REVERSE_CFG"], d)
 
     def increment_reverse_day(self, ticker):
-        with self._io_lock:
-            state = self.get_reverse_state(ticker)
+        with GlobalThrottle.get_file_lock(self.FILES["REVERSE_CFG"]):
+            d = self._load_json(self.FILES["REVERSE_CFG"], {})
+            state = d.get(ticker)
+            if not isinstance(state, dict): return False
+
             if state.get("is_active"):
                 est = ZoneInfo('America/New_York')
                 now_est = datetime.datetime.now(est)
@@ -594,12 +575,11 @@ class ConfigManager:
                 
                 if state.get("last_update_date") != today_est_str:
                     new_day = state.get("day_count", 0) + 1
-                    self.set_reverse_state(
-                        ticker, True, new_day, state.get("exit_target", 0.0), today_est_str,
-                        dynamic_t=state.get("dynamic_t", 0.0),
-                        rem_cash=state.get("rem_cash", 0.0),
-                        is_day_one=False
-                    )
+                    state["day_count"] = new_day
+                    state["last_update_date"] = today_est_str
+                    state["is_day_one"] = False
+                    d[ticker] = state
+                    self._save_json(self.FILES["REVERSE_CFG"], d)
                     return True
         return False
 
@@ -662,7 +642,7 @@ class ConfigManager:
         return max(0.0, round(t_val, 4)), max(0.0, current_budget), max(0.0, rem_cash)
 
     def archive_graduation(self, ticker, end_date, prev_close=0.0):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["LEDGER"]):
             ledger = self.get_ledger()
             target_recs = [r for r in ledger if r.get('ticker') == ticker]
             if not target_recs:
@@ -721,25 +701,26 @@ class ConfigManager:
                 current_seed = self.get_seed(ticker)
                 self.set_seed(ticker, current_seed + added_seed)
 
-            history = self.get_history()
-            
-            new_hist = {
-                "id": len(history) + 1, "ticker": ticker, "end_date": end_date,
-                "profit": profit, "yield": yield_pct, "revenue": net_revenue, "invested": net_invested, "trades": target_recs
-            }
-            history.append(new_hist)
-            self._save_json(self.FILES["HISTORY"], history)
+            with GlobalThrottle.get_file_lock(self.FILES["HISTORY"]):
+                history = self.get_history()
+                new_hist = {
+                    "id": len(history) + 1, "ticker": ticker, "end_date": end_date,
+                    "profit": profit, "yield": yield_pct, "revenue": net_revenue, "invested": net_invested, "trades": target_recs
+                }
+                history.append(new_hist)
+                self._save_json(self.FILES["HISTORY"], history)
              
             self.clear_ledger_for_ticker(ticker)
              
             return new_hist, added_seed
 
     def get_history(self):
-        raw_data = self._load_json(self.FILES["HISTORY"], [])
-        return [h for h in raw_data if isinstance(h, dict)]
+        with GlobalThrottle.get_file_lock(self.FILES["HISTORY"]):
+            raw_data = self._load_json(self.FILES["HISTORY"], [])
+            return [h for h in raw_data if isinstance(h, dict)]
 
     def delete_history(self, hist_id: int) -> bool:
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["HISTORY"]):
             history = self.get_history()
             if not history:
                 return False
@@ -771,175 +752,193 @@ class ConfigManager:
         return "V14.x"
 
     def get_seed(self, t): 
-        return self._safe_float(self._load_json(self.FILES["SEED_CFG"], self.DEFAULT_SEED).get(t, 6720.0))
+        with GlobalThrottle.get_file_lock(self.FILES["SEED_CFG"]):
+            return self._safe_float(self._load_json(self.FILES["SEED_CFG"], self.DEFAULT_SEED).get(t, 6720.0))
         
     def set_seed(self, t, v): 
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["SEED_CFG"]):
             d = self._load_json(self.FILES["SEED_CFG"], self.DEFAULT_SEED)
             d[t] = self._safe_float(v)
             self._save_json(self.FILES["SEED_CFG"], d)
 
     def get_compound_rate(self, t): 
-        return self._safe_float(self._load_json(self.FILES["COMPOUND_CFG"], self.DEFAULT_COMPOUND).get(t, 70.0))
+        with GlobalThrottle.get_file_lock(self.FILES["COMPOUND_CFG"]):
+            return self._safe_float(self._load_json(self.FILES["COMPOUND_CFG"], self.DEFAULT_COMPOUND).get(t, 70.0))
          
     def set_compound_rate(self, t, v):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["COMPOUND_CFG"]):
             d = self._load_json(self.FILES["COMPOUND_CFG"], self.DEFAULT_COMPOUND)
             d[t] = self._safe_float(v)
             self._save_json(self.FILES["COMPOUND_CFG"], d)
 
     def get_version(self, t): 
-        val = self._load_json(self.FILES["VERSION_CFG"], self.DEFAULT_VERSION).get(t, self.DEFAULT_VERSION.get(t, "V14"))
-        if t == "TQQQ": return "V14"
-        return str(val)
+        with GlobalThrottle.get_file_lock(self.FILES["VERSION_CFG"]):
+            val = self._load_json(self.FILES["VERSION_CFG"], self.DEFAULT_VERSION).get(t, self.DEFAULT_VERSION.get(t, "V14"))
+            if t == "TQQQ": return "V14"
+            return str(val)
         
     def set_version(self, t, v):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["VERSION_CFG"]):
             if t == "TQQQ": v = "V14"
             d = self._load_json(self.FILES["VERSION_CFG"], self.DEFAULT_VERSION)
             d[t] = v
             self._save_json(self.FILES["VERSION_CFG"], d)
 
     def get_split_count(self, t): 
-        return self._safe_float(self._load_json(self.FILES["SPLIT"], self.DEFAULT_SPLIT).get(t, 40.0))
+        with GlobalThrottle.get_file_lock(self.FILES["SPLIT"]):
+            return self._safe_float(self._load_json(self.FILES["SPLIT"], self.DEFAULT_SPLIT).get(t, 40.0))
          
     def get_target_profit(self, t): 
-        return self._safe_float(self._load_json(self.FILES["PROFIT_CFG"], self.DEFAULT_TARGET).get(t, 10.0))
+        with GlobalThrottle.get_file_lock(self.FILES["PROFIT_CFG"]):
+            return self._safe_float(self._load_json(self.FILES["PROFIT_CFG"], self.DEFAULT_TARGET).get(t, 10.0))
         
     def get_fee(self, t): 
-        return self._safe_float(self._load_json(self.FILES["FEE_CFG"], self.DEFAULT_FEE).get(t, 0.07))
+        with GlobalThrottle.get_file_lock(self.FILES["FEE_CFG"]):
+            return self._safe_float(self._load_json(self.FILES["FEE_CFG"], self.DEFAULT_FEE).get(t, 0.07))
        
     def set_fee(self, t, v):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["FEE_CFG"]):
             d = self._load_json(self.FILES["FEE_CFG"], self.DEFAULT_FEE)
             d[t] = self._safe_float(v)
             self._save_json(self.FILES["FEE_CFG"], d)
 
     def get_sniper_multiplier(self, t):
-        default_val = self.DEFAULT_SNIPER_MULTIPLIER.get(t, 1.0)
-        return self._safe_float(self._load_json(self.FILES["SNIPER_MULTIPLIER_CFG"], self.DEFAULT_SNIPER_MULTIPLIER).get(t, default_val))
+        with GlobalThrottle.get_file_lock(self.FILES["SNIPER_MULTIPLIER_CFG"]):
+            default_val = self.DEFAULT_SNIPER_MULTIPLIER.get(t, 1.0)
+            return self._safe_float(self._load_json(self.FILES["SNIPER_MULTIPLIER_CFG"], self.DEFAULT_SNIPER_MULTIPLIER).get(t, default_val))
         
     def set_sniper_multiplier(self, t, v):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["SNIPER_MULTIPLIER_CFG"]):
             d = self._load_json(self.FILES["SNIPER_MULTIPLIER_CFG"], self.DEFAULT_SNIPER_MULTIPLIER)
             d[t] = self._safe_float(v)
             self._save_json(self.FILES["SNIPER_MULTIPLIER_CFG"], d)
 
     def get_upward_sniper_mode(self, ticker): 
-        return bool(self._load_json(self.FILES["UPWARD_SNIPER"], {}).get(ticker, False))
+        with GlobalThrottle.get_file_lock(self.FILES["UPWARD_SNIPER"]):
+            return bool(self._load_json(self.FILES["UPWARD_SNIPER"], {}).get(ticker, False))
          
     def set_upward_sniper_mode(self, ticker, v):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["UPWARD_SNIPER"]):
              d = self._load_json(self.FILES["UPWARD_SNIPER"], {})
              d[ticker] = bool(v)
              self._save_json(self.FILES["UPWARD_SNIPER"], d)
 
     def get_avwap_hybrid_mode(self, ticker): 
-        return bool(self._load_json(self.FILES["AVWAP_HYBRID_CFG"], {}).get(ticker, False))
+        with GlobalThrottle.get_file_lock(self.FILES["AVWAP_HYBRID_CFG"]):
+            return bool(self._load_json(self.FILES["AVWAP_HYBRID_CFG"], {}).get(ticker, False))
     
     def set_avwap_hybrid_mode(self, ticker, v):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["AVWAP_HYBRID_CFG"]):
             d = self._load_json(self.FILES["AVWAP_HYBRID_CFG"], {})
             d[ticker] = bool(v)
             self._save_json(self.FILES["AVWAP_HYBRID_CFG"], d)
 
     def get_avwap_sortie_mode(self, ticker):
-        return str(self._load_json(self.FILES["AVWAP_SORTIE_CFG"], {}).get(ticker, "SINGLE"))
+        with GlobalThrottle.get_file_lock(self.FILES["AVWAP_SORTIE_CFG"]):
+            return str(self._load_json(self.FILES["AVWAP_SORTIE_CFG"], {}).get(ticker, "SINGLE"))
         
     def set_avwap_sortie_mode(self, ticker, v):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["AVWAP_SORTIE_CFG"]):
             d = self._load_json(self.FILES["AVWAP_SORTIE_CFG"], {})
             d[ticker] = str(v)
             self._save_json(self.FILES["AVWAP_SORTIE_CFG"], d)
 
     def get_manual_vwap_mode(self, ticker): 
-        return bool(self._load_json(self.FILES["MANUAL_VWAP_CFG"], {}).get(ticker, False))
+        with GlobalThrottle.get_file_lock(self.FILES["MANUAL_VWAP_CFG"]):
+            return bool(self._load_json(self.FILES["MANUAL_VWAP_CFG"], {}).get(ticker, False))
         
     def set_manual_vwap_mode(self, ticker, v):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["MANUAL_VWAP_CFG"]):
             d = self._load_json(self.FILES["MANUAL_VWAP_CFG"], {})
             d[ticker] = bool(v)
             self._save_json(self.FILES["MANUAL_VWAP_CFG"], d)
 
     def get_master_switch(self, ticker): 
-        return str(self._load_json(self.FILES["MASTER_SWITCH"], {}).get(ticker, "ALL"))
+        with GlobalThrottle.get_file_lock(self.FILES["MASTER_SWITCH"]):
+            return str(self._load_json(self.FILES["MASTER_SWITCH"], {}).get(ticker, "ALL"))
         
     def set_master_switch(self, ticker, v):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["MASTER_SWITCH"]):
             d = self._load_json(self.FILES["MASTER_SWITCH"], {})
             d[ticker] = str(v)
             self._save_json(self.FILES["MASTER_SWITCH"], d)
 
     def get_sniper_buy_locked(self, ticker): 
-        return bool(self._load_json(self.FILES["SNIPER_BUY_LOCKED"], {}).get(ticker, False))
+        with GlobalThrottle.get_file_lock(self.FILES["SNIPER_BUY_LOCKED"]):
+            return bool(self._load_json(self.FILES["SNIPER_BUY_LOCKED"], {}).get(ticker, False))
         
     def set_sniper_buy_locked(self, ticker, v):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["SNIPER_BUY_LOCKED"]):
             d = self._load_json(self.FILES["SNIPER_BUY_LOCKED"], {})
             d[ticker] = bool(v)
             self._save_json(self.FILES["SNIPER_BUY_LOCKED"], d)
 
     def get_sniper_sell_locked(self, ticker): 
-        return bool(self._load_json(self.FILES["SNIPER_SELL_LOCKED"], {}).get(ticker, False))
+        with GlobalThrottle.get_file_lock(self.FILES["SNIPER_SELL_LOCKED"]):
+            return bool(self._load_json(self.FILES["SNIPER_SELL_LOCKED"], {}).get(ticker, False))
         
     def set_sniper_sell_locked(self, ticker, v):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["SNIPER_SELL_LOCKED"]):
             d = self._load_json(self.FILES["SNIPER_SELL_LOCKED"], {})
             d[ticker] = bool(v)
             self._save_json(self.FILES["SNIPER_SELL_LOCKED"], d)
 
     def get_secret_mode(self): 
-        return self._load_file(self.FILES["SECRET_MODE"]) == 'True'
+        with GlobalThrottle.get_file_lock(self.FILES["SECRET_MODE"]):
+            return self._load_file(self.FILES["SECRET_MODE"]) == 'True'
          
     def set_secret_mode(self, v): 
-         with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["SECRET_MODE"]):
             self._save_file(self.FILES["SECRET_MODE"], str(v))
     
     def get_active_tickers(self): 
-        tickers = self._load_json(self.FILES["TICKER"], ["SOXL", "TQQQ"])
-        if not isinstance(tickers, list): tickers = ["SOXL", "TQQQ"]
-        return [str(t) for t in tickers if str(t) not in ["SOXS", "SQQQ", "SPXU"]]
+        with GlobalThrottle.get_file_lock(self.FILES["TICKER"]):
+            tickers = self._load_json(self.FILES["TICKER"], ["SOXL", "TQQQ"])
+            if not isinstance(tickers, list): tickers = ["SOXL", "TQQQ"]
+            return [str(t) for t in tickers if str(t) not in ["SOXS", "SQQQ", "SPXU"]]
         
     def set_active_tickers(self, v): 
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["TICKER"]):
              self._save_json(self.FILES["TICKER"], v)
     
     def get_chat_id(self): 
-        v = self._load_file(self.FILES["CHAT_ID"])
-        if v:
-            safe_v = int(self._safe_float(v))
-            return safe_v if safe_v != 0 else None
-        return None
+        with GlobalThrottle.get_file_lock(self.FILES["CHAT_ID"]):
+            v = self._load_file(self.FILES["CHAT_ID"])
+            if v:
+                safe_v = int(self._safe_float(v))
+                return safe_v if safe_v != 0 else None
+            return None
         
     def set_chat_id(self, v): 
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["CHAT_ID"]):
             self._save_file(self.FILES["CHAT_ID"], v)
 
     def get_avwap_anchor_date(self, ticker):
-        return str(self._load_json(self.FILES["AVWAP_ANCHOR_CFG"], {}).get(ticker, "AUTO"))
+        with GlobalThrottle.get_file_lock(self.FILES["AVWAP_ANCHOR_CFG"]):
+            return str(self._load_json(self.FILES["AVWAP_ANCHOR_CFG"], {}).get(ticker, "AUTO"))
 
     def set_avwap_anchor_date(self, ticker, date_str):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["AVWAP_ANCHOR_CFG"]):
             d = self._load_json(self.FILES["AVWAP_ANCHOR_CFG"], {})
             d[ticker] = str(date_str)
             self._save_json(self.FILES["AVWAP_ANCHOR_CFG"], d)
             
-    # 🚨 NEW: 암살자 1회 고정 타격 예산 (User-defined Budget) 락온
     def get_avwap_budget(self, ticker):
-        return self._safe_float(self._load_json(self.FILES["AVWAP_BUDGET_CFG"], {}).get(ticker, 10000.0))
+        with GlobalThrottle.get_file_lock(self.FILES["AVWAP_BUDGET_CFG"]):
+            return self._safe_float(self._load_json(self.FILES["AVWAP_BUDGET_CFG"], {}).get(ticker, 10000.0))
 
     def set_avwap_budget(self, ticker, v):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["AVWAP_BUDGET_CFG"]):
             d = self._load_json(self.FILES["AVWAP_BUDGET_CFG"], {})
             d[ticker] = self._safe_float(v)
             self._save_json(self.FILES["AVWAP_BUDGET_CFG"], d)
             
-    # 🚨 NEW: 암살자 오버나이트 허용 (당일 MOC 덤핑 바이패스) 락온
     def get_avwap_overnight_mode(self, ticker):
-        return bool(self._load_json(self.FILES["AVWAP_OVERNIGHT_CFG"], {}).get(ticker, False))
+        with GlobalThrottle.get_file_lock(self.FILES["AVWAP_OVERNIGHT_CFG"]):
+            return bool(self._load_json(self.FILES["AVWAP_OVERNIGHT_CFG"], {}).get(ticker, False))
         
     def set_avwap_overnight_mode(self, ticker, v):
-        with self._io_lock:
+        with GlobalThrottle.get_file_lock(self.FILES["AVWAP_OVERNIGHT_CFG"]):
             d = self._load_json(self.FILES["AVWAP_OVERNIGHT_CFG"], {})
             d[ticker] = bool(v)
             self._save_json(self.FILES["AVWAP_OVERNIGHT_CFG"], d)

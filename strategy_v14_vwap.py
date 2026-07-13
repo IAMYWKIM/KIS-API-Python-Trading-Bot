@@ -1,7 +1,7 @@
 # ==========================================================
 # FILE: strategy_v14_vwap.py
 # ==========================================================
-# 🚨 MODIFIED: [메모리 유령화(Ghost Memory) 붕괴 궁극 수술] 디스크 파일의 존재 여부 및 유효성을 100% 교차 검증하여, 파일이 소각되었을 경우 메모리의 당일 매도 수량(SELL_QTY)을 즉각 0으로 원자적 초기화.
+# 🚨 MODIFIED: [Lost Update 궁극 방어] 스냅샷 및 상태 캐시 읽기/쓰기 시 GlobalThrottle.get_file_lock()을 전면 결속하여 데이터 훼손(Corruption) 원천 봉쇄.
 # ==========================================================
 import math
 import logging
@@ -10,6 +10,7 @@ import json
 import tempfile
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from global_throttle import GlobalThrottle # 🚨 NEW: 중앙 통제소 결속
 
 class V14VwapStrategy:
     def __init__(self, config):
@@ -56,26 +57,28 @@ class V14VwapStrategy:
         state_file = self._get_state_file(ticker)
         
         is_disk_valid = False
-        try:
-            with open(state_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                if isinstance(data, dict) and data.get("date") == today_str:
-                    exec_data = data.get("executed")
-                    exec_dict = exec_data if isinstance(exec_data, dict) else {}
-                    
-                    for k in self.executed.keys():
-                        sub_dict = exec_dict.get(k)
-                        safe_sub_dict = sub_dict if isinstance(sub_dict, dict) else {}
-                        raw_val = safe_sub_dict.get(ticker, 0)
-                        self.executed[k][ticker] = int(self._safe_float(raw_val)) if k == "SELL_QTY" else self._safe_float(raw_val)
-                    is_disk_valid = True
-        except Exception:
-            pass
-            
-        if not is_disk_valid:
-            self.executed["BUY_BUDGET"][ticker] = 0.0
-            self.executed["SELL_QTY"][ticker] = 0
-            self._save_state(ticker)
+        # 🚨 MODIFIED: File Mutex 결속
+        with GlobalThrottle.get_file_lock(state_file):
+            try:
+                with open(state_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, dict) and data.get("date") == today_str:
+                        exec_data = data.get("executed")
+                        exec_dict = exec_data if isinstance(exec_data, dict) else {}
+                        
+                        for k in self.executed.keys():
+                            sub_dict = exec_dict.get(k)
+                            safe_sub_dict = sub_dict if isinstance(sub_dict, dict) else {}
+                            raw_val = safe_sub_dict.get(ticker, 0)
+                            self.executed[k][ticker] = int(self._safe_float(raw_val)) if k == "SELL_QTY" else self._safe_float(raw_val)
+                        is_disk_valid = True
+            except Exception:
+                pass
+                
+            if not is_disk_valid:
+                self.executed["BUY_BUDGET"][ticker] = 0.0
+                self.executed["SELL_QTY"][ticker] = 0
+                self._save_state(ticker)
             
         self.state_loaded[ticker] = today_str
 
@@ -96,28 +99,30 @@ class V14VwapStrategy:
             }
         }
         
-        fd = None
-        temp_path = None
-        try:
-            dir_name = os.path.dirname(state_file)
-            if dir_name:
-                os.makedirs(dir_name, exist_ok=True) 
-            fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                fd = None
-                json.dump(data, f, ensure_ascii=False, indent=4)
-                f.flush()
-                os.fsync(f.fileno()) 
-            os.replace(temp_path, state_file)
+        # 🚨 MODIFIED: File Mutex 결속
+        with GlobalThrottle.get_file_lock(state_file):
+            fd = None
             temp_path = None
-        except Exception as e:
-            if fd is not None:
-                try: os.close(fd)
-                except OSError: pass
-            if temp_path:
-                try: os.remove(temp_path)
-                except OSError: pass
-            logging.critical(f"🚨 [STATE SAVE FAILED] {ticker} 상태 저장 실패. 봇 기억상실 위험! 원인: {e}")
+            try:
+                dir_name = os.path.dirname(state_file)
+                if dir_name:
+                    os.makedirs(dir_name, exist_ok=True) 
+                fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    fd = None
+                    json.dump(data, f, ensure_ascii=False, indent=4)
+                    f.flush()
+                    os.fsync(f.fileno()) 
+                os.replace(temp_path, state_file)
+                temp_path = None
+            except Exception as e:
+                if fd is not None:
+                    try: os.close(fd)
+                    except OSError: pass
+                if temp_path:
+                    try: os.remove(temp_path)
+                    except OSError: pass
+                logging.critical(f"🚨 [STATE SAVE FAILED] {ticker} 상태 저장 실패. 봇 기억상실 위험! 원인: {e}")
 
     def save_daily_snapshot(self, ticker, plan_data):
         today_str = self._get_logical_date_str()
@@ -128,38 +133,42 @@ class V14VwapStrategy:
             "plan": plan_data
         }
         
-        fd = None
-        temp_path = None
-        try:
-            dir_name = os.path.dirname(snap_file)
-            if dir_name:
-                os.makedirs(dir_name, exist_ok=True)
-            fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                fd = None
-                json.dump(data, f, ensure_ascii=False, indent=4)
-                f.flush()
-                os.fsync(f.fileno()) 
-            os.replace(temp_path, snap_file)
+        # 🚨 MODIFIED: File Mutex 결속
+        with GlobalThrottle.get_file_lock(snap_file):
+            fd = None
             temp_path = None
-        except Exception as e:
-            if fd is not None:
-                try: os.close(fd)
-                except OSError: pass
-            if temp_path:
-                try: os.remove(temp_path)
-                except OSError: pass
-            logging.critical(f"🚨 [SNAPSHOT SAVE FAILED] {ticker} 스냅샷 저장 실패. 지시서 보존 불가! 원인: {e}")
+            try:
+                dir_name = os.path.dirname(snap_file)
+                if dir_name:
+                    os.makedirs(dir_name, exist_ok=True)
+                fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    fd = None
+                    json.dump(data, f, ensure_ascii=False, indent=4)
+                    f.flush()
+                    os.fsync(f.fileno()) 
+                os.replace(temp_path, snap_file)
+                temp_path = None
+            except Exception as e:
+                if fd is not None:
+                    try: os.close(fd)
+                    except OSError: pass
+                if temp_path:
+                    try: os.remove(temp_path)
+                    except OSError: pass
+                logging.critical(f"🚨 [SNAPSHOT SAVE FAILED] {ticker} 스냅샷 저장 실패. 지시서 보존 불가! 원인: {e}")
 
     def load_daily_snapshot(self, ticker):
         snap_file = self._get_snapshot_file(ticker)
-        try:
-            with open(snap_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return data.get("plan") if isinstance(data, dict) else None
-        except Exception:
-            pass
-        return None
+        # 🚨 MODIFIED: File Mutex 결속
+        with GlobalThrottle.get_file_lock(snap_file):
+            try:
+                with open(snap_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return data.get("plan") if isinstance(data, dict) else None
+            except Exception:
+                pass
+            return None
 
     def ensure_failsafe_snapshot(self, ticker, current_price, total_qty, avwap_qty, avg_price, prev_close, alloc_cash):
         current_price = self._safe_float(current_price)

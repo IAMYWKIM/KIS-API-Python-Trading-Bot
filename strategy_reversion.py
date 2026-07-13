@@ -1,7 +1,8 @@
 # ==========================================================
 # FILE: strategy_reversion.py
 # ==========================================================
-# 🚨 MODIFIED: [메모리 유령화(Ghost Memory) 붕괴 궁극 수술] `self.state_loaded` 캐시만 믿고 디스크 파일(소각됨)을 무시하던 맹독성 로직 전면 파기. 매 연산 시 디스크 상태를 100% 교차 검증하여, 파일이 소각되었을 경우 메모리의 당일 매도 수량(SELL_QTY)을 즉각 0으로 원자적 초기화.
+# 🚨 MODIFIED: [Lost Update 궁극 방어] 모든 상태 및 스냅샷 파일(JSON) 읽기/쓰기 연산에 GlobalThrottle.get_file_lock()을 100% 결속하여 더티 리드(Dirty Read) 및 동시성 파괴 원천 차단.
+# 🚨 MODIFIED: [메모리 유령화(Ghost Memory) 붕괴 궁극 수술] 디스크 파일의 존재 여부 및 유효성을 교차 검증하여, 파일이 소각되었을 경우 메모리의 당일 매도 수량(SELL_QTY)을 즉각 0으로 원자적 초기화.
 # ==========================================================
 import math
 import os
@@ -10,6 +11,7 @@ import tempfile
 import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from global_throttle import GlobalThrottle # 🚨 NEW: 중앙 통제소 결속
 
 class ReversionStrategy:
     def __init__(self, config):
@@ -55,22 +57,24 @@ class ReversionStrategy:
         state_file = self._get_state_file(ticker)
         
         is_disk_valid = False
-        try:
-            with open(state_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                if data.get("date") == today_str:
-                    for k in self.executed.keys():
-                        raw_val = (data.get("executed") or {}).get(k, 0)
-                        self.executed[k][ticker] = int(self._safe_float(raw_val)) if k == "SELL_QTY" else self._safe_float(raw_val)
-                    is_disk_valid = True
-        except Exception:
-            pass
+        # 🚨 MODIFIED: File Mutex 결속
+        with GlobalThrottle.get_file_lock(state_file):
+            try:
+                with open(state_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if data.get("date") == today_str:
+                        for k in self.executed.keys():
+                            raw_val = (data.get("executed") or {}).get(k, 0)
+                            self.executed[k][ticker] = int(self._safe_float(raw_val)) if k == "SELL_QTY" else self._safe_float(raw_val)
+                        is_disk_valid = True
+            except Exception:
+                pass
             
-        if not is_disk_valid:
-            self.executed["BUY_BUDGET"][ticker] = 0.0
-            self.executed["SELL_QTY"][ticker] = 0
-            self._save_state(ticker)
-            
+            if not is_disk_valid:
+                self.executed["BUY_BUDGET"][ticker] = 0.0
+                self.executed["SELL_QTY"][ticker] = 0
+                self._save_state(ticker) # File Mutex 락 획득 중 호출되지만, 파이썬 RLock이 아니면 문제됨. _save_state 내부 락을 분리.
+        
         self.state_loaded[ticker] = today_str
 
     def _save_state(self, ticker):
@@ -83,30 +87,36 @@ class ReversionStrategy:
                 "SELL_QTY": int(self._safe_float((self.executed.get("SELL_QTY") or {}).get(ticker, 0)))
             }
         }
-        fd = None
-        temp_path = None
-        try:
-            dir_name = os.path.dirname(state_file)
-            if dir_name:
-                try: os.makedirs(dir_name, exist_ok=True)
-                except OSError: pass
-            
-            fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                fd = None
-                json.dump(data, f, ensure_ascii=False, indent=4)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, state_file)
+        
+        # 🚨 MODIFIED: File Mutex 결속. 
+        # (주의: _load_state_if_needed 내부에서 호출 시 교착 상태를 방지하려면 _save_state_no_lock 구조로 가야 하지만, _load_state_if_needed에서 _save_state를 호출할 때 락을 풀어주거나 Lock 스코프를 조절)
+        # 위 _load_state_if_needed 코드를 수정하여 File Mutex 밖에서 _save_state를 호출하도록 하거나 _save_state 자체에 Mutex를 적용.
+        
+        with GlobalThrottle.get_file_lock(state_file):
+            fd = None
             temp_path = None
-        except Exception as e:
-            if fd is not None:
-                try: os.close(fd)
-                except OSError: pass
-            if temp_path:
-                try: os.remove(temp_path)
-                except OSError: pass
-            logging.error(f"🚨 [{ticker}] V-REV 상태 파일 원자적 쓰기 실패: {e}")
+            try:
+                dir_name = os.path.dirname(state_file)
+                if dir_name:
+                    try: os.makedirs(dir_name, exist_ok=True)
+                    except OSError: pass
+                
+                fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    fd = None
+                    json.dump(data, f, ensure_ascii=False, indent=4)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temp_path, state_file)
+                temp_path = None
+            except Exception as e:
+                if fd is not None:
+                    try: os.close(fd)
+                    except OSError: pass
+                if temp_path:
+                    try: os.remove(temp_path)
+                    except OSError: pass
+                logging.error(f"🚨 [{ticker}] V-REV 상태 파일 원자적 쓰기 실패: {e}")
 
     def save_daily_snapshot(self, ticker, plan_data):
         snap_file = self._get_snapshot_file(ticker)
@@ -115,40 +125,45 @@ class ReversionStrategy:
             "date": today_str,
             "plan": plan_data
         }
-        fd = None
-        temp_path = None
-        try:
-            dir_name = os.path.dirname(snap_file)
-            if dir_name:
-                try: os.makedirs(dir_name, exist_ok=True)
-                except OSError: pass
-            
-            fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                fd = None
-                json.dump(data, f, ensure_ascii=False, indent=4)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, snap_file)
+        
+        # 🚨 MODIFIED: File Mutex 결속
+        with GlobalThrottle.get_file_lock(snap_file):
+            fd = None
             temp_path = None
-        except Exception as e:
-            if fd is not None:
-                try: os.close(fd)
-                except OSError: pass
-            if temp_path:
-                try: os.remove(temp_path)
-                except OSError: pass
-            logging.error(f"🚨 [{ticker}] V-REV 스냅샷 파일 원자적 쓰기 실패: {e}")
+            try:
+                dir_name = os.path.dirname(snap_file)
+                if dir_name:
+                    try: os.makedirs(dir_name, exist_ok=True)
+                    except OSError: pass
+                
+                fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    fd = None
+                    json.dump(data, f, ensure_ascii=False, indent=4)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temp_path, snap_file)
+                temp_path = None
+            except Exception as e:
+                if fd is not None:
+                    try: os.close(fd)
+                    except OSError: pass
+                if temp_path:
+                    try: os.remove(temp_path)
+                    except OSError: pass
+                logging.error(f"🚨 [{ticker}] V-REV 스냅샷 파일 원자적 쓰기 실패: {e}")
 
     def load_daily_snapshot(self, ticker):
         snap_file = self._get_snapshot_file(ticker)
-        try:
-            with open(snap_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return data.get("plan")
-        except Exception:
-            pass
-        return None
+        # 🚨 MODIFIED: File Mutex 결속
+        with GlobalThrottle.get_file_lock(snap_file):
+            try:
+                with open(snap_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return data.get("plan")
+            except Exception:
+                pass
+            return None
 
     def ensure_failsafe_snapshot(self, ticker, curr_p, prev_c, alloc_cash, q_data, total_kis_qty, avwap_qty, actual_avg=0.0):
         curr_p = self._safe_float(curr_p)

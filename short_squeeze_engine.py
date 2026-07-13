@@ -1,29 +1,23 @@
 # ==========================================================
 # FILE: short_squeeze_engine.py
 # ==========================================================
-# 🚨 NEW: [도메인 주도 설계 (DDD) 신규 파일] 숏 스퀴즈 감시 및 공매도 데이터 스캔 전담 엔진
-# 🚨 MODIFIED: [ETF 결측치 패러독스 궁극 수술] YF API가 ETF(SOXX, QQQ)의 공매도 잔고를 제공하지 않는 맹점을 파기하고, 섹터 대장주(NVDA, AAPL)를 프록시(Proxy)로 우회 스캔하는 다이내믹 맵핑 락온.
-# 🚨 MODIFIED: [실시간 동적 가이던스 팩트 결속] 정적 텍스트만 반환하던 낡은 구조를 소각하고, 실시간 스캔 데이터를 주입받아 알고리즘 판정(Judgment)을 최상단에 브리핑하도록 렌더링 파이프라인 전면 개조.
-# 🚨 VERIFIED: [Case 26 텔레그램 붕괴 방어] 텍스트 반환 시 부등호(>) 기호를 HTML 이스케이프(&gt;)로 치환하여 파서 즉사 원천 차단.
-# 🚨 VERIFIED: [제1헌법 철저 준수] yfinance API의 동기 통신(I/O) 블로킹 맹점을 asyncio.to_thread와 wait_for(10s) 족쇄로 완벽 격리하여 메인 이벤트 루프 교착(Deadlock) 원천 차단.
-# 🚨 VERIFIED: [Case 32 & 33 절대 규칙] YF API 호출 전 TPS 캡핑(0.06초 지연) 샌드위치 및 3단 지수 백오프 무중단 회복 루틴 결속.
-# 🚨 VERIFIED: [Insight 14 & 25] NaN, Infinity 및 String-Comma 등 맹독성 데이터 유입 시 ValueError 즉사 방어를 위한 _safe_float 쉴드 100% 내재화.
+# 🚨 MODIFIED: [API Thundering Herd 방어] YF 모듈 통신 직전 하드코딩된 await asyncio.sleep(0.06)을 영구 소각하고, 백그라운드 스레드 내부에서 GlobalThrottle.wait_api_sync()를 호출하도록 팩트 교정 완료.
+# 🚨 VERIFIED: [도메인 주도 설계 (DDD)] 숏 스퀴즈 감시 및 공매도 데이터 스캔 전담 엔진 유지.
 # ==========================================================
 import asyncio
 import logging
 import math
 import yfinance as yf
+from global_throttle import GlobalThrottle # 🚨 NEW: 중앙 통제소 결속
 
 class ShortSqueezeScanner:
     def __init__(self):
-        # 🚨 [프록시 대장주 매핑망] ETF의 공매도 결측치를 방어하기 위한 섹터 대표 지표
         self.proxy_map = {
-            "SOXX": "NVDA",  # 반도체 섹터 대장주
-            "QQQ": "AAPL",   # 나스닥 섹터 대장주
+            "SOXX": "NVDA",  
+            "QQQ": "AAPL",   
             "FNGS": "META"
         }
 
-    # 🚨 [Insight 14, 25] API String-Float 및 NaN/Inf 맹독성 런타임 붕괴 방어막 결속
     def _safe_float(self, val) -> float:
         if val is None:
             return 0.0
@@ -35,9 +29,9 @@ class ShortSqueezeScanner:
         except (ValueError, TypeError):
             return 0.0
 
-    # 🚨 [제1헌법 준수] 동기 I/O(YF API) 블로킹 캡슐화 전용 서브 헬퍼
     def _fetch_yf_info_sync(self, ticker_symbol: str) -> dict:
         try:
+            GlobalThrottle.wait_api_sync() # 🚨 MODIFIED: 중앙 통제소 락온 (동기 스레드 내부 실행)
             ticker = yf.Ticker(ticker_symbol)
             info = ticker.info
             return info if isinstance(info, dict) else {}
@@ -45,17 +39,13 @@ class ShortSqueezeScanner:
             logging.debug(f"⚠️ [{ticker_symbol}] YF 동기 통신 내부 예외: {e}")
             return {}
 
-    # 🚨 [메인 코어 엔진] 비동기 래핑 및 스퀴즈 임계치 판정
     async def get_metrics(self, base_ticker: str) -> dict:
         info = {}
-        # 🚨 ETF 결측치 우회를 위한 프록시 타겟팅
         scan_target = self.proxy_map.get(base_ticker, base_ticker)
         
-        # 🚨 [Case 32, 33] 3단 지수 백오프 및 TPS 캡핑(0.06s) 무중단 회복 루틴 락온
         for attempt in range(3):
             try:
-                await asyncio.sleep(0.06) 
-                
+                # 🚨 MODIFIED: 파편화된 sleep 소각 완료
                 info = await asyncio.wait_for(
                     asyncio.to_thread(self._fetch_yf_info_sync, scan_target),
                     timeout=10.0
@@ -78,12 +68,10 @@ class ShortSqueezeScanner:
         if not isinstance(info, dict):
             info = {}
 
-        # 핵심 데이터 팩트 추출 및 _safe_float 기반 0.0 폴백 철저 방어
         short_pct_of_float = self._safe_float(info.get('shortPercentOfFloat', 0.0)) * 100.0
         days_to_cover = self._safe_float(info.get('shortRatio', 0.0))
         shares_short = self._safe_float(info.get('sharesShort', 0.0))
 
-        # 알고리즘 스퀴즈 임계치 판정망 (SI > 15%, DTC > 4일 기준)
         is_si_high = short_pct_of_float >= 15.0
         is_dtc_high = days_to_cover >= 4.0
 
@@ -110,7 +98,6 @@ class ShortSqueezeScanner:
             "Action": action
         }
 
-    # 🚨 [동적 리포트 렌더링 팩트] 실시간 스캔 데이터를 주입받아 관제탑에 브리핑하는 가이던스 메서드
     def get_squeeze_guidance_text(self, base_ticker: str, metrics: dict) -> str:
         scan_target = metrics.get("Scan_Target", base_ticker)
         si_float = metrics.get("SI_Float", 0.0)
