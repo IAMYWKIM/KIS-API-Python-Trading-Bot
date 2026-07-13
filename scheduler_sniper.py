@@ -3,6 +3,9 @@
 # ==========================================================
 # 🚨 MODIFIED: [제1헌법 철저 준수] 달력 API(mcal) 호출 전 하드코딩된 time.sleep(0.06) 땜질을 영구 소각하고, GlobalThrottle.wait_api_sync()로 100% 락온.
 # 🚨 MODIFIED: [부분 체결 동적 차감 수술] 암살자 매도 덫이 전량 체결되지 않더라도 부분 체결(Partial Fill) 수량만큼 실시간으로 암살자 장부 및 상태 캐시에서 차감하여 SSOT 무결성 사수 완료.
+# 🚨 MODIFIED: [상태 기억 상실(State Amnesia) 붕괴 궁극 수술] JSONDecodeError 등으로 상태 캐시 파일이 비정상 초기화되는 현상을 원천 차단하기 위해 듀얼 세이프티(.bak) 원자적 백업 및 자가 치유(Self-Healing) 파이프라인 100% 결속.
+# 🚨 MODIFIED: [KST 타임라인 롤오버 맹점 수술] EST 기준 장중(예: 11:00 AM)에 KST 자정이 지나 날짜가 변경될 경우, 당일 체결 내역 조회(get_execution_history) 시 주문이 증발(Ghost Order)한 것으로 오인하는 치명적 KIS API 패러독스를 방어하기 위해 검색 기간을 D-2 ~ D-0으로 강제 확장 락온.
+# 🚨 MODIFIED: [부활(Resurrection) 패러독스 차단] 암살자가 임무를 완수(전량 익절)하여 셧다운될 때, buy_odno 캐시도 원자적으로 초기화("")하여 유령 주문 추적기가 이미 청산된 물량을 재진입(부활)시키는 대참사 원천 봉쇄.
 # ==========================================================
 import logging
 import datetime
@@ -14,6 +17,7 @@ import os
 import json
 import glob
 import tempfile
+import shutil
 import html  
 import pandas as pd
 import pandas_market_calendars as mcal
@@ -50,6 +54,17 @@ def _write_json_atomic(file_path, data):
             os.fsync(f.fileno())
         os.replace(tmp_path, file_path)
         tmp_path = None
+        
+        # 🚨 듀얼 세이프티 백업 생성
+        bak_path = file_path + ".bak"
+        bak_tmp_path = bak_path + ".tmp"
+        try:
+            shutil.copy2(file_path, bak_tmp_path)
+            os.replace(bak_tmp_path, bak_path)
+        except Exception:
+            try: os.remove(bak_tmp_path)
+            except OSError: pass
+            
     except Exception as e:
         if fd is not None:
             try: os.close(fd)
@@ -59,17 +74,33 @@ def _write_json_atomic(file_path, data):
             except OSError: pass
         logging.error(f"🚨 [Sniper] 원자적 파일 쓰기 실패: {e}")
 
+def _read_json_with_bak(file_path):
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            if content.strip():
+                return json.loads(content)
+    except Exception:
+        pass
+        
+    try:
+        bak_path = file_path + ".bak"
+        with open(bak_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            if content.strip():
+                data = json.loads(content)
+                _write_json_atomic(file_path, data) # 자가 치유
+                return data
+    except Exception:
+        pass
+    return {}
+
 def _read_state_sync(ticker, now_est):
     date_str = now_est.strftime('%Y-%m-%d')
     file_path = f"data/avwap_trade_state_{ticker}.json"
     
     with GlobalThrottle.get_file_lock(file_path):
-        data = {}
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            pass
+        data = _read_json_with_bak(file_path)
             
         if not isinstance(data, dict) or data.get('date') != date_str:
             data = {'date': date_str, 'qty': 0, 'avg_price': 0.0, 'buy_odno': "", 'is_ordering': False, 'sell_odno': "", 'shutdown': False, 'dumped': False, 'cash_warned': False, 'alert_msg_id': 0, 'suppress_sell': False, 'last_filled_sell_qty': 0}
@@ -82,12 +113,7 @@ def _update_state_sync(ticker, now_est, updates):
     file_path = f"data/avwap_trade_state_{ticker}.json"
     
     with GlobalThrottle.get_file_lock(file_path):
-        data = {}
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            pass
+        data = _read_json_with_bak(file_path)
             
         if not isinstance(data, dict) or data.get('date') != date_str:
             data = {'date': date_str, 'qty': 0, 'avg_price': 0.0, 'buy_odno': "", 'is_ordering': False, 'sell_odno': "", 'shutdown': False, 'dumped': False, 'cash_warned': False, 'alert_msg_id': 0, 'suppress_sell': False, 'last_filled_sell_qty': 0}
@@ -103,17 +129,12 @@ def _try_lock_ordering_sync(ticker, now_est):
     file_path = f"data/avwap_trade_state_{ticker}.json"
     
     with GlobalThrottle.get_file_lock(file_path):
-        data = {}
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            pass
+        data = _read_json_with_bak(file_path)
         
         if not isinstance(data, dict) or data.get('date') != date_str:
             data = {'date': date_str, 'qty': 0, 'avg_price': 0.0, 'buy_odno': "", 'is_ordering': False, 'sell_odno': "", 'shutdown': False, 'dumped': False, 'cash_warned': False, 'alert_msg_id': 0, 'suppress_sell': False, 'last_filled_sell_qty': 0}
         
-        if data.get('is_ordering') or data.get('buy_odno'):
+        if data.get('is_ordering') or data.get('buy_odno') or data.get('shutdown'):
             return False, data
             
         data['is_ordering'] = True
@@ -184,7 +205,9 @@ async def scheduled_sniper_monitor(context):
     
     kst_zone = ZoneInfo('Asia/Seoul')
     now_kst = datetime.datetime.now(kst_zone)
-    today_kst_str = now_kst.strftime('%Y%m%d')
+    # 🚨 MODIFIED: KST 타임라인 롤오버 맹점 수술 (D-2 ~ D-0) 강제 확장
+    kis_search_start = (now_kst - datetime.timedelta(days=2)).strftime('%Y%m%d')
+    query_end_dt = now_kst.strftime('%Y%m%d')
     
     def _get_market_hours():
         # 🚨 MODIFIED: [제1헌법] 달력 스캔 전 파편화된 sleep 소각 및 중앙 통제망 강제
@@ -296,7 +319,7 @@ async def scheduled_sniper_monitor(context):
                                 
                                 await asyncio.sleep(1.0) 
                                 
-                                exec_hist = await _retry_api(broker.get_execution_history, t, today_kst_str, today_kst_str)
+                                exec_hist = await _retry_api(broker.get_execution_history, t, kis_search_start, query_end_dt)
                                 safe_exec = exec_hist if isinstance(exec_hist, list) else []
                                 
                                 filled_buy_qty = sum(int(_safe_float(ex.get('ft_ccld_qty'))) for ex in safe_exec if str(ex.get('odno')) == t_state.get('buy_odno') and ex.get('sll_buy_dvsn_cd') == '02')
@@ -347,7 +370,7 @@ async def scheduled_sniper_monitor(context):
                             continue
 
                         if t_state.get('buy_odno') and t_state.get('qty') == 0:
-                            exec_hist = await _retry_api(broker.get_execution_history, t, today_kst_str, today_kst_str)
+                            exec_hist = await _retry_api(broker.get_execution_history, t, kis_search_start, query_end_dt)
                             safe_exec = exec_hist if isinstance(exec_hist, list) else []
                             buy_execs = [ex for ex in safe_exec if str(ex.get('odno')) == t_state['buy_odno'] and ex.get('sll_buy_dvsn_cd') == '02']
                              
@@ -395,10 +418,10 @@ async def scheduled_sniper_monitor(context):
                                     if chat_id:
                                         await _safe_send(context, chat_id, f"🕸️ <b>[{html.escape(t)}] +1.0% 고정 익절망 장전 완료</b>\n▫️ 목표 지정가: ${sell_price:.2f} (독립 장부 수량 {t_state['qty']}주)", parse_mode='HTML')
 
-                        # 🚨 MODIFIED: [부분 체결 동적 차감 스캔망]
+                        # 🚨 MODIFIED: [부분 체결 동적 차감 및 롤오버 맹점 수술 스캔망]
                         t_state = await asyncio.wait_for(asyncio.to_thread(_read_state_sync, t, now_est), timeout=10.0)
                         if t_state.get('sell_odno') and t_state.get('qty') > 0:
-                            exec_hist = await _retry_api(broker.get_execution_history, t, today_kst_str, today_kst_str)
+                            exec_hist = await _retry_api(broker.get_execution_history, t, kis_search_start, query_end_dt)
                             safe_exec = exec_hist if isinstance(exec_hist, list) else []
                             sell_execs = [ex for ex in safe_exec if str(ex.get('odno')) == t_state['sell_odno'] and ex.get('sll_buy_dvsn_cd') == '01']
                             
@@ -416,7 +439,8 @@ async def scheduled_sniper_monitor(context):
                                     if chat_id:
                                         await _safe_send(context, chat_id, f"💥 <b>[{html.escape(t)}] 암살자 덫 부분 체결 (Partial Fill)</b>\n▫️ 익절 물량: {new_fill_diff}주 체결 완료\n▫️ 장부 잔여 물량: {remaining_qty}주 계속 감시 중", parse_mode='HTML')
                                 else:
-                                    await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {'shutdown': True, 'sell_odno': ""}), timeout=10.0)
+                                    # 🚨 MODIFIED: [부활 맹점 파기] buy_odno까지 확실하게 초기화하여 유령 주문 부활 차단
+                                    await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {'shutdown': True, 'sell_odno': "", 'buy_odno': ""}), timeout=10.0)
                                     await asyncio.wait_for(asyncio.to_thread(assassin_ledger.clear_ledger, t), timeout=10.0)
                                     if chat_id:
                                         await _safe_send(context, chat_id, f"🚀 <b>[{html.escape(t)}] 암살자 +1.0% 전량 익절 성공! (당일 임무 완수)</b>\n▫️ 잔여 물량 100% 현금화 완료\n▫️ 암살자 단독 당일 임무 완수 (독립 장부 소각됨).", parse_mode='HTML')
@@ -553,7 +577,8 @@ async def scheduled_sniper_monitor(context):
            
                             if order_res and order_res.get('rt_cd') == '0' and odno:
                                 now_kst_fresh = datetime.datetime.now(ZoneInfo('Asia/Seoul'))
-                                today_kst_str_fresh = now_kst_fresh.strftime('%Y%m%d')
+                                kis_search_start_fresh = (now_kst_fresh - datetime.timedelta(days=2)).strftime('%Y%m%d')
+                                query_end_dt_fresh = now_kst_fresh.strftime('%Y%m%d')
                                 ccld_qty = 0
                                 
                                 for _ in range(4):
@@ -571,7 +596,7 @@ async def scheduled_sniper_monitor(context):
                                     else:
                                         try:
                                             await asyncio.sleep(0.06)
-                                            exec_hist = await asyncio.wait_for(asyncio.to_thread(broker.get_execution_history, t, today_kst_str_fresh, today_kst_str_fresh), timeout=10.0)
+                                            exec_hist = await asyncio.wait_for(asyncio.to_thread(broker.get_execution_history, t, kis_search_start_fresh, query_end_dt_fresh), timeout=10.0)
                                             safe_exec = exec_hist if isinstance(exec_hist, list) else []
                                             filled_rec = next((ex for ex in safe_exec if isinstance(ex, dict) and str(ex.get('odno', '')) == odno), None)
                                             if filled_rec: ccld_qty = int(_safe_float(filled_rec.get('ft_ccld_qty')))
@@ -592,7 +617,7 @@ async def scheduled_sniper_monitor(context):
                                         except Exception: pass
                                     try:
                                         await asyncio.sleep(0.06) 
-                                        exec_history = await asyncio.wait_for(asyncio.to_thread(broker.get_execution_history, t, today_kst_str_fresh, today_kst_str_fresh), timeout=15.0)
+                                        exec_history = await asyncio.wait_for(asyncio.to_thread(broker.get_execution_history, t, kis_search_start_fresh, query_end_dt_fresh), timeout=15.0)
                                     except Exception: exec_history = []
                                     
                                     actual_exec_price = next((_safe_float(ex.get('ft_ccld_unpr3')) for ex in exec_history if isinstance(ex, dict) and ex.get('sll_buy_dvsn_cd') == '02' and ex.get('odno') == odno and _safe_float(ex.get('ft_ccld_unpr3')) > 0), next((_safe_float(ex.get('ft_ccld_unpr3')) for ex in exec_history if isinstance(ex, dict) and ex.get('sll_buy_dvsn_cd') == '02' and _safe_float(ex.get('ft_ccld_unpr3')) > 0), limit_p))
@@ -704,7 +729,8 @@ async def scheduled_sniper_monitor(context):
                 
                             if order_res and order_res.get('rt_cd') == '0' and odno:
                                 now_kst_fresh = datetime.datetime.now(ZoneInfo('Asia/Seoul'))
-                                today_kst_str_fresh = now_kst_fresh.strftime('%Y%m%d')
+                                kis_search_start_fresh = (now_kst_fresh - datetime.timedelta(days=2)).strftime('%Y%m%d')
+                                query_end_dt_fresh = now_kst_fresh.strftime('%Y%m%d')
                                 ccld_qty = 0
                                 
                                 for _ in range(4):
@@ -722,7 +748,7 @@ async def scheduled_sniper_monitor(context):
                                     else:
                                         try:
                                             await asyncio.sleep(0.06)
-                                            exec_hist = await asyncio.wait_for(asyncio.to_thread(broker.get_execution_history, t, today_kst_str_fresh, today_kst_str_fresh), timeout=10.0)
+                                            exec_hist = await asyncio.wait_for(asyncio.to_thread(broker.get_execution_history, t, kis_search_start_fresh, query_end_dt_fresh), timeout=10.0)
                                             safe_exec = exec_hist if isinstance(exec_hist, list) else []
                                             filled_rec = next((ex for ex in safe_exec if isinstance(ex, dict) and str(ex.get('odno', '')) == odno), None)
                                             if filled_rec: ccld_qty = int(_safe_float(filled_rec.get('ft_ccld_qty')))
@@ -743,7 +769,7 @@ async def scheduled_sniper_monitor(context):
                                         except Exception: pass
                                     try:
                                         await asyncio.sleep(0.06) 
-                                        exec_history = await asyncio.wait_for(asyncio.to_thread(broker.get_execution_history, t, today_kst_str_fresh, today_kst_str_fresh), timeout=15.0)
+                                        exec_history = await asyncio.wait_for(asyncio.to_thread(broker.get_execution_history, t, kis_search_start_fresh, query_end_dt_fresh), timeout=15.0)
                                     except Exception: exec_history = []
                                     
                                     actual_exec_price = next((_safe_float(ex.get('ft_ccld_unpr3')) for ex in exec_history if isinstance(ex, dict) and ex.get('sll_buy_dvsn_cd') == '01' and str(ex.get('odno', '')) == odno and _safe_float(ex.get('ft_ccld_unpr3')) > 0), next((_safe_float(ex.get('ft_ccld_unpr3')) for ex in exec_history if isinstance(ex, dict) and ex.get('sll_buy_dvsn_cd') == '01' and _safe_float(ex.get('ft_ccld_unpr3')) > 0), limit_p))
