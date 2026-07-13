@@ -2,6 +2,7 @@
 # FILE: telegram_commands.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 48대 엣지 케이스 완벽 결속 교차 검증 완료.
+# 🚨 MODIFIED: [제1헌법 철저 준수] 달력 API(mcal) 스캔 전 파편화된 호출망을 소각하고, GlobalThrottle.wait_api_sync()를 강제 주입하여 썬더링 허드 완벽 차단.
 # 🚨 MODIFIED: [중복 매도 패러독스 궁극 수술] `/add_q` 및 `/clear_q` 수동 조작 시, 스냅샷 파일뿐만 아니라 봇이 쥐고 있던 '당일 체결 기억(vwap_state)' 캐시 파일까지 와일드카드(Glob)로 100% 영구 소각하여 이중 매도 락온(Ghost Selling Block) 현상을 원천 봉쇄.
 # ==========================================================
 import logging
@@ -24,6 +25,7 @@ import telegram.error
 from scheduler_core import get_budget_allocation
 from telegram_avwap_console import AvwapConsolePlugin
 from plugin_updater import SystemUpdater
+from global_throttle import GlobalThrottle # 🚨 NEW: 중앙 통제소 결속
 
 class TelegramCommands:
     def __init__(self, config, broker, strategy, queue_ledger, sync_engine, view, tx_lock):
@@ -99,6 +101,8 @@ class TelegramCommands:
         now = datetime.datetime.now(est)
         
         def _fetch_schedule(target_now):
+            # 🚨 MODIFIED: [제1헌법] 달력 API 호출 전 중앙 통제소 락온 강제
+            GlobalThrottle.wait_api_sync()
             nyse = mcal.get_calendar('NYSE')
             return nyse.schedule(start_date=target_now.date(), end_date=target_now.date())
 
@@ -169,6 +173,8 @@ class TelegramCommands:
         now_est = datetime.datetime.now(est)
         
         def _check_schedule(target_now):
+            # 🚨 MODIFIED: [제1헌법] 달력 API 호출 전 중앙 통제소 락온 강제
+            GlobalThrottle.wait_api_sync()
             nyse = mcal.get_calendar('NYSE')
             return nyse.schedule(start_date=target_now.date(), end_date=target_now.date())
 

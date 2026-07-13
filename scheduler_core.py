@@ -1,6 +1,8 @@
 # ==========================================================
 # FILE: scheduler_core.py
 # ==========================================================
+# 🚨 MODIFIED: [제1헌법 철저 준수] is_market_open 내부 달력 API(mcal) 스캔 전 파편화된 time.sleep(0.06)을 영구 소각하고, GlobalThrottle.wait_api_sync() 중앙 통제소 락온 완료.
+# 🚨 MODIFIED: [Lost Update 궁극 방어] scheduled_auto_sync 내부 _check_and_set_lock에서 sync_lock.json 생성 및 갱신 시 GlobalThrottle.get_file_lock() 100% 팩트 래핑 완료.
 # 🚨 MODIFIED: [본진 졸업 마비 패러독스 수술] 암살자가 오버나이트를 수행하여 계좌에 물량이 남아있더라도, `process_realtime_graduation`에서 KIS 잔고에서 암살자 장부(`AssassinLedger`) 수량을 차감하여 본진 물량만을 정확히 추출, 0주 새출발 졸업망이 정상 가동되도록 팩트 락온. 단, 음수가 발생할 경우 큐 장부를 교차 검증하여 조기 졸업을 안전하게 차단(Bypass).
 # ==========================================================
 import logging
@@ -16,6 +18,7 @@ import glob
 import random
 import pandas_market_calendars as mcal
 import html
+from global_throttle import GlobalThrottle # 🚨 NEW: 중앙 통제소 결속
 
 def _safe_float(val):
     try:
@@ -71,7 +74,7 @@ async def async_retry(func, *args, default=None, timeout=10.0, **kwargs):
 def is_market_open():
     for attempt in range(3):
         try:
-            time.sleep(0.06) 
+            GlobalThrottle.wait_api_sync() # 🚨 MODIFIED: 파편화된 sleep 소각 및 중앙 통제소 락온
             est = ZoneInfo('America/New_York')
             today = datetime.datetime.now(est)
             if today.weekday() >= 5: return False
@@ -529,31 +532,34 @@ async def scheduled_auto_sync(context):
         est_tz = ZoneInfo('America/New_York')
         today_est = datetime.datetime.now(est_tz).strftime("%Y-%m-%d")
         lock_file = "data/sync_lock.json"
-        try: os.makedirs("data", exist_ok=True)
-        except OSError: pass
-        try:
-            with open(lock_file, "r", encoding="utf-8") as f:
-                lock_data = json.load(f)
-                if isinstance(lock_data, dict) and lock_data.get("last_sync") == today_est: return False, today_est
-        except Exception: pass
-
-        fd = None; tmp_path = None
-        try:
-            fd, tmp_path = tempfile.mkstemp(dir="data", text=True)
-            with os.fdopen(fd, 'w', encoding="utf-8") as f:
-                fd = None
-                json.dump({"last_sync": today_est}, f)
-                f.flush(); os.fsync(f.fileno())
-            os.replace(tmp_path, lock_file)
-            tmp_path = None
-        except Exception:
-            if fd is not None:
-                try: os.close(fd)
-                except OSError: pass
-            if tmp_path:
-                try: os.remove(tmp_path)
-                except OSError: pass
-        return True, today_est
+        
+        # 🚨 MODIFIED: [Lost Update 궁극 방어] 파일 뮤텍스 100% 팩트 래핑
+        with GlobalThrottle.get_file_lock(lock_file):
+            try: os.makedirs("data", exist_ok=True)
+            except OSError: pass
+            try:
+                with open(lock_file, "r", encoding="utf-8") as f:
+                    lock_data = json.load(f)
+                    if isinstance(lock_data, dict) and lock_data.get("last_sync") == today_est: return False, today_est
+            except Exception: pass
+    
+            fd = None; tmp_path = None
+            try:
+                fd, tmp_path = tempfile.mkstemp(dir="data", text=True)
+                with os.fdopen(fd, 'w', encoding="utf-8") as f:
+                    fd = None
+                    json.dump({"last_sync": today_est}, f)
+                    f.flush(); os.fsync(f.fileno())
+                os.replace(tmp_path, lock_file)
+                tmp_path = None
+            except Exception:
+                if fd is not None:
+                    try: os.close(fd)
+                    except OSError: pass
+                if tmp_path:
+                    try: os.remove(tmp_path)
+                    except OSError: pass
+            return True, today_est
 
     can_run, today_est = await async_retry(_check_and_set_lock, default=(False, ""))
     if not can_run: return

@@ -1,6 +1,8 @@
 # ==========================================================
 # FILE: telegram_sync_engine.py
 # ==========================================================
+# 🚨 MODIFIED: [제1헌법 철저 준수] _get_last_trade_date 내부 달력 API(mcal) 스캔 시 GlobalThrottle.wait_api_sync()를 강제 주입하여 썬더링 허드 완벽 차단.
+# 🚨 MODIFIED: [Lost Update 궁극 방어] process_auto_sync 내부에서 상태 캐시(vwap_state_REV)를 갱신할 때, 읽기와 쓰기를 단일 동기 스레드 함수(_update_v_state)로 묶은 뒤 GlobalThrottle.get_file_lock()을 100% 팩트 래핑하여 원자적(Atomic) 무결성 사수 완료.
 # 🚨 MODIFIED: [유령 잔고 방어 팩트 수술] actual_qty < a_qty_for_check 로 인해 마이너스 값이 산출될 경우 0주 졸업 오인 방어망 결속
 # 🚨 NEW: 본진 전략 타점 오염을 원천 차단하기 위해 KIS 실서버 원본 계좌 잔고 및 평단가를 시각적 세션으로 완전 격리 표출
 # ==========================================================
@@ -20,8 +22,8 @@ import functools
 import yfinance as yf
 import pandas as pd 
 import pandas_market_calendars as mcal
-
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from global_throttle import GlobalThrottle # 🚨 NEW: 중앙 통제소 결속
 
 class TelegramSyncEngine:
     def __init__(self, config, broker, strategy, queue_ledger, view, tx_lock, sync_locks):
@@ -100,6 +102,7 @@ class TelegramSyncEngine:
                     await self._safe_send(context, chat_id, f"✂️ <b>[{html.escape(str(ticker))}] 야후 파이낸스 {split_type} 자동 감지!</b>\n▫️ 감지된 비율: <b>{split_ratio}배</b> (발생일: {html.escape(str(split_date))})\n▫️ 봇이 기존 V14 장부, V-REV 큐 장부, 암살자 장부, AVWAP 상태 캐시의 수량과 평단가를 100% 무인 자동 소급 조정 완료했습니다.", parse_mode='HTML')
              
                 def _get_last_trade_date(target_est):
+                    GlobalThrottle.wait_api_sync() # 🚨 MODIFIED: 중앙 통제소 락온
                     nyse = mcal.get_calendar('NYSE')
                     return nyse.schedule(start_date=(target_est - datetime.timedelta(days=10)).date(), end_date=target_est.date())
 
@@ -423,38 +426,41 @@ class TelegramSyncEngine:
                             pass
                         elif safe_actual_qty_for_vrev > 0 and safe_actual_qty_for_vrev < vrev_ledger_qty:
                             gap_qty = vrev_ledger_qty - safe_actual_qty_for_vrev
-                            vwap_state_file = f"data/vwap_state_REV_{ticker}.json"
                             
-                            def _read_v_state(f_path):
-                                with open(f_path, 'r', encoding='utf-8') as vf: return json.load(vf)
-                                 
-                            v_state = await self._retry_api(_read_v_state, vwap_state_file, default={})
-                            if isinstance(v_state, dict) and "executed" in v_state and isinstance(v_state["executed"], dict) and "SELL_QTY" in v_state["executed"]:
-                                old_sell_qty = v_state["executed"]["SELL_QTY"]
-                                v_state["executed"]["SELL_QTY"] = max(0, old_sell_qty - gap_qty)
-                                 
-                            def _write_v_state(state_dict, f_path):
-                                fd = None
-                                tmp_path = None
-                                try:
-                                    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(f_path) or '.')
-                                    with os.fdopen(fd, 'w', encoding='utf-8') as _vf_out:
-                                        fd = None
-                                        json.dump(state_dict, _vf_out, ensure_ascii=False, indent=4)
-                                        _vf_out.flush()
-                                        os.fsync(f_out.fileno())
-                                    os.replace(tmp_path, f_path)
+                            # 🚨 MODIFIED: [Lost Update 궁극 방어] 읽기와 쓰기를 단일 동기 스레드 함수 내에서 파일 뮤텍스로 100% 팩트 래핑
+                            def _update_v_state(tkr, g_qty):
+                                f_path = f"data/vwap_state_REV_{tkr}.json"
+                                with GlobalThrottle.get_file_lock(f_path):
+                                    try:
+                                        with open(f_path, 'r', encoding='utf-8') as vf: v_state = json.load(vf)
+                                    except Exception:
+                                        v_state = {}
+                                        
+                                    if isinstance(v_state, dict) and "executed" in v_state and isinstance(v_state["executed"], dict) and "SELL_QTY" in v_state["executed"]:
+                                        old_sell_qty = v_state["executed"]["SELL_QTY"]
+                                        v_state["executed"]["SELL_QTY"] = max(0, old_sell_qty - g_qty)
+                                        
+                                    fd = None
                                     tmp_path = None
-                                except Exception as write_err:
-                                    if fd is not None:
-                                        try: os.close(fd)
-                                        except OSError: pass
-                                    if tmp_path:
-                                        try: os.remove(tmp_path)
-                                        except OSError: pass
-                                    raise write_err
+                                    try:
+                                        fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(f_path) or '.')
+                                        with os.fdopen(fd, 'w', encoding='utf-8') as _vf_out:
+                                            fd = None
+                                            json.dump(v_state, _vf_out, ensure_ascii=False, indent=4)
+                                            _vf_out.flush()
+                                            os.fsync(_vf_out.fileno())
+                                        os.replace(tmp_path, f_path)
+                                        tmp_path = None
+                                    except Exception as write_err:
+                                        if fd is not None:
+                                            try: os.close(fd)
+                                            except OSError: pass
+                                        if tmp_path:
+                                            try: os.remove(tmp_path)
+                                            except OSError: pass
+                                        raise write_err
 
-                            await self._retry_api(_write_v_state, v_state, vwap_state_file, timeout=10.0)
+                            await self._retry_api(_update_v_state, ticker, gap_qty, timeout=10.0)
 
                             actual_clear_price_for_sync = 0.0
                             if target_execs:
@@ -605,7 +611,6 @@ class TelegramSyncEngine:
         actual_qty = int(self._safe_float((safe_holdings.get(ticker) or {'qty': 0}).get('qty')))
         actual_avg = self._safe_float((safe_holdings.get(ticker) or {'avg': 0}).get('avg'))
         
-        # NEW: V-REV 큐 오버라이드 전 KIS 오리지널 원본 데이터 소스 격리 백업 (Read-Only)
         kis_raw_qty = actual_qty
         kis_raw_avg = actual_avg
 
@@ -664,7 +669,6 @@ class TelegramSyncEngine:
         except Exception as e:
             logging.error(f"🚨 암살자 장부 UI 렌더링 실패: {e}")
 
-        # NEW: KIS 실서버 종합 원장 계좌 정보 블록 시각적 표출 추가 (Read-Only 격리 세션)
         report += f"\n🏛️ <b>[ KIS 실서버 종합 원장 계좌 정보 ]</b>\n"
         report += f"▪️ KIS 총 수량 : <b>{kis_raw_qty} 주</b> (본진 {actual_qty}주 + 암살자 {kis_raw_qty - actual_qty if kis_raw_qty > actual_qty else 0}주)\n"
         report += f"▪️ KIS 실평단가 : <b>${kis_raw_avg:,.2f}</b> (증권사 앱 표출 팩트 단가)\n"

@@ -1,6 +1,7 @@
 # ==========================================================
 # FILE: scheduler_sniper.py
 # ==========================================================
+# 🚨 MODIFIED: [제1헌법 철저 준수] 달력 API(mcal) 호출 전 하드코딩된 time.sleep(0.06) 땜질을 영구 소각하고, GlobalThrottle.wait_api_sync()로 100% 락온.
 # 🚨 MODIFIED: [부분 체결 동적 차감 수술] 암살자 매도 덫이 전량 체결되지 않더라도 부분 체결(Partial Fill) 수량만큼 실시간으로 암살자 장부 및 상태 캐시에서 차감하여 SSOT 무결성 사수 완료.
 # ==========================================================
 import logging
@@ -22,7 +23,7 @@ import functools
 
 from scheduler_core import is_market_open
 from assassin_ledger import AssassinLedger
-from global_throttle import GlobalThrottle
+from global_throttle import GlobalThrottle # 🚨 전역 통제소
 
 def _safe_float(val):
     try:
@@ -186,7 +187,8 @@ async def scheduled_sniper_monitor(context):
     today_kst_str = now_kst.strftime('%Y%m%d')
     
     def _get_market_hours():
-        time.sleep(0.06)
+        # 🚨 MODIFIED: [제1헌법] 달력 스캔 전 파편화된 sleep 소각 및 중앙 통제망 강제
+        GlobalThrottle.wait_api_sync()
         nyse = mcal.get_calendar('NYSE')
         return nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
 
@@ -403,7 +405,6 @@ async def scheduled_sniper_monitor(context):
                             filled_qty = sum(int(_safe_float(ex.get('ft_ccld_qty'))) for ex in sell_execs)
                             last_filled = t_state.get('last_filled_sell_qty', 0)
                             
-                            # 부분 체결 발생 시 즉시 차감 및 타전
                             if filled_qty > last_filled:
                                 new_fill_diff = filled_qty - last_filled
                                 remaining_qty = max(0, t_state['qty'] - new_fill_diff)

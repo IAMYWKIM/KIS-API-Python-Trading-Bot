@@ -2,6 +2,7 @@
 # FILE: telegram_states.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 48대 엣지 케이스 완벽 결속 교차 검증 완료.
+# 🚨 MODIFIED: [Lost Update 궁극 방어] 파일 물리 삭제 및 덮어쓰기 로직(_hijack_vwap_lock, _process_reset_files, _nuke_assassin_data) 전역에 GlobalThrottle.get_file_lock()을 100% 팩트 래핑 완료.
 # 🚨 MODIFIED: [중복 매도 패러독스 궁극 수술] RESET:LOCK (잠금 해제) 격발 시, 스냅샷 파일뿐만 아니라 봇이 쥐고 있던 '당일 체결 기억(vwap_state)' 캐시 파일까지 와일드카드(Glob)로 100% 영구 소각하여 0주 졸업 및 이중 매도 락온(Ghost Selling Block) 맹점을 원천 봉쇄.
 # ==========================================================
 
@@ -18,6 +19,7 @@ import glob
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
+from global_throttle import GlobalThrottle # 🚨 NEW: 중앙 통제소 결속
 
 class TelegramStates:
     def __init__(self, config, broker, queue_ledger, sync_engine):

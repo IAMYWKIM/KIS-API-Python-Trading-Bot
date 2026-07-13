@@ -4,9 +4,8 @@
 # 🚨 MODIFIED: [V44.53 제1헌법 및 16계명 절대 락온] 달력 API(mcal) 스캔을 비동기(to_thread) 래핑
 # 🚨 MODIFIED: [V75.05 레드존 팩트 교정] 제9경고에 따라 불필요한 레드존을 진공 압축하여 15:12 ~ 15:31 EST 구간으로 정밀 락온 완료.
 # 🚨 MODIFIED: [Case 14 절대 헌법 준수] 달력 API 타임아웃 5.0초를 10.0초로 팩트 교정하여 타임아웃 헌법 일원화.
-# 🚨 NEW: [Case 33 절대 규칙] 3단 지수 백오프 및 Fail-Safe 기반 휴장일 판별 로직 이식
+# 🚨 MODIFIED: [제1헌법 철저 준수] 낡은 time.sleep(0.06) 땜질 코드를 영구 소각하고 GlobalThrottle.wait_api_sync() 중앙 통제소 락온 결속.
 # 🚨 MODIFIED: [제1헌법 교정] 서브프로세스 교착 방어를 위한 30초 타임아웃 족쇄 및 os.makedirs 비동기 래핑 전면 결속
-# 🚨 NEW: [Case 32 절대 헌법] 달력 API 스캔 동기 함수 내 TPS 캡핑 샌드위치 강제 주입
 # 🚨 NEW: [좀비 프로세스 방어] 서브프로세스 TimeoutError 발생 시 .kill() 직후 await .wait()를 강제 호출하여 OS 자원 누수(Zombie) 원천 차단
 # 🚨 MODIFIED: [Indentation 붕괴 수술] 시스템 전역에 유입된 1~2칸 스페이스 오차 12개소 정밀 타격 교정 (컴파일 즉사 에러 100% 소각)
 # ==========================================================
@@ -18,6 +17,7 @@ import time
 import datetime
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
+from global_throttle import GlobalThrottle # 🚨 NEW: 중앙 통제소 결속
 
 class SystemUpdater:
     def __init__(self):
@@ -34,8 +34,8 @@ class SystemUpdater:
             return True, ""
 
         def _check_holiday():
-            # 🚨 NEW: [Case 32] 달력 API TPS 캡핑 강제 주입
-            time.sleep(0.06)
+            # 🚨 MODIFIED: [제1헌법] 파편화된 sleep 땜질 소각 및 중앙 통제소 API 락온 강제
+            GlobalThrottle.wait_api_sync()
             import pandas_market_calendars as mcal
             nyse = mcal.get_calendar('NYSE')
             schedule = nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
