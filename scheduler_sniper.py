@@ -7,6 +7,7 @@
 # 🚨 MODIFIED: [KST 타임라인 롤오버 맹점 수술] EST 기준 장중(예: 11:00 AM)에 KST 자정이 지나 날짜가 변경될 경우, 당일 체결 내역 조회(get_execution_history) 시 주문이 증발(Ghost Order)한 것으로 오인하는 치명적 KIS API 패러독스를 방어하기 위해 검색 기간을 D-2 ~ D-0으로 강제 확장 락온.
 # 🚨 MODIFIED: [부활(Resurrection) 패러독스 차단] 암살자가 임무를 완수(전량 익절)하여 셧다운될 때, buy_odno 캐시도 원자적으로 초기화("")하여 유령 주문 추적기가 이미 청산된 물량을 재진입(부활)시키는 대참사 원천 봉쇄.
 # 🚨 MODIFIED: [암살자 팩트 타전 오염 수술] 15:59 EST 컷오프 시, 이미 전량 익절했거나 진입 실패로 퇴근(Shutdown)한 상태라면 허위 알림(오버나이트 관망 등)을 띄우지 않고 조용히 컷오프(Bypass)하도록 팩트 방어망 결속 완료.
+# 🚨 MODIFIED: [State Overwrite Collision 영구 소각] 전량 익절 감지 시 분할되어 있던 상태 업데이트 파이프라인을 단일 트랜잭션으로 통합하여 `last_filled_sell_qty` 증발을 완벽히 차단.
 # ==========================================================
 import logging
 import datetime
@@ -438,15 +439,21 @@ async def scheduled_sniper_monitor(context):
                                 new_fill_diff = filled_qty - last_filled
                                 remaining_qty = max(0, t_state['qty'] - new_fill_diff)
                                 
-                                await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {'qty': remaining_qty, 'last_filled_sell_qty': filled_qty}), timeout=10.0)
-                                await asyncio.wait_for(asyncio.to_thread(assassin_ledger.pop_lots, t, new_fill_diff), timeout=10.0)
-                                
                                 if remaining_qty > 0:
+                                    # 부분 체결 로직: 상태 파일 갱신 및 장부 차감을 단일 블록에서 처리
+                                    await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {'qty': remaining_qty, 'last_filled_sell_qty': filled_qty}), timeout=10.0)
+                                    await asyncio.wait_for(asyncio.to_thread(assassin_ledger.pop_lots, t, new_fill_diff), timeout=10.0)
                                     if chat_id:
                                         await _safe_send(context, chat_id, f"💥 <b>[{html.escape(t)}] 암살자 덫 부분 체결 (Partial Fill)</b>\n▫️ 익절 물량: {new_fill_diff}주 체결 완료\n▫️ 장부 잔여 물량: {remaining_qty}주 계속 감시 중", parse_mode='HTML')
                                 else:
-                                    # 🚨 MODIFIED: [부활 맹점 파기] buy_odno까지 확실하게 초기화하여 유령 주문 부활 차단
-                                    await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {'shutdown': True, 'sell_odno': "", 'buy_odno': ""}), timeout=10.0)
+                                    # 🚨 MODIFIED: [State Overwrite Collision 파기] 전량 익절 시 잔여 수량 갱신과 셧다운 플래그 주입을 단일 트랜잭션으로 통합하여 `last_filled_sell_qty` 소실을 완벽 방어.
+                                    await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {
+                                        'qty': 0, 
+                                        'last_filled_sell_qty': filled_qty, 
+                                        'shutdown': True, 
+                                        'sell_odno': "", 
+                                        'buy_odno': ""
+                                    }), timeout=10.0)
                                     await asyncio.wait_for(asyncio.to_thread(assassin_ledger.clear_ledger, t), timeout=10.0)
                                     if chat_id:
                                         await _safe_send(context, chat_id, f"🚀 <b>[{html.escape(t)}] 암살자 +1.0% 전량 익절 성공! (당일 임무 완수)</b>\n▫️ 잔여 물량 100% 현금화 완료\n▫️ 암살자 단독 당일 임무 완수 (독립 장부 소각됨).", parse_mode='HTML')
