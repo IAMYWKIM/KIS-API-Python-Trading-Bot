@@ -4,6 +4,7 @@
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 48대 엣지 케이스 완벽 결속 교차 검증 완료.
 # 🚨 MODIFIED: [Lost Update 궁극 방어] 파일 물리 삭제 및 덮어쓰기 로직(_hijack_vwap_lock, _process_reset_files, _nuke_assassin_data) 전역에 GlobalThrottle.get_file_lock()을 100% 팩트 래핑 완료.
 # 🚨 MODIFIED: [중복 매도 패러독스 궁극 수술] RESET:LOCK (잠금 해제) 격발 시, 스냅샷 파일뿐만 아니라 봇이 쥐고 있던 '당일 체결 기억(vwap_state)' 캐시 파일까지 와일드카드(Glob)로 100% 영구 소각하여 0주 졸업 및 이중 매도 락온(Ghost Selling Block) 맹점을 원천 봉쇄.
+# 🚨 MODIFIED: [장부 인덱스 뒤집힘 패러독스 영구 소각] EDIT_Q (수동 지층 수정) 직후 하드코딩되어 있던 `process_auto_sync` (자동 동기화) 호출 로직을 시스템 전역에서 100% 영구 소각. 다단계 수동 조작 중 KIS 실잔고 불일치를 오인하여 최신 1지층을 팝(Pop)해버리는 맹독성 엔진 난입을 완벽히 차단함.
 # ==========================================================
 
 import logging
@@ -131,13 +132,11 @@ class TelegramStates:
                 
                 del controller.user_states[chat_id]
                 short_date = html.escape(str(target_date[:10]))
-                try: await asyncio.wait_for(update.effective_message.reply_text(f"✅ <b>[{safe_ticker}] 지층 정밀 수정 완료! KIS 원장과 동기화합니다.</b>\n▫️ {short_date} | {qty}주 | ${price:.2f}", parse_mode='HTML'), timeout=10.0)
-                except Exception: pass
                 
-                if ticker not in self.sync_engine.sync_locks:
-                    self.sync_engine.sync_locks[ticker] = asyncio.Lock()
-                if not self.sync_engine.sync_locks[ticker].locked():
-                    await self.sync_engine.process_auto_sync(ticker, chat_id, context, silent_ledger=False)
+                # 🚨 MODIFIED: [장부 인덱스 뒤집힘 패러독스 원천 차단] 
+                # 수동 조작 중 KIS 자동 동기화가 난입해 잔고 오차분만큼 최신 지층을 강제 팝(Pop)해버리는 맹독성 로직 전면 소각
+                try: await asyncio.wait_for(update.effective_message.reply_text(f"✅ <b>[{safe_ticker}] 지층 정밀 수정 완료!</b>\n▫️ {short_date} | {qty}주 | ${price:.2f}\n\n⚠️ <b>[안전 격리 모드]</b>\n수동 다단계 조작 중 시스템 간섭을 막기 위해 <b>자동 동기화가 일시 차단</b>되었습니다.\n삭제 등 남은 수동 작업을 모두 마친 후, 반드시 <code>/sync</code>를 눌러 KIS 실원장과 팩트 동기화하십시오.", parse_mode='HTML'), timeout=10.0)
+                except Exception: pass
                 
                 return
 

@@ -1,4 +1,3 @@
-
 # ==========================================================
 # FILE: vwap_core_engine.py
 # ==========================================================
@@ -11,6 +10,7 @@
 # 🚨 MODIFIED: [1분 슬라이싱 정액제(Fixed-Amount) 궁극 락온] 15:56 EST 마지막 슬라이싱 틱 도달 시, 정량제 수량 캡핑을 영구 무효화하고 다중 매수 지층(Buy1, Buy2)의 잔여 예산을 정밀 산출하여 남은 한도 끝까지 100% 스윕 매수하도록 팩트 락온 완료.
 # 🚨 MODIFIED: [떨사오팔(Buy Low, Sell High) 절대 헌법 사수] 현재가가 매도(SELL) 타점 이상에 도달하여 '매도 조건'에 진입했을 경우, 장중 하방 갭(-2.0%)이 발생하더라도 맹독성 고점 추격 매수(Limit-Trap)를 막기 위해 하이재킹 스윕 매수를 100% 원천 차단하는 `is_sell_condition` 방어막 전격 결속.
 # 🚨 NEW: [Case 47 자전거래(Wash Trade) 절대 방어망 결속] 암살자 덫과 본진 매수 덫이 교차하여 KIS 서버에서 리젝되는 현상을 막기 위해, 매수 타격 직전 암살자 덫을 임시 취소(Suspend)하고 오버나이트 설정에 따라 동적으로 재장전(Resume)하는 파이프라인 100% 팩트 이식.
+# 🚨 MODIFIED: [V14 VWAP 시드 탕진 패러독스 원천 차단] V14 모드가 VWAP 슬라이싱으로 구동 중일 때, 갭 하이재킹 진입 조건망이 뚫려 시드를 전액 스윕 매수하는 치명적 맹점을 100% 영구 소각 완료.
 # ==========================================================
 import logging
 import asyncio
@@ -75,9 +75,11 @@ async def execute_vwap_init(tx_lock, cfg, broker, chat_id, context, vwap_cache):
                 
                 if version == "V_REV" or (version == "V14" and is_manual_vwap):
                     if not vwap_cache.get(f"REV_{t}_nuked"):
-                        msg = f"🌅 <b>[{html.escape(str(t))}] 자체 1분 슬라이싱 VWAP 엔진 / 하방 스윕 감시망 기상</b>\n"
+                        # 🚨 MODIFIED: [관제탑 허위 렌더링 디커플링] V-REV 전용 하방 스윕 감시망 메시지를 V14 VWAP과 팩트 분리
+                        msg = f"🌅 <b>[{html.escape(str(t))}] 자체 1분 슬라이싱 VWAP 엔진 기상</b>\n"
                         msg += f"▫️ KIS 예약 덫 관망 및 장 마감 34분 전 로컬 펄스 타격 엔진의 가동 대기를 확인했습니다.\n"
-                        msg += f"▫️ 운용종목 갭 이탈 감지 시 즉각 개입(Gap Hijack)하는 폭락장 스윕 모드가 함께 가동됩니다. ⚔️"
+                        if version == "V_REV":
+                            msg += f"▫️ 운용종목 갭 이탈 감지 시 즉각 개입(Gap Hijack)하는 폭락장 스윕 모드가 함께 가동됩니다. ⚔️"
 
                         vwap_cache[f"REV_{t}_nuked"] = True
                         
@@ -153,7 +155,8 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                     # ======================================================
                     # [ 1. Gap Hijack (오직 하방 폭락장 풀-스윕 감시) ]
                     # ======================================================
-                    if (version == "V_REV" or (version == "V14" and is_manual_vwap)) and not is_downward_hijacked_now:
+                    # 🚨 MODIFIED: [V14 VWAP 하이재킹 영구 차단] V14 모드(is_manual_vwap=True)일 때 하이재킹 감시망이 뚫리는 로직 결함 100% 영구 소각
+                    if version == "V_REV" and not is_downward_hijacked_now:
                         t_curr_p = _safe_float(await _retry_api(broker.get_current_price, t))
                         df_1min_t = await _retry_api(broker.get_1min_candles_df, t)
                                 

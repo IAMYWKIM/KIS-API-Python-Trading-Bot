@@ -8,7 +8,7 @@
 # 🚨 MODIFIED: [UI 진공 압축 프로토콜] 인지 부하 감소를 위해 초단기 당일 누적 VWAP 및 숏 스퀴즈 감시망 UI 렌더링 텍스트 블록 100% 영구 소각 (백그라운드 연산은 완벽 보존).
 # 🚨 MODIFIED: [Silent Death 붕괴 수술] 새로고침, 휴장일, 장마감 버튼 클릭 시 무반응을 유발하던 하드코딩 `NONE` 파라미터를 동적 `ticker_clean`으로 100% 팩트 교정 완료.
 # 🚨 MODIFIED: [Thundering Herd 영구 소각] `_get_with_retry` 및 `_fetch_schedule`에 산재하던 파편화된 `sleep(0.06)`을 전면 소각하고 `GlobalThrottle` 중앙 통제소로 비동기 딜레이 100% 위임.
-# 🚨 MODIFIED: [Lost Update 궁극 방어] JSON 상태 파일 읽기(`_read_state`) 시 `GlobalThrottle.get_file_lock()` 기반 파일 뮤텍스를 래핑하여 더티 리드(Dirty Read) 붕괴 원천 차단.
+# 🚨 MODIFIED: [Lost Update 궁극 방어] JSON 상태 파일 읽기(`_read_state`) 시 `GlobalThrottle.get_file_lock()` 기반 파일 뮤텍스를 래핑하여 더티 리드(Dirty Read) 붕괴 원천 차단 및 `.bak` 파일 복구 팩트 결속.
 # 🚨 MODIFIED: [SSOT 락온 수술] 관제탑 UI가 지연된 구형 캐시 상태 파일(avwap_trade_state)의 수량을 참조하던 패러독스를 소각하고, 즉각 반영되는 AssassinLedger를 단일 진실 공급원(SSOT)으로 100% 팩트 락온.
 # 🚨 MODIFIED: [임무 완수 렌더링 오버라이드] 암살자가 +1.0% 전량 익절을 달성하거나 15:59 덤핑을 완수한 경우, '대기 중' 또는 '프리장 미진입 차단'으로 오인 표출되던 패러독스를 원천 차단하고 '당일 임무 완수' 상태를 100% 팩트로 명시적 렌더링하도록 UI 디커플링 로직 결속 완료.
 # ==========================================================
@@ -22,6 +22,7 @@ import functools
 import pandas as pd
 import pandas_market_calendars as mcal 
 import html  
+import json
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from short_squeeze_engine import ShortSqueezeScanner
@@ -202,13 +203,26 @@ class AvwapConsolePlugin:
         state_file = f"data/avwap_trade_state_{t}.json"
         try:
             def _read_state():
-                # 🚨 MODIFIED: [Lost Update 궁극 방어] GlobalThrottle.get_file_lock 팩트 래핑
+                # 🚨 MODIFIED: [Lost Update 궁극 방어] GlobalThrottle.get_file_lock 팩트 래핑 및 .bak 자가 치유 폴백 이식
                 with GlobalThrottle.get_file_lock(state_file):
                     try:
                         with open(state_file, 'r', encoding='utf-8') as f:
-                            return json.load(f)
+                            content = f.read()
+                            if content.strip():
+                                return json.loads(content)
                     except Exception:
-                        return {}
+                        pass
+                    
+                    try:
+                        bak_file = state_file + ".bak"
+                        with open(bak_file, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                            if content.strip():
+                                return json.loads(content)
+                    except Exception:
+                        pass
+                        
+                    return {}
 
             state_data = await asyncio.wait_for(asyncio.to_thread(_read_state), timeout=5.0)
             is_shutdown = False
