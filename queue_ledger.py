@@ -13,6 +13,7 @@
 # 🚨 VERIFIED: [Case 16] 원자적 쓰기(Atomic Write) 실패 시 임시 파일 스코프 고아화 방어 100% 사수 완료.
 # 🚨 VERIFIED: [제4헌법 절대 사수] 메인 장부뿐만 아니라 백업 파일(.bak) 생성 시에도 임시 파일(.bak.tmp)을 거치는 원자적 복사(Atomic Copy)를 강제하여 OS 커널 패닉 시 백업본 오염 원천 차단.
 # 🚨 NEW: [액면병합 0주 증발 붕괴 방어] apply_stock_split 실행 중 역분할(병합)로 인해 보유 수량이 1주 미만(0주)으로 절사되어 지층이 증발하는 현상을 1주 강제 보존으로 완벽 차단.
+# 🚨 NEW: [2-Tier Auto-Merge Protocol 락온] 3개 이상의 지층 생성 시 즉각 상위 지층을 통합하여 최대 2개 지층(2-Bucket)만을 유지하도록 `_enforce_two_tier_limit` 헬퍼 메서드를 신설하고, 큐가 팽창하는 모든 접점(add_lot, sync, overwrite)에 강제 주입 완료. 이를 통해 1층 익절 시 단일 지층 마법(리앵커링)이 100% 기계적으로 가동됨을 보장.
 # ==========================================================
 import os
 import json
@@ -134,6 +135,31 @@ class QueueLedger:
                    
         logging.error(f"🚨 [QueueLedger] 장부 저장 최종 실패: {self.file_path} — 데이터 유실 위험!")
 
+    def _enforce_two_tier_limit(self, q):
+        """ 
+        🚨 [NEW: 2-Tier Auto-Merge Protocol] 
+        지층이 3개 이상일 경우, 1층(가장 최근 매수)을 제외한 모든 상위 지층을 
+        단 1개의 지층으로 원자적 가중 평균(Weighted Average) 병합하여 2-Bucket 체제를 강제합니다.
+        이를 통해 1층 익절 시 리앵커링 마법이 100% 확률로 가동됨을 팩트 보장합니다.
+        """
+        if len(q) >= 3:
+            upper_layers = q[:-1]
+            merged_qty = sum(int(self._safe_float(l.get("qty", 0))) for l in upper_layers)
+            merged_invested = sum(int(self._safe_float(l.get("qty", 0))) * self._safe_float(l.get("price", 0.0)) for l in upper_layers)
+            merged_price = merged_invested / merged_qty if merged_qty > 0 else 0.0
+            
+            # 상위층 병합 시, 가장 오래된 지층의 날짜 역사(Date)를 계승
+            merged_date = upper_layers[0].get("date", "")
+
+            merged_layer = {
+                "qty": merged_qty,
+                "price": round(merged_price, 4),
+                "date": merged_date,
+                "type": "AUTO_MERGED_UPPER"
+            }
+            return [merged_layer, q[-1]]
+        return q
+
     def apply_stock_split(self, ticker, ratio):
         if ratio <= 0: return
         lock = GlobalThrottle.get_file_lock(self.file_path)
@@ -198,6 +224,9 @@ class QueueLedger:
                     "date": datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S"),
                     "type": lot_type
                 })
+            
+            # 🚨 MODIFIED: [2-Tier Auto-Merge Protocol] 큐 저장 직전 상위 지층 병합 강제
+            q = self._enforce_two_tier_limit(q)
             
             data[ticker] = q
             self._save_unsafe_no_lock(data)
@@ -339,6 +368,9 @@ class QueueLedger:
                         remaining_invested = vrev_total_invested - net_realized_cash
                         new_pure_price = round(max(0.01, remaining_invested / remaining_qty), 4)
                         q[0]["price"] = new_pure_price
+            
+            # 🚨 MODIFIED: [2-Tier Auto-Merge Protocol] 동기화 후 지층 폭증 방지 강제 병합
+            q = self._enforce_two_tier_limit(q)
                          
             if diff > 0:
                 logging.warning(f"⚠️ [QueueLedger] sync_with_broker CALIB_SUB 미달: {ticker} 큐 물량이 브로커보다 {diff}주 부족합니다. 큐가 초기화되었습니다.")
@@ -383,5 +415,9 @@ class QueueLedger:
         with lock:
             data = self._load_unsafe()
             sorted_q = sorted(q_data, key=lambda x: str(x.get('date', '0000-00-00')))
+            
+            # 🚨 MODIFIED: [2-Tier Auto-Merge Protocol] 수동 덮어쓰기 시에도 2-Bucket 체제 강제
+            sorted_q = self._enforce_two_tier_limit(sorted_q)
+            
             data[ticker] = sorted_q
             self._save_unsafe_no_lock(data)
