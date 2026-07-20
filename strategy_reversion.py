@@ -1,9 +1,11 @@
 # ==========================================================
 # FILE: strategy_reversion.py
 # ==========================================================
+# 🚨 MODIFIED: [정액제 기반 정량제 100% 락온] 1회분 할당 예산(15%)을 타점으로 나누어 '당일 매수 정량(Fixed-Quantity)'을 산출하고 영구 고정. 폭락 시 예산을 억지로 소진하지 않고 남은 차익을 시드 풀로 보존하여 매수 가능 횟수(Runway)를 무한 확장함.
 # 🚨 MODIFIED: [Lost Update 궁극 방어] 모든 상태 및 스냅샷 파일(JSON) 읽기/쓰기 연산에 GlobalThrottle.get_file_lock()을 100% 결속하여 더티 리드(Dirty Read) 및 동시성 파괴 원천 차단.
+# 🚨 MODIFIED: [제4헌법 원자적 쓰기 절대 사수] tempfile 생성 ➔ flush ➔ fsync ➔ os.replace의 100% 원자적 파이프라인 강제 주입.
 # 🚨 MODIFIED: [메모리 유령화(Ghost Memory) 붕괴 궁극 수술] 디스크 파일의 존재 여부 및 유효성을 교차 검증하여, 파일이 소각되었을 경우 메모리의 당일 매도 수량(SELL_QTY)을 즉각 0으로 원자적 초기화.
-# 🚨 MODIFIED: [데드코드 소각] `_save_state` 메서드 내부에 잔존하던 과거 데드락 경고 주석을 100% 영구 삭제.
+# 🚨 MODIFIED: [Case 46] 0주 스냅샷 오염 감지 시 YF 공식 종가를 기반으로 타점을 정밀하게 자가 치유(Self-Healing)하는 방어막 결속 완료.
 # ==========================================================
 import math
 import os
@@ -89,7 +91,7 @@ class ReversionStrategy:
             }
         }
         
-        # 🚨 MODIFIED: File Mutex 결속 및 낡은 데드락 주석 영구 소각
+        # 🚨 MODIFIED: File Mutex 결속 및 제4헌법 원자적 쓰기 100% 락온
         with GlobalThrottle.get_file_lock(state_file):
             fd = None
             temp_path = None
@@ -124,7 +126,7 @@ class ReversionStrategy:
             "plan": plan_data
         }
         
-        # 🚨 MODIFIED: File Mutex 결속
+        # 🚨 MODIFIED: File Mutex 결속 및 제4헌법 원자적 쓰기 100% 락온
         with GlobalThrottle.get_file_lock(snap_file):
             fd = None
             temp_path = None
@@ -223,6 +225,7 @@ class ReversionStrategy:
             else:
                 is_zero_snap = str(is_zero_val).lower() == 'true'
 
+            # 🚨 MODIFIED: [Case 46 자가치유 결속] 0주 스냅샷 오염 감지 시 YF 무결성 종가 기반 정밀 보정
             if is_zero_snap and prev_c > 0.0:
                 orders = cached_plan.get("orders", [])
                 buy_orders = [o for o in orders if isinstance(o, dict) and str(o.get("side")) == "BUY"]
@@ -255,6 +258,7 @@ class ReversionStrategy:
                     b1_budget = rem_budget * 0.5
                     b2_budget = rem_budget * 0.5
                     
+                    # 🚨 MODIFIED: 정액제 기반 정량제(Fixed-Amount based Fixed-Quantity) 핵심 팩트
                     new_q1 = math.floor(b1_budget / target_p1) if target_p1 > 0 else 0
                     new_q2 = math.floor(b2_budget / target_p2) if target_p2 > 0 else 0
                     
@@ -349,6 +353,7 @@ class ReversionStrategy:
             if available_upper > 0 and trigger_upper >= 0.01:
                 active_sells.append(trigger_upper)
                 
+            # 🚨 MODIFIED: [자전거래 방어막 캡핑 결속] 매수가격이 매도가격 이상일 경우 즉각 하향 조치
             if active_sells:
                 min_sell = min(active_sells)
                 if p1_trigger >= min_sell:
@@ -376,6 +381,7 @@ class ReversionStrategy:
 
         total_spent = 0.0 if is_snapshot_mode else self._safe_float((self.executed.get("BUY_BUDGET") or {}).get(ticker, 0.0))
         
+        # 🚨 MODIFIED: [정액제 기반 정량제 100% 팩트 연산] 총 시드의 15%로 1회 예산(Budget) 한도 절대 고정
         seed_val = self._safe_float(self.cfg.get_seed(ticker))
         daily_limit = seed_val * 0.15
         
@@ -389,6 +395,7 @@ class ReversionStrategy:
             b1_budget = rem_budget * 0.5
             b2_budget = rem_budget * 0.5
             
+            # 🚨 MODIFIED: [목표 수량 영구 고정] 이 시점에 산출된 정량(q1, q2)은 당일 절대 변경되지 않으며, 폭락 시 차익은 그대로 시드 풀로 세이브됨
             q1 = math.floor(b1_budget / p1_trigger) if p1_trigger > 0 else 0
             q2 = math.floor(b2_budget / p2_trigger) if p2_trigger > 0 else 0
             
