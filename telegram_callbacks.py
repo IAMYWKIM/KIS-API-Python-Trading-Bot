@@ -11,6 +11,7 @@
 # 🚨 MODIFIED: [Case 38 무한 로딩 패러독스 차단] 알 수 없는 라우팅(else) 및 예외(except) 발생 시 텔레그램 클라이언트의 버튼 로딩 스피너가 영원히 도는 현상을 막기 위한 query.answer() 샌드박스 100% 강제 락온.
 # 🚨 MODIFIED: [통신 데드락 붕괴 영구 소각] 에러 알림 전송(query.answer, send_message) 시 텔레그램 서버 지연으로 인한 이벤트 루프 마비(Deadlock)를 원천 차단하기 위한 asyncio.wait_for 족쇄 전면 결속.
 # 🚨 MODIFIED: [Thundering Herd 영구 소각] 라우팅 엔진 내부에 잔존하던 불필요한 sleep 및 동기 I/O 찌꺼기 100% 영구 소각.
+# 🚨 NEW: [MANUAL_PORTION 라우팅 위임] 1회분 수동 매수/매도 액션(MANUAL_PORTION)을 Order Handler 도메인으로 100% 팩트 배선 결속.
 # ==========================================================
 import html
 import logging
@@ -55,8 +56,8 @@ class TelegramCallbacks:
         action, sub = data[0], data[1] if len(data) > 1 else ""
 
         try:
-            # 1️⃣ [수동/비상 주문 도메인 라우팅]
-            if action in ["EMERGENCY_REQ", "EMERGENCY_EXEC", "EXEC", "CANCEL_EXEC"]:
+            # 1️⃣ [수동/비상 주문 도메인 라우팅 (MANUAL_PORTION 팩트 배선 추가)]
+            if action in ["EMERGENCY_REQ", "EMERGENCY_EXEC", "EXEC", "CANCEL_EXEC", "MANUAL_PORTION"]:
                 await self.order_handler.handle(update, context, controller, action, sub, data)
             
             # 2️⃣ [V-REV 큐 장부 조작 도메인 라우팅]
