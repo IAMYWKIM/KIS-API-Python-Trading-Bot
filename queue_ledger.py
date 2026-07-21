@@ -2,6 +2,7 @@
 # FILE: queue_ledger.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 48대 엣지 케이스 완벽 결속 교차 검증 완료.
+# 🚨 MODIFIED: [단일 지층 팽창 패러독스 자가 치유] KIS 잔고와 큐 잔고가 동일하여 `sync_with_broker`가 조기 종료(Bypass)될 때 발생하는 '영구적 단일 지층 팽창' 맹독성 버그를 원천 차단. 잔고가 일치하더라도 단일 지층의 총 투자금이 1회 예산을 1.1배 초과한다면 즉시 조기 종료를 우회하고 1층과 2층으로 강제 정밀 분할(Tier Split)하여 자가 치유(Self-Healing)하도록 100% 팩트 락온.
 # 🚨 MODIFIED: [Lost Update 궁극 방어] 인스턴스 레벨 Lock 소각 및 시스템 전역 파일 Mutex(GlobalThrottle) 락온 (Case 47)
 # 🚨 MODIFIED: [수수료 트랩 원천 차단] 1층 매도 총액(Gross)에서 왕복 수수료 및 슬리피지 버퍼(0.6%)를 선차감한 '순수 회수금(Net Cash)'만을 원가 차감에 반영하여 전체 사이클 마진 붕괴 패러독스 방어 유지.
 # 🚨 MODIFIED: [Insight 14] 콤마(,) 및 NaN/Inf 맹독성 유입 시 ValueError 즉사 방어를 위한 `_safe_float` 쉴드 전면 내재화.
@@ -349,7 +350,36 @@ class QueueLedger:
             current_q_qty = sum(int(self._safe_float(item.get("qty"))) for item in q)
             actual_qty = int(self._safe_float(actual_qty))
 
+            # 🚨 MODIFIED: [단일 지층 팽창 패러독스 자가 치유 방어막]
             if current_q_qty == actual_qty:
+                if len(q) == 1 and prev_close is not None and portion_budget is not None:
+                    lot = q[0]
+                    lot_qty = int(self._safe_float(lot.get("qty")))
+                    lot_price = self._safe_float(lot.get("price"))
+                    total_invested = lot_qty * lot_price
+
+                    if total_invested > portion_budget * 1.1 and lot_price > prev_close:
+                        new_l1_qty = math.floor(portion_budget / prev_close)
+                        if 0 < new_l1_qty < lot_qty:
+                            new_l1_invested = new_l1_qty * prev_close
+                            rem_qty = lot_qty - new_l1_qty
+                            rem_invested = total_invested - new_l1_invested
+                            rem_price = round(max(0.01, rem_invested / rem_qty), 4)
+
+                            q[0]["qty"] = rem_qty
+                            q[0]["price"] = rem_price
+                            q[0]["type"] = "AUTO_SPLIT_UPPER"
+
+                            q.append({
+                                "qty": new_l1_qty,
+                                "price": round(prev_close, 4),
+                                "date": q[0]["date"],
+                                "type": "AUTO_SPLIT_L1"
+                            })
+                            data[ticker] = q
+                            self._save_unsafe_no_lock(data)
+                            logging.info(f"🔪 [{ticker}] 동기화 조기 종료 우회: 단일 지층 팽창 감지 ➔ 정밀 분할(Split) 자가 치유 완료 (1층: {new_l1_qty}주 @ ${prev_close:.2f})")
+                            return True
                 return False 
 
             today_str = self._get_trading_date_str()
