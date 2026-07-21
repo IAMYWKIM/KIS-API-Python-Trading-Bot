@@ -14,6 +14,7 @@
 #  └ 3. [2-Tier 지층 자동 병합 사수] 타격 직후 QueueLedger의 add_lot/pop_lots를 원자적으로 호출하여 하위 2-Tier 병합 아키텍처를 무결하게 자동 연동.
 #  └ 4. [애프터장 족쇄 해제 및 REG Lock 결속] 애프터마켓(AFTER) 진입 후에도 수동 타격을 100% 상시 허용하고, 체결 즉시 당일 스케줄러를 무효화(REG Lock)하여 중복 매매를 원천 차단함.
 # 🚨 MODIFIED: [팻핑거 절대 방어망 결속] MANUAL_PORTION 실행 시 즉시 격발되는 맹독성 로직을 소각하고, 예상 체결 수량과 단가를 브리핑하는 [2단계 확인 메뉴(Confirmation Menu)]를 강제 주입하여 오작동 대참사를 원천 봉쇄.
+# 🚨 MODIFIED: [Syntax 붕괴 2차 수술] MANUAL_PORTION 실제 격발 단계에서 `try-except` 블록의 들여쓰기 계층 오류(Indentation Error)를 원자적으로 교정하여 런타임 즉사 에러(SyntaxError)를 시스템 전역에서 100% 영구 소각 완료.
 # ==========================================================
 import logging
 import datetime
@@ -457,7 +458,6 @@ class CallbackOrderHandler:
             ticker = data[2] if len(data) > 2 else ""
             is_exec = (len(data) > 3 and data[3] == "EXEC")
 
-            # 🚨 MODIFIED: [V-REV 모드 절대 격리] 오리지널 모드일 경우 통신 전 즉각 셧다운
             version = str(await asyncio.to_thread(self.cfg.get_version, ticker) or "")
             if version != "V_REV":
                 try: await query.answer("❌ [격발 차단] V-REV 모드 전용 기능입니다. 오리지널 모드에서는 사용할 수 없습니다.", show_alert=True)
@@ -471,14 +471,13 @@ class CallbackOrderHandler:
                 return
 
             if not is_exec:
-                # 🚨 MODIFIED: [팻핑거 절대 방어망 결속] 1단계 - 확인 메뉴(Confirmation Menu) 렌더링
                 try: await query.answer(f"⏳ [{ticker}] 1회분 수동 {side} 타점 계산 중...", show_alert=False)
                 except Exception: pass
 
                 async with self.tx_lock:
                     try:
                         seed = float(await asyncio.to_thread(self.cfg.get_seed, ticker) or 0.0)
-                        budget = seed * 0.15 # V-REV 1회 고정 예산
+                        budget = seed * 0.15 
 
                         if not getattr(self, 'queue_ledger', None):
                             from queue_ledger import QueueLedger
@@ -502,7 +501,6 @@ class CallbackOrderHandler:
 
                         target_qty = math.floor(budget / exec_price)
 
-                        # 자본 잠김 및 큐 장부 캡핑
                         if side == "BUY":
                             max_buy_qty = math.floor(cash / exec_price)
                             final_qty = min(target_qty, max_buy_qty)
@@ -512,11 +510,10 @@ class CallbackOrderHandler:
                             final_qty = min(target_qty, total_q)
 
                         if final_qty <= 0:
-                            try: await query.answer("⚠️ 예산 부족 또는 잔고/큐 장부 수량이 부족하여 0주 산출됨.", show_alert=True)
+                            try: await query.answer("⚠️ 예산 부족 또는 잔고/큐 수량이 부족하여 0주 산출됨.", show_alert=True)
                             except Exception: pass
                             return
 
-                        # 확인 메뉴 렌더링
                         action_kr = "매수" if side == "BUY" else "매도"
                         safe_t = html.escape(str(ticker))
                         
@@ -539,7 +536,6 @@ class CallbackOrderHandler:
                         except Exception: pass
 
             else:
-                # 🚨 MODIFIED: [실제 격발망 팩트 락온] 2단계 - KIS 실서버 API 강제 발사
                 try: await query.answer(f"⏳ [{ticker}] 1회분 수동 {side} 전송 중...", show_alert=False)
                 except Exception: pass
 
@@ -570,7 +566,6 @@ class CallbackOrderHandler:
 
                         target_qty = math.floor(budget / exec_price)
 
-                        # 자본 잠김 방어 캡핑
                         if side == "BUY":
                             max_buy_qty = math.floor(cash / exec_price)
                             final_qty = min(target_qty, max_buy_qty)
@@ -615,7 +610,8 @@ class CallbackOrderHandler:
                             try: await query.edit_message_text(f"❌ <b>[{html.escape(str(ticker))}] 1회분 {side} 실패:</b> {err_msg}", parse_mode='HTML')
                             except Exception: pass
 
-                except Exception as e:
-                    logging.error(f"🚨 1회분 수동 제어 실제 격발 에러: {e}")
-                    try: await query.edit_message_text(f"❌ 오류: {html.escape(str(e))}", parse_mode='HTML')
-                    except Exception: pass
+                    except Exception as e:
+                        logging.error(f"🚨 1회분 수동 제어 실제 격발 에러: {e}")
+                        try: await query.edit_message_text(f"❌ 오류: {html.escape(str(e))}", parse_mode='HTML')
+                        except Exception: pass
+
