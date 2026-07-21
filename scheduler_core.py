@@ -4,6 +4,7 @@
 # 🚨 MODIFIED: [제1헌법 철저 준수] is_market_open 내부 달력 API(mcal) 스캔 전 파편화된 time.sleep(0.06)을 영구 소각하고, GlobalThrottle.wait_api_sync() 중앙 통제소 락온 완료.
 # 🚨 MODIFIED: [Lost Update 궁극 방어] scheduled_auto_sync 내부 _check_and_set_lock에서 sync_lock.json 생성 및 갱신 시 GlobalThrottle.get_file_lock() 100% 팩트 래핑 완료.
 # 🚨 MODIFIED: [본진 졸업 마비 패러독스 수술] 암살자가 오버나이트를 수행하여 계좌에 물량이 남아있더라도, `process_realtime_graduation`에서 KIS 잔고에서 암살자 장부(`AssassinLedger`) 수량을 차감하여 본진 물량만을 정확히 추출, 0주 새출발 졸업망이 정상 가동되도록 팩트 락온. 단, 음수가 발생할 경우 큐 장부를 교차 검증하여 조기 졸업을 안전하게 차단(Bypass).
+# 🚨 NEW: [Thundering Herd 영구 소각] 스케줄 동시 기상 시 달력 API(mcal) 무한 호출로 인한 60초 병목(Skipped) 붕괴를 원천 차단하기 위해 `_MCAL_CACHE` 전역 인메모리 캐싱 파이프라인 100% 결속.
 # ==========================================================
 import logging
 import datetime
@@ -19,6 +20,9 @@ import random
 import pandas_market_calendars as mcal
 import html
 from global_throttle import GlobalThrottle # 🚨 NEW: 중앙 통제소 결속
+
+# 🚨 NEW: [Thundering Herd 방어용 전역 캐시]
+_MCAL_CACHE = {}
 
 def _safe_float(val):
     try:
@@ -72,21 +76,29 @@ async def async_retry(func, *args, default=None, timeout=10.0, **kwargs):
             else: return default
 
 def is_market_open():
+    """ 🚨 MODIFIED: 전역 인메모리 캐싱 파이프라인 결속으로 스케줄 병목 현상 완벽 소각 """
+    est = ZoneInfo('America/New_York')
+    today = datetime.datetime.now(est)
+    if today.weekday() >= 5: return False
+   
+    date_str = today.strftime('%Y-%m-%d')
+    if date_str in _MCAL_CACHE:
+        return _MCAL_CACHE[date_str]
+
     for attempt in range(3):
         try:
-            GlobalThrottle.wait_api_sync() # 🚨 MODIFIED: 파편화된 sleep 소각 및 중앙 통제소 락온
-            est = ZoneInfo('America/New_York')
-            today = datetime.datetime.now(est)
-            if today.weekday() >= 5: return False
-           
+            GlobalThrottle.wait_api_sync() # 🚨 MODIFIED: 중앙 통제소 락온
             nyse = mcal.get_calendar('NYSE')
             schedule = nyse.schedule(start_date=today.date(), end_date=today.date())
-            if not schedule.empty: return True
-            else: return False
+            is_open = not schedule.empty
+            
+            _MCAL_CACHE[date_str] = is_open # 🚨 팩트 캐싱
+            return is_open
         except Exception as e:
             if attempt == 2:
-                est = ZoneInfo('America/New_York')
-                return datetime.datetime.now(est).weekday() < 5
+                fail_open = True
+                _MCAL_CACHE[date_str] = fail_open # 🚨 Fail-Open 캐싱
+                return fail_open
             time.sleep(1.0 * (2 ** attempt))
 
 def get_budget_allocation(cash, tickers, cfg):

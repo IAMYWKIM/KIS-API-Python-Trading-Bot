@@ -1,6 +1,7 @@
 # ==========================================================
 # FILE: strategy_reversion.py
 # ==========================================================
+# 🚨 MODIFIED: [단일 지층 오인 패러독스 사수] get_dynamic_plan 내부의 날짜 문자열(Date String) 기반 그룹핑을 전면 소각하고, 큐 장부의 LIFO 인덱스(`[-1]`)를 1지층으로 절대 락온하여 다중 지층 통합 오류 원천 봉쇄 완료.
 # 🚨 MODIFIED: [정액제 기반 정량제 100% 락온] 1회분 할당 예산(15%)을 타점으로 나누어 '당일 매수 정량(Fixed-Quantity)'을 산출하고 영구 고정. 폭락 시 예산을 억지로 소진하지 않고 남은 차익을 시드 풀로 보존하여 매수 가능 횟수(Runway)를 무한 확장함.
 # 🚨 MODIFIED: [Lost Update 궁극 방어] 모든 상태 및 스냅샷 파일(JSON) 읽기/쓰기 연산에 GlobalThrottle.get_file_lock()을 100% 결속하여 더티 리드(Dirty Read) 및 동시성 파괴 원천 차단.
 # 🚨 MODIFIED: [제4헌법 원자적 쓰기 절대 사수] tempfile 생성 ➔ flush ➔ fsync ➔ os.replace의 100% 원자적 파이프라인 강제 주입.
@@ -290,13 +291,13 @@ class ReversionStrategy:
         total_q = sum(int(self._safe_float(item.get("qty"))) for item in valid_q_data)
         total_inv = sum(self._safe_float(item.get('qty')) * self._safe_float(item.get('price')) for item in valid_q_data)
         
-        dates_in_queue = sorted(list(set(str(item.get('date', '')) for item in valid_q_data if item.get('date'))), reverse=True)
         l1_qty, l1_price = 0, 0.0
         
-        if dates_in_queue:
-            lots_1 = [item for item in valid_q_data if str(item.get('date', '')) == dates_in_queue[0]]
-            l1_qty = sum(int(self._safe_float(item.get('qty'))) for item in lots_1)
-            l1_price = sum(self._safe_float(item.get('qty')) * self._safe_float(item.get('price')) for item in lots_1) / l1_qty if l1_qty > 0 else 0.0
+        if valid_q_data:
+            # 🚨 MODIFIED: [단일 지층 오인 패러독스 사수] 날짜 문자열(Date String) 기반 그룹핑을 전면 소각하고, LIFO 큐의 최신 로트([-1])를 1지층으로 팩트 락온.
+            last_lot = valid_q_data[-1]
+            l1_qty = int(self._safe_float(last_lot.get('qty')))
+            l1_price = self._safe_float(last_lot.get('price'))
         
         upper_qty = total_q - l1_qty
         pure_l1_qty = l1_qty
@@ -304,7 +305,8 @@ class ReversionStrategy:
 
         trigger_l1 = round(l1_price * 1.006, 2)
         
-        if pure_upper_qty > 0 and len(dates_in_queue) >= 2:
+        # 🚨 MODIFIED: dates_in_queue 의존성 소각 (len(valid_q_data) 적용)
+        if pure_upper_qty > 0 and len(valid_q_data) >= 2:
             upper_inv = max(0.0, total_inv - (l1_price * l1_qty))
             upper_price = upper_inv / pure_upper_qty if pure_upper_qty > 0 else 0.0
             trigger_upper = round(upper_price * 1.010, 2)

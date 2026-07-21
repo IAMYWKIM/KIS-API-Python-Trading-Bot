@@ -8,6 +8,13 @@
 # 🚨 MODIFIED: [MOC 공식 종가 오버라이드] KIS의 낡은 종가를 배제하고 YF 공식 종가로 무조건 덮어쓰도록 `<= 0.0` 제약 100% 소각.
 # 🚨 MODIFIED: [현재가 보존 락온 복구] 장마감 시에만 현재가(curr)를 전일 종가(prev_close)로 강제 덮어씌워 렌더링 무결성 100% 사수.
 # 🚨 MODIFIED: [SyntaxError 붕괴 수술] EMERGENCY_EXEC 내부의 엇갈린 들여쓰기(else)를 팩트 교정하여 무한 크래시 루프 원천 봉쇄 완료.
+# 🚨 NEW: [1회분 수동 매수/매도 엔진 팩트 결속 (MANUAL_PORTION)]
+#  └ 1. [V-REV 오리지널 격리] 오직 V-REV 모드일 때만 동작하도록 API 통신 전 100% 교차 검증 락온 (V14 팻핑거 붕괴 원천 차단).
+#  └ 2. [자본 잠김 방어 캡핑] 매수(BUY) 시 KIS 실시간 가용 현금 최대치로 내림 캡핑, 매도(SELL) 시 로컬 큐(Queue) 장부 최대치로 동적 스케일링 캡핑.
+#  └ 3. [2-Tier 지층 자동 병합 사수] 타격 직후 QueueLedger의 add_lot/pop_lots를 원자적으로 호출하여 하위 2-Tier 병합 아키텍처를 무결하게 자동 연동.
+#  └ 4. [애프터장 족쇄 해제 및 REG Lock 결속] 애프터마켓(AFTER) 진입 후에도 수동 타격을 100% 상시 허용하고, 체결 즉시 당일 스케줄러를 무효화(REG Lock)하여 중복 매매를 원천 차단함.
+# 🚨 MODIFIED: [팻핑거 절대 방어망 결속] MANUAL_PORTION 실행 시 즉시 격발되는 맹독성 로직을 소각하고, 예상 체결 수량과 단가를 브리핑하는 [2단계 확인 메뉴(Confirmation Menu)]를 강제 주입하여 오작동 대참사를 원천 봉쇄.
+# 🚨 MODIFIED: [Syntax 붕괴 2차 수술] MANUAL_PORTION 실제 격발 단계에서 `try-except` 블록의 들여쓰기 계층 오류(Indentation Error)를 원자적으로 교정하여 런타임 즉사 에러(SyntaxError)를 시스템 전역에서 100% 영구 소각 완료.
 # ==========================================================
 import logging
 import datetime
@@ -17,7 +24,7 @@ import math
 import asyncio
 import yfinance as yf
 import html
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 class CallbackOrderHandler:
@@ -105,7 +112,6 @@ class CallbackOrderHandler:
                         logging.error(f"🚨 긴급수혈 통신 에러/타임아웃: {e}")
                         res = None
                     
-                    # 🚨 MODIFIED: [Syntax 붕괴 수술] else 구문 들여쓰기 100% 정밀 교정
                     if isinstance(res, dict) and str(res.get('rt_cd', '')) == '0':
                         await asyncio.to_thread(self.queue_ledger.pop_lots, ticker, emergency_qty)
                         msg = f"🚨 <b>[{html.escape(str(ticker))}] 수동 긴급 수혈 (Emergency MOC) 격발 완료!</b>\n"
@@ -194,6 +200,7 @@ class CallbackOrderHandler:
             if status_code in ["AFTER", "CLOSE", "PRE"]:
                 try:
                     def get_exact_prev_close(ticker_name):
+                        import time
                         time.sleep(0.06)
                         df = yf.Ticker(ticker_name).history(period="5d", interval="1d", timeout=5)
                         if not df.empty and 'Close' in df.columns:
@@ -445,3 +452,166 @@ class CallbackOrderHandler:
                 await context.bot.send_message(chat_id, f"🛑 <b>[{html.escape(str(t))}] 수동 취소 팩트 집행 완료</b>\n▫️ 총 <b>{nuked_count}건</b>의 미체결 및 예약 덫을 100% 파기(Nuke)하고 당일 매매 잠금을 <b>해제(Unlock)</b>했습니다.", parse_mode='HTML')
             else:
                 await context.bot.send_message(chat_id, f"ℹ️ <b>[{html.escape(str(t))}] 수동 취소 결과</b>\n▫️ 취소할 덫이 없습니다.", parse_mode='HTML')
+
+        elif action == "MANUAL_PORTION":
+            side = sub
+            ticker = data[2] if len(data) > 2 else ""
+            is_exec = (len(data) > 3 and data[3] == "EXEC")
+
+            version = str(await asyncio.to_thread(self.cfg.get_version, ticker) or "")
+            if version != "V_REV":
+                try: await query.answer("❌ [격발 차단] V-REV 모드 전용 기능입니다. 오리지널 모드에서는 사용할 수 없습니다.", show_alert=True)
+                except Exception: pass
+                return
+
+            status_code, _ = await controller.commands_handler._get_market_status()
+            if status_code not in ["PRE", "REG", "AFTER"]:
+                try: await query.answer("❌ [격발 차단] 현재 장운영시간(프리/정규/애프터장)이 아닙니다.", show_alert=True)
+                except Exception: pass
+                return
+
+            if not is_exec:
+                try: await query.answer(f"⏳ [{ticker}] 1회분 수동 {side} 타점 계산 중...", show_alert=False)
+                except Exception: pass
+
+                async with self.tx_lock:
+                    try:
+                        seed = float(await asyncio.to_thread(self.cfg.get_seed, ticker) or 0.0)
+                        budget = seed * 0.15 
+
+                        if not getattr(self, 'queue_ledger', None):
+                            from queue_ledger import QueueLedger
+                            self.queue_ledger = await asyncio.to_thread(QueueLedger)
+
+                        res_bal = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=10.0)
+                        cash = float(res_bal[0]) if isinstance(res_bal, (list, tuple)) and len(res_bal) > 0 else 0.0
+
+                        if side == "BUY":
+                            exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_ask_price, ticker), timeout=10.0))
+                        else:
+                            exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_bid_price, ticker), timeout=10.0))
+
+                        if exec_price <= 0.0:
+                            exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=10.0))
+
+                        if exec_price <= 0.0:
+                            try: await query.answer("❌ 실시간 호가 스캔 실패", show_alert=True)
+                            except Exception: pass
+                            return
+
+                        target_qty = math.floor(budget / exec_price)
+
+                        if side == "BUY":
+                            max_buy_qty = math.floor(cash / exec_price)
+                            final_qty = min(target_qty, max_buy_qty)
+                        else:
+                            q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) or []
+                            total_q = sum(int(float(str(item.get("qty") or 0).replace(',', ''))) for item in q_data if isinstance(item, dict))
+                            final_qty = min(target_qty, total_q)
+
+                        if final_qty <= 0:
+                            try: await query.answer("⚠️ 예산 부족 또는 잔고/큐 수량이 부족하여 0주 산출됨.", show_alert=True)
+                            except Exception: pass
+                            return
+
+                        action_kr = "매수" if side == "BUY" else "매도"
+                        safe_t = html.escape(str(ticker))
+                        
+                        msg = f"🚨 <b>[{safe_t} 수동 1회분 {action_kr} 승인 대기]</b> 🚨\n\n"
+                        msg += f"▫️ 타격 예정 수량: <b>{final_qty}주</b>\n"
+                        msg += f"▫️ 타격 예상 단가: <b>${exec_price:.2f}</b> (LIMIT)\n\n"
+                        msg += "⚠️ <b>포트폴리오 매니저 경고:</b>\n"
+                        msg += "하단 승인 버튼 클릭 시, KIS 서버로 실시간 API가 즉시 발사되며 취소할 수 없습니다. 정말 전송하시겠습니까?"
+
+                        keyboard = [
+                            [InlineKeyboardButton(f"🔥 [{safe_t}] {final_qty}주 {action_kr} 최종 격발", callback_data=f"MANUAL_PORTION:{side}:{ticker}:EXEC")],
+                            [InlineKeyboardButton("❌ 작전 취소 (장부 대시보드 복귀)", callback_data=f"REC:VIEW:{ticker}")]
+                        ]
+                        markup = InlineKeyboardMarkup(keyboard)
+                        await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
+
+                    except Exception as e:
+                        logging.error(f"🚨 수동 1회분 예상 타점 연산 에러: {e}")
+                        try: await query.answer(f"❌ 오류: {e}", show_alert=True)
+                        except Exception: pass
+
+            else:
+                try: await query.answer(f"⏳ [{ticker}] 1회분 수동 {side} 전송 중...", show_alert=False)
+                except Exception: pass
+
+                async with self.tx_lock:
+                    try:
+                        seed = float(await asyncio.to_thread(self.cfg.get_seed, ticker) or 0.0)
+                        budget = seed * 0.15
+
+                        if not getattr(self, 'queue_ledger', None):
+                            from queue_ledger import QueueLedger
+                            self.queue_ledger = await asyncio.to_thread(QueueLedger)
+
+                        res_bal = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=10.0)
+                        cash = float(res_bal[0]) if isinstance(res_bal, (list, tuple)) and len(res_bal) > 0 else 0.0
+
+                        if side == "BUY":
+                            exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_ask_price, ticker), timeout=10.0))
+                        else:
+                            exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_bid_price, ticker), timeout=10.0))
+
+                        if exec_price <= 0.0:
+                            exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=10.0))
+
+                        if exec_price <= 0.0:
+                            try: await query.edit_message_text("❌ 실시간 호가 스캔 실패. 취소되었습니다.", parse_mode='HTML')
+                            except Exception: pass
+                            return
+
+                        target_qty = math.floor(budget / exec_price)
+
+                        if side == "BUY":
+                            max_buy_qty = math.floor(cash / exec_price)
+                            final_qty = min(target_qty, max_buy_qty)
+                        else:
+                            q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) or []
+                            total_q = sum(int(float(str(item.get("qty") or 0).replace(',', ''))) for item in q_data if isinstance(item, dict))
+                            final_qty = min(target_qty, total_q)
+
+                        if final_qty <= 0:
+                            try: await query.edit_message_text("⚠️ 예산 부족 또는 잔고/큐 수량이 부족하여 취소되었습니다.", parse_mode='HTML')
+                            except Exception: pass
+                            return
+
+                        res = await asyncio.wait_for(
+                            asyncio.to_thread(self.broker.send_order, ticker, side, final_qty, exec_price, "LIMIT"),
+                            timeout=10.0
+                        )
+
+                        if isinstance(res, dict) and str(res.get('rt_cd', '')) == '0':
+                            if side == "BUY":
+                                await asyncio.to_thread(self.queue_ledger.add_lot, ticker, final_qty, exec_price, "MANUAL_PORTION_BUY")
+                            else:
+                                await asyncio.to_thread(self.queue_ledger.pop_lots, ticker, final_qty, exec_price)
+
+                            await asyncio.to_thread(self.cfg.set_lock, ticker, "REG")
+
+                            action_kr = "매수" if side == "BUY" else "매도"
+                            msg = f"✅ <b>[{html.escape(str(ticker))}] 수동 1회분 {action_kr} 체결 완료!</b>\n"
+                            msg += f"▫️ 팩트 타격 수량: <b>{final_qty}주</b>\n"
+                            msg += f"▫️ 팩트 체결 단가: <b>${exec_price:.2f}</b> (LIMIT)\n"
+                            msg += "▫️ 큐(Queue) 장부에 원자적으로 동기화 반영되었습니다.\n"
+                            msg += "▫️ <b>당일 스케줄러 자동 매매 잠금(REG Lock)이 안전하게 락온되었습니다.</b>"
+                            await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
+
+                            if ticker not in self.sync_engine.sync_locks:
+                                self.sync_engine.sync_locks[ticker] = asyncio.Lock()
+                            if not self.sync_engine.sync_locks[ticker].locked():
+                                await self.sync_engine.process_auto_sync(ticker, chat_id, context, silent_ledger=False)
+
+                        else:
+                            err_msg = html.escape(str(res.get('msg1') or '알 수 없는 에러')) if isinstance(res, dict) else '통신 장애'
+                            try: await query.edit_message_text(f"❌ <b>[{html.escape(str(ticker))}] 1회분 {side} 실패:</b> {err_msg}", parse_mode='HTML')
+                            except Exception: pass
+
+                    except Exception as e:
+                        logging.error(f"🚨 1회분 수동 제어 실제 격발 에러: {e}")
+                        try: await query.edit_message_text(f"❌ 오류: {html.escape(str(e))}", parse_mode='HTML')
+                        except Exception: pass
+

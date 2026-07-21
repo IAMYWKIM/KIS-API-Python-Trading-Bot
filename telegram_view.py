@@ -9,6 +9,7 @@
 # 🚨 MODIFIED: [Float 정밀도 붕괴 원천 차단] 뷰어 클래스 내에 `_safe_float` 래퍼를 전격 이식하여 파편화된 인라인 캐스팅을 통합하고 NaN/Inf 맹독성 붕괴 원천 차단.
 # 🚨 MODIFIED: [Case 16 위반 교정] 이미지 렌더링(create_profit_image) 시 원자적 쓰기 실패에 따른 UnboundLocalError 연쇄 붕괴를 막기 위한 temp_path 스코프 최상단 전진 배치.
 # 🚨 MODIFIED: [V14 LOC 전용 수동 제어망 결속] 통합 지시서(create_sync_report) 렌더링 시 V-REV 및 VWAP 모드를 배제하고 오직 V14 LOC 모드에만 수동 전송/취소 버튼이 스위칭 렌더링되도록 팩트 락온.
+# 🚨 NEW: [V-REV 전용 수동 제어망 결속] 통합지시서에 V-REV 모드 전용 '1회분 수동매수/수동매도' 버튼 주입 완료. 오리지널(V14) 모드에서는 철저히 격리(Bypass)됨.
 # 🚨 NEW: [큐 장부 매뉴얼 이식] get_queue_management_menu 화면에 추가/삭제/수정 등 수동 조작을 위한 명령어 가이드 표출 기능 팩트 결속.
 # ==========================================================
 import os
@@ -583,6 +584,12 @@ class TelegramView:
                         keyboard.append([InlineKeyboardButton(f"🛑 {t} 수동 매매 취소", callback_data=f"CANCEL_EXEC:{t}")])
                     else:
                         keyboard.append([InlineKeyboardButton(f"🚀 {t} 수동 강제 전송", callback_data=f"EXEC:{t}")])
+                elif v_mode == "V_REV":
+                    # 🚨 NEW: V-REV 전용 1회분 수동 매수/매도 인라인 버튼 결속 (V14 모드 완벽 격리)
+                    keyboard.append([
+                        InlineKeyboardButton(f"🟢 {t} 1회분 수동매수", callback_data=f"MANUAL_PORTION:BUY:{t}"),
+                        InlineKeyboardButton(f"🔴 {t} 1회분 수동매도", callback_data=f"MANUAL_PORTION:SELL:{t}")
+                    ])
             
         final_msg = header_msg + body_msg.strip()
         

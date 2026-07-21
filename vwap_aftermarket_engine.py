@@ -4,6 +4,7 @@
 # 🚨 MODIFIED: [Thundering Herd 영구 소각] _retry_api 및 루프 내부의 파편화된 await asyncio.sleep(0.06) 땜질 전면 삭제.
 # 🚨 MODIFIED: [중앙 통제소 위임] 모든 API 지연을 GlobalThrottle(중앙 통제소)로 100% 위임하여 이벤트 루프 교착 상태 완벽 방어.
 # 🚨 NEW: [Case 47 자전거래(Wash Trade) 절대 방어망 결속] 암살자 오버나이트 모드 허용 시 기장전된 +1.0% 지정가 익절 덫과 본진(V-REV)의 16:01 애프터장 지연 고가 매수 덫이 충돌하여 KIS 서버에서 리젝(Reject)당하는 맹독성 패러독스를 완벽히 차단하기 위해, 타격 직전 암살자 덫 임시 취소 및 타격 직후 원상 복구(재장전) 파이프라인 100% 팩트 이식 완료.
+# 🚨 MODIFIED: [예수금 0원 매도 컷오프 맹점 수술] 애프터장 예수금 조회 결과 0원(cash=0.0)일 때 루프 자체를 continue로 끊어버리는 코드를 영구 소각하고, 하위 로직에서 매수(BUY) 플랜만 스킵하고 매도(SELL) 플랜은 정상 집행하도록 100% 팩트 교정 완료.
 # ==========================================================
 import logging
 import asyncio
@@ -123,8 +124,8 @@ async def execute_aftermarket_trade(tx_lock, cfg, broker, strategy, queue_ledger
                         await asyncio.sleep(10.0)
                 
                 if cash <= 0.0:
-                    logging.error(f"🚨 [{t}] 애프터장 예수금 확보 실패 (자본 잠김 미해소). 타격 중단.")
-                    continue
+                    # 🚨 MODIFIED: [예수금 0원 매도 컷오프 맹점 수술] 루프를 끊어버리던 `continue`를 소각하고, 매수만 차단되도록 경고 메시지 팩트 교정
+                    logging.warning(f"⚠️ [{t}] 애프터장 예수금 확보 실패 (자본 잠김 미해소). 매수(BUY) 타격만 중단합니다.")
 
                 # 🚨 NEW: [Case 47 자전거래(Wash Trade) 절대 방어망 결속]
                 avwap_state_file = f"data/avwap_trade_state_{t}.json"
@@ -199,6 +200,10 @@ async def execute_aftermarket_trade(tx_lock, cfg, broker, strategy, queue_ledger
                         continue
 
                     if side == "BUY":
+                        # 🚨 MODIFIED: [예수금 0원 매수 컷오프 팩트 적용]
+                        if cash <= 0.0:
+                            msgs += f"⚠️ {desc}: KIS 예수금 0.0으로 애프터장 매수 스킵\n"
+                            continue
                         max_buy = int(math.floor(cash / exec_price)) if exec_price > 0 else 0
                         if total_qty > max_buy:
                             logging.warning(f"🚨 [{t}] 애프터장 매수 수량 캡핑 가동 (가용 현금 한도 초과): {total_qty} -> {max_buy}")
