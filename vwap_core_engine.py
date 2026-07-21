@@ -5,6 +5,7 @@
 # 🚨 MODIFIED: [KST 롤오버 체결 증발 궁극 수술] 15:27 EST 타격 시 한국 시간(KST)은 이미 다음 날 새벽이 되어 당일 체결 내역(get_execution_history)을 놓치는 패러독스를 방어하기 위해, 스캔 범위를 무조건 D-2 ~ D-0으로 확장하여 이중 타격(Double Firing) 대참사 원천 봉쇄.
 # 🚨 MODIFIED: [정량제(Fixed-Quantity) 팩트 스윕 락온] Gap Hijack 발동 시 잔여 예산을 억지로 100% 소진하던 맹독성 풀-스윕 로직을 영구 소각하고, 스냅샷에 락온된 '당일 잔여 목표 수량(Remaining Target Qty)'만을 100% 스윕 타격하여 하락장 시드 보존력(Runway)을 극대화함.
 # 🚨 MODIFIED: [상방 하이재킹 수익 캡핑(Profit Capping) 뇌관 100% 영구 소각] V-REV 전략의 거대 상승분(추세) 이익을 강제로 잘라먹던 '상방 하이재킹(+2.0% 도달 시 매도 덤핑)' 로직을 시스템 전역에서 영구 폐기하여 수익 극대화 팩트 수복 완료.
+# 🚨 MODIFIED: [런타임 즉사 붕괴 수술] 클래스가 아닌 모듈 레벨 함수에서 self._safe_float를 호출하여 발생하던 NameError를 _safe_float로 100% 팩트 교정 완료 (자동매매 마비 원인).
 # ==========================================================
 import logging
 import asyncio
@@ -165,7 +166,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                 if version == "V_REV" or (version == "V14" and is_manual_vwap):
                     slice_file = f"data/vrev_slice_state_{t}.json"
                     
-                    # 🚨 MODIFIED: [자본 잠김 마비(Capital Lock-up Paralysis) 궁극 수술]
                     is_capital_locked_now = False
                     try:
                         after_state_file = f"data/vrev_aftermarket_state_{t}.json"
@@ -431,7 +431,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                     continue
                                 
                                 try:
-                                    # 🚨 MODIFIED: [KST 롤오버 체결 증발 패러독스 사수] 검색 범위를 D-2 ~ D-0으로 확장하여 이중 타격 원천 차단
                                     now_kst_fresh = datetime.datetime.now(ZoneInfo('Asia/Seoul'))
                                     kis_search_start_fresh = (now_kst_fresh - datetime.timedelta(days=2)).strftime('%Y%m%d')
                                     query_end_dt_fresh = now_kst_fresh.strftime('%Y%m%d')
@@ -441,8 +440,9 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                     _filled_rec = next((ex for ex in _safe_execs if isinstance(ex, dict) and str(ex.get('odno', '')) == last_odno), None)
                                     
                                     if _filled_rec:
-                                        ccld_qty_this_tick = int(self._safe_float(_filled_rec.get('ft_ccld_qty')))
-                                        real_exec_price = self._safe_float(_filled_rec.get('ft_ccld_unpr3'))
+                                        # 🚨 MODIFIED: [런타임 즉사 버그 완벽 수술] 클래스가 아님에도 self.를 호출하여 발생한 NameError 원천 차단
+                                        ccld_qty_this_tick = int(_safe_float(_filled_rec.get('ft_ccld_qty')))
+                                        real_exec_price = _safe_float(_filled_rec.get('ft_ccld_unpr3'))
                                         if real_exec_price == 0.0: real_exec_price = target_price
                                     else:
                                         ccld_qty_this_tick = 0
@@ -494,12 +494,15 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                             
                             exec_price = 0.0
                             if side == "BUY":
-                                exec_price = self._safe_float(await _retry_api(broker.get_ask_price, t))
+                                # 🚨 MODIFIED: [런타임 즉사 버그 완벽 수술] 
+                                exec_price = _safe_float(await _retry_api(broker.get_ask_price, t))
                             else:
-                                exec_price = self._safe_float(await _retry_api(broker.get_bid_price, t))
+                                # 🚨 MODIFIED: [런타임 즉사 버그 완벽 수술]
+                                exec_price = _safe_float(await _retry_api(broker.get_bid_price, t))
                                     
                             if exec_price <= 0.0:
-                                exec_price = self._safe_float(await _retry_api(broker.get_current_price, t))
+                                # 🚨 MODIFIED: [런타임 즉사 버그 완벽 수술]
+                                exec_price = _safe_float(await _retry_api(broker.get_current_price, t))
                                          
                             qty_to_send = 0
                             if target_price > 0.0:
@@ -557,8 +560,8 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                                 
                                                 if not is_overnight:
                                                     need_avwap_resume = True
-                                                    avwap_qty_to_restore = int(self._safe_float(avwap_state.get('qty', 0)))
-                                                    avwap_avg_price = self._safe_float(avwap_state.get('avg_price', 0.0))
+                                                    avwap_qty_to_restore = int(_safe_float(avwap_state.get('qty', 0)))
+                                                    avwap_avg_price = _safe_float(avwap_state.get('avg_price', 0.0))
                                                     avwap_price_to_restore = math.ceil(avwap_avg_price * 1.01 * 100) / 100.0
 
                                     res = await _retry_api(broker.send_order, t, side, qty_to_send, exec_price, "LIMIT")
