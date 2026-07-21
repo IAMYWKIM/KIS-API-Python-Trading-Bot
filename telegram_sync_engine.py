@@ -5,6 +5,7 @@
 # 🚨 MODIFIED: [Lost Update 궁극 방어] process_auto_sync 내부에서 상태 캐시(vwap_state_REV)를 갱신할 때, 읽기와 쓰기를 단일 동기 스레드 함수(_update_v_state)로 묶은 뒤 GlobalThrottle.get_file_lock()을 100% 팩트 래핑하여 원자적(Atomic) 무결성 사수 완료.
 # 🚨 MODIFIED: [유령 잔고 방어 팩트 수술] actual_qty < a_qty_for_check 로 인해 마이너스 값이 산출될 경우 0주 졸업 오인 방어망 결속
 # 🚨 NEW: 본진 전략 타점 오염을 원천 차단하기 위해 KIS 실서버 원본 계좌 잔고 및 평단가를 시각적 세션으로 완전 격리 표출
+# 🚨 MODIFIED: [지층 단가 역전 패러독스 방어] 수동 매도 후 장부 동기화(/sync) 시, '1회분 고정 예산(15%)'과 '정규장 종가'를 큐 장부 동기화 엔진에 팩트 주입하여 안전한 자동 분할(Auto-Split)이 100% 격발되도록 파라미터 누락 버그 완벽 수술 완료.
 # ==========================================================
 
 import logging
@@ -470,9 +471,34 @@ class TelegramSyncEngine:
                                     t_q = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in sell_execs_sync)
                                     if t_q > 0: actual_clear_price_for_sync = round(t_amt / t_q, 4)
                             
+                            # 🚨 MODIFIED: [지층 단가 역전 패러독스 방어] 1회분 고정 예산과 정규장 종가를 팩트 스캔하여 큐 장부 동기화 엔진에 주입 (Auto-Split 활성화)
                             calibrated = False
                             if getattr(self, 'queue_ledger', None):
-                                calibrated = await self._retry_api(self.queue_ledger.sync_with_broker, ticker, safe_actual_qty_for_vrev, 0.0, actual_clear_price_for_sync, timeout=10.0, default=False)
+                                safe_prev_c = 0.0
+                                for attempt in range(3):
+                                    try:
+                                        await asyncio.sleep(0.06)
+                                        p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_previous_close, ticker), timeout=10.0)
+                                        safe_prev_c = self._safe_float(p_val)
+                                        if safe_prev_c > 0: break
+                                    except Exception:
+                                        if attempt == 2: pass
+                                        else: await asyncio.sleep(1.0 * (2 ** attempt))
+                                
+                                safe_seed = await self._retry_api(self.cfg.get_seed, ticker, default=0.0)
+                                portion_budget = safe_seed * 0.15
+                                
+                                calibrated = await self._retry_api(
+                                    self.queue_ledger.sync_with_broker, 
+                                    ticker, 
+                                    safe_actual_qty_for_vrev, 
+                                    0.0, 
+                                    actual_clear_price_for_sync,
+                                    prev_close=safe_prev_c,
+                                    portion_budget=portion_budget,
+                                    timeout=10.0, 
+                                    default=False
+                                )
                              
                             if calibrated: await self._safe_send(context, chat_id, f"🔧 <b>[{html.escape(str(ticker))}] V-REV 큐(Queue) 비파괴 보정 및 리앵커링 완료!</b>\n▫️ 수동 매도 물량(<b>{gap_qty}주</b>)을 LIFO 큐에서 안전하게 차감하고, 수익금만큼 잔여 지층의 평단가를 일괄 차감했습니다.", parse_mode='HTML')
                              
