@@ -2,7 +2,7 @@
 # FILE: queue_ledger.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 48대 엣지 케이스 완벽 결속 교차 검증 완료.
-# 🚨 MODIFIED: [단일 지층 팽창 패러독스 자가 치유] KIS 잔고와 큐 잔고가 동일하여 `sync_with_broker`가 조기 종료(Bypass)될 때 발생하는 '영구적 단일 지층 팽창' 맹독성 버그를 원천 차단. 잔고가 일치하더라도 단일 지층의 총 투자금이 1회 예산을 1.1배 초과한다면 즉시 조기 종료를 우회하고 1층과 2층으로 강제 정밀 분할(Tier Split)하여 자가 치유(Self-Healing)하도록 100% 팩트 락온.
+# 🚨 MODIFIED: [단일 지층 팽창 패러독스 자가 치유 방어막 팩트 보강] KIS 잔고와 큐 잔고가 동일하여 `sync_with_broker`가 조기 종료(Bypass)될 때 발생하는 '영구적 단일 지층 팽창' 현상을 원천 차단하기 위해 주입된 분할(Tier Split) 로직에, 전일 종가(prev_close)가 통신 장애 등으로 0.0이 들어올 경우 ZeroDivisionError가 발생하여 전체 동기화가 마비되는 현상을 완벽 방어하기 위해 `prev_close > 0.0` 제약 조건을 100% 팩트 결속 완료.
 # 🚨 MODIFIED: [Lost Update 궁극 방어] 인스턴스 레벨 Lock 소각 및 시스템 전역 파일 Mutex(GlobalThrottle) 락온 (Case 47)
 # 🚨 MODIFIED: [수수료 트랩 원천 차단] 1층 매도 총액(Gross)에서 왕복 수수료 및 슬리피지 버퍼(0.6%)를 선차감한 '순수 회수금(Net Cash)'만을 원가 차감에 반영하여 전체 사이클 마진 붕괴 패러독스 방어 유지.
 # 🚨 MODIFIED: [Insight 14] 콤마(,) 및 NaN/Inf 맹독성 유입 시 ValueError 즉사 방어를 위한 `_safe_float` 쉴드 전면 내재화.
@@ -227,7 +227,7 @@ class QueueLedger:
         
         price_f = self._safe_float(price)
         if price_f <= 0.0:
-            logging.error(f"🚨 [QueueLedger] add_lot 중단: {ticker} — 유효하지 않은 매수 가격 (price={price}). 로트 추가 취소.")
+            logging.error(f"🚨 [QueueLedger] add_lot 중단: {ticker} — 유효하지 매수 가격 (price={price}). 로트 추가 취소.")
             return
             
         lock = GlobalThrottle.get_file_lock(self.file_path)
@@ -350,9 +350,10 @@ class QueueLedger:
             current_q_qty = sum(int(self._safe_float(item.get("qty"))) for item in q)
             actual_qty = int(self._safe_float(actual_qty))
 
-            # 🚨 MODIFIED: [단일 지층 팽창 패러독스 자가 치유 방어막]
+            # 🚨 MODIFIED: [단일 지층 팽창 패러독스 자가 치유 방어막 팩트 보강] 
+            # ZeroDivisionError 원천 방어를 위해 prev_close > 0.0 조건을 명시적으로 결속
             if current_q_qty == actual_qty:
-                if len(q) == 1 and prev_close is not None and portion_budget is not None:
+                if len(q) == 1 and prev_close is not None and portion_budget is not None and prev_close > 0.0:
                     lot = q[0]
                     lot_qty = int(self._safe_float(lot.get("qty")))
                     lot_price = self._safe_float(lot.get("price"))

@@ -241,9 +241,6 @@ class TelegramSyncEngine:
                     elif needs_reconstruction:
                         temp_recs = [r for r in recs if r.get('date') != target_ledger_str or 'INIT' in str(r.get('exec_id', ''))]
                         
-                        # 🚨 MODIFIED: [자전거래/암살자 찌꺼기 맹독성 유입 궁극 방어] 
-                        # KIS 실원장(target_execs)의 모든 체결 내역을 맹목적으로 무한 편입하던 로직 전면 소각. 
-                        # 오직 누락/오차 수량(gap_qty)에 대해서만 정밀하게 비파괴 보정(CALIB) 단 1줄만 주입하도록 팩트 교정 완료.
                         temp_res = await self._retry_api(self.cfg.calculate_holdings, ticker, temp_recs, default=(0,0.0,0.0,0.0))
                         temp_sim_qty = temp_res[0] if isinstance(temp_res, tuple) and len(temp_res) > 0 else 0
                         temp_sim_avg = temp_res[1] if isinstance(temp_res, tuple) and len(temp_res) > 1 else 0.0
@@ -413,7 +410,7 @@ class TelegramSyncEngine:
                                         except OSError: pass
                             else:
                                 await self._safe_send(context, chat_id, f"⚠️ <b>[{html.escape(str(ticker))}] V-REV 0주 강제 정산 완료]</b>\n▫️ 0주를 확인하여 큐를 안전하게 비웠으나 통신 지연으로 졸업 카드는 생략되었습니다.", parse_mode='HTML')
-                       
+
                         # 🚨 MODIFIED: [단일 지층 팽창 자가 치유 방해 맹독성 Bypass 소각]
                         if safe_actual_qty_for_vrev > 0 and safe_actual_qty_for_vrev <= vrev_ledger_qty:
                             gap_qty = vrev_ledger_qty - safe_actual_qty_for_vrev
