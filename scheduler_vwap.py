@@ -1,9 +1,11 @@
+
 # ==========================================================
 # FILE: scheduler_vwap.py
 # ==========================================================
 # 🚨 MODIFIED: [Thundering Herd 영구 소각] 달력 API(mcal) 스캔 전 부여되던 파편화된 time.sleep(0.06)을 전면 소각.
 # 🚨 MODIFIED: [중앙 통제소 락온] GlobalThrottle.wait_api_sync()를 주입하여 Thread-Safe 한 100% 중앙 집중형 TPS 방어망 결속 완료.
 # 🚨 MODIFIED: [Buy High, Sell Low 패러독스 궁극 수술] 매수 체결 직후 거시적 VWAP 이탈률만 보고 손실 덤핑을 유발하던 맹독성 '상방 매도 하이재킹(Upward Sell Hijack)' 로직 및 연계 플래그를 시스템 전역에서 100% 영구 소각 완료.
+# 🚨 MODIFIED: [스케줄러 병목 붕괴 수술] 1분(60초) 인터벌 태스크가 지연되어 다음 틱이 스킵(maximum instances reached)되는 패러독스를 원천 차단하기 위해 전역 타임아웃을 120초에서 55초로 하드 캡핑.
 # ==========================================================
 import logging
 import datetime
@@ -167,9 +169,10 @@ async def scheduled_vwap_trade(context):
         vwap_cache['date'] = today_str
 
     try:
+        # 🚨 MODIFIED: [스케줄러 병목 붕괴 수술] 1분(60초) 인터벌 스킵(maximum instances reached)을 원천 차단하기 위해 120초 캡을 55초로 팩트 교정
         await asyncio.wait_for(
             execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_id, context, base_map, vwap_cache), 
-            timeout=120.0
+            timeout=55.0
         )
     except Exception as e:
         logging.error(f"🚨 VWAP 섀도우 오버라이드 스케줄러 엔진 타임아웃/에러: {e}", exc_info=True)

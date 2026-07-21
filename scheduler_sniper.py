@@ -8,6 +8,7 @@
 # 🚨 MODIFIED: [부활(Resurrection) 패러독스 차단] 암살자가 임무를 완수(전량 익절)하여 셧다운될 때, buy_odno 캐시도 원자적으로 초기화("")하여 유령 주문 추적기가 이미 청산된 물량을 재진입(부활)시키는 대참사 원천 봉쇄.
 # 🚨 MODIFIED: [암살자 팩트 타전 오염 수술] 15:59 EST 컷오프 시, 이미 전량 익절했거나 진입 실패로 퇴근(Shutdown)한 상태라면 허위 알림(오버나이트 관망 등)을 띄우지 않고 조용히 컷오프(Bypass)하도록 팩트 방어망 결속 완료.
 # 🚨 MODIFIED: [State Overwrite Collision 영구 소각] 전량 익절 감지 시 분할되어 있던 상태 업데이트 파이프라인을 단일 트랜잭션으로 통합하여 `last_filled_sell_qty` 증발을 완벽히 차단.
+# 🚨 MODIFIED: [스케줄러 병목 붕괴 수술] 1분(60초) 인터벌 태스크가 지연되어 다음 틱이 스킵(maximum instances reached)되는 패러독스를 원천 차단하기 위해 전역 타임아웃을 240초에서 55초로 하드 캡핑.
 # ==========================================================
 import logging
 import datetime
@@ -809,6 +810,7 @@ async def scheduled_sniper_monitor(context):
                     continue
 
     try:
-        await asyncio.wait_for(_do_sniper(), timeout=240.0)
+        # 🚨 MODIFIED: [스케줄러 병목 붕괴 수술] 1분(60초) 인터벌 스킵(maximum instances reached)을 원천 차단하기 위해 240초 캡을 55초로 팩트 교정
+        await asyncio.wait_for(_do_sniper(), timeout=55.0)
     except Exception as e:
         logging.error(f"🚨 스나이퍼 타임아웃 에러: {e}", exc_info=True)
