@@ -12,6 +12,7 @@
 #  └ 1. [V-REV 오리지널 격리] 오직 V-REV 모드일 때만 동작하도록 API 통신 전 100% 교차 검증 락온 (V14 팻핑거 붕괴 원천 차단).
 #  └ 2. [자본 잠김 방어 캡핑] 매수(BUY) 시 KIS 실시간 가용 현금 최대치로 내림 캡핑, 매도(SELL) 시 로컬 큐(Queue) 장부 최대치로 동적 스케일링 캡핑.
 #  └ 3. [2-Tier 지층 자동 병합 사수] 타격 직후 QueueLedger의 add_lot/pop_lots를 원자적으로 호출하여 하위 2-Tier 병합 아키텍처를 무결하게 자동 연동.
+#  └ 4. [애프터장 족쇄 해제 및 REG Lock 결속] 애프터마켓(AFTER) 진입 후에도 수동 타격을 100% 상시 허용하고, 체결 즉시 당일 스케줄러를 무효화(REG Lock)하여 중복 매매를 원천 차단함.
 # ==========================================================
 import logging
 import datetime
@@ -463,9 +464,10 @@ class CallbackOrderHandler:
                 except Exception: pass
                 return
 
+            # 🚨 MODIFIED: [애프터장 개방] 수동 1회분 타격은 애프터장(AFTER)에서도 100% 상시 격발되도록 타임라인 족쇄 해제
             status_code, _ = await controller.commands_handler._get_market_status()
-            if status_code not in ["PRE", "REG"]:
-                try: await query.answer("❌ [격발 차단] 현재 장운영시간(정규장/프리장)이 아닙니다.", show_alert=True)
+            if status_code not in ["PRE", "REG", "AFTER"]:
+                try: await query.answer("❌ [격발 차단] 현재 장운영시간(프리장/정규장/애프터장)이 아닙니다.", show_alert=True)
                 except Exception: pass
                 return
 
@@ -527,11 +529,15 @@ class CallbackOrderHandler:
                         else:
                             await asyncio.to_thread(self.queue_ledger.pop_lots, ticker, final_qty, exec_price)
 
+                        # 🚨 MODIFIED: [당일 타격망 무효화 락온] 수동 매매 성공 시 즉각 당일 정규장 자동 매매 잠금(REG Lock)을 격발하여 중복 타격 패러독스 원천 차단
+                        await asyncio.to_thread(self.cfg.set_lock, ticker, "REG")
+
                         action_kr = "매수" if side == "BUY" else "매도"
                         msg = f"✅ <b>[{html.escape(str(ticker))}] 수동 1회분 {action_kr} 체결 완료!</b>\n"
                         msg += f"▫️ 수량: {final_qty}주\n"
                         msg += f"▫️ 단가: ${exec_price:.2f} (LIMIT)\n"
-                        msg += "▫️ 큐(Queue) 장부에 원자적으로 반영되었습니다."
+                        msg += "▫️ 큐(Queue) 장부에 원자적으로 반영되었습니다.\n"
+                        msg += "▫️ <b>당일 스케줄러 자동 매매 잠금(Lock)이 설정되었습니다.</b>"
                         await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
 
                         # 자동 동기화 호출로 UI In-place Edit 갱신
