@@ -1,14 +1,10 @@
 # ==========================================================
 # FILE: vwap_core_engine.py
 # ==========================================================
+# 🚨 MODIFIED: [자본 잠김 마비(Capital Lock-up Paralysis) 궁극 수술] 자본 잠김으로 인해 매수 플랜이 애프터장으로 이관(pending_aftermarket=True)되었을 때, VWAP 슬라이싱 엔진 전체를 스킵(continue)해버리던 맹독성 버그를 원천 소각. 하방 Gap Hijack만 안전하게 차단하고 매도(SELL) 슬라이싱은 100% 정상 가동되도록 팩트 디커플링 완료.
+# 🚨 MODIFIED: [KST 롤오버 체결 증발 궁극 수술] 15:27 EST 타격 시 한국 시간(KST)은 이미 다음 날 새벽이 되어 당일 체결 내역(get_execution_history)을 놓치는 패러독스를 방어하기 위해, 스캔 범위를 무조건 D-2 ~ D-0으로 확장하여 이중 타격(Double Firing) 대참사 원천 봉쇄.
 # 🚨 MODIFIED: [정량제(Fixed-Quantity) 팩트 스윕 락온] Gap Hijack 발동 시 잔여 예산을 억지로 100% 소진하던 맹독성 풀-스윕 로직을 영구 소각하고, 스냅샷에 락온된 '당일 잔여 목표 수량(Remaining Target Qty)'만을 100% 스윕 타격하여 하락장 시드 보존력(Runway)을 극대화함.
-# 🚨 MODIFIED: [15:56 EST 정량제 캡핑 완결] 마지막 슬라이싱 틱(가중치 1.0) 도달 시, 예산을 재분배(global_rem_budget)하여 강제로 0원까지 탕진하던 낡은 정액제 찌꺼기 코드를 시스템 전역에서 전면 파기. 오직 정량(target_cum_qty - filled_qty)만을 정확히 긁어모아 절약된 예수금을 100% 보존.
 # 🚨 MODIFIED: [상방 하이재킹 수익 캡핑(Profit Capping) 뇌관 100% 영구 소각] V-REV 전략의 거대 상승분(추세) 이익을 강제로 잘라먹던 '상방 하이재킹(+2.0% 도달 시 매도 덤핑)' 로직을 시스템 전역에서 영구 폐기하여 수익 극대화 팩트 수복 완료.
-# 🚨 MODIFIED: [상태 오염 붕괴 방어] 기존 디스크 파일에 잔존하는 `upward_hijacked` 플래그를 무시(Bypass)하도록 슬라이싱 조건문 족쇄를 전면 파기하여, 폭등장에서도 1분 Slicing 엔진이 멈추지 않고 목표가 타격을 묵묵히 집행하도록 락온.
-# 🚨 MODIFIED: [Thundering Herd 영구 소각] _retry_api 내의 await asyncio.sleep(0.06) 파편화 땜질 전면 삭제 및 GlobalThrottle(중앙 통제소)로 100% 위임.
-# 🚨 MODIFIED: [재시작 붕괴 (Double Fire) 방어] 봇 재시작 시 메모리 증발로 인해 하방 하이재킹이 이중 격발되는 대참사를 막기 위해 디스크 크로스체크 전진 배치.
-# 🚨 MODIFIED: [떨사오팔(Buy Low, Sell High) 절대 헌법 사수] 현재가가 매도(SELL) 타점 이상에 도달하여 '매도 조건'에 진입했을 경우, 장중 하방 갭(-2.0%)이 발생하더라도 맹독성 고점 추격 매수(Limit-Trap)를 막기 위해 하이재킹 스윕 매수를 100% 원천 차단하는 `is_sell_condition` 방어막 전격 결속.
-# 🚨 NEW: [Case 47 자전거래(Wash Trade) 절대 방어망 결속] 암살자 덫과 본진 매수 덫이 교차하여 KIS 서버에서 리젝되는 현상을 막기 위해, 매수 타격 직전 암살자 덫을 임시 취소(Suspend)하고 오버나이트 설정에 따라 동적으로 재장전(Resume)하는 파이프라인 100% 팩트 이식.
 # ==========================================================
 import logging
 import asyncio
@@ -18,11 +14,11 @@ import datetime
 from zoneinfo import ZoneInfo
 import html
 import functools
-import pandas as pd # NEW: DataFrame 벡터 연산 NameError 붕괴 방어
+import pandas as pd 
 
 from scheduler_core import get_budget_allocation
 from state_io_manager import _read_json_safe_sync, _atomic_write_json_sync
-from global_throttle import GlobalThrottle # NEW: 중앙 통제 팩트 이관
+from global_throttle import GlobalThrottle 
 
 def _safe_float(val):
     try:
@@ -34,10 +30,8 @@ def _safe_float(val):
         return 0.0
 
 async def _retry_api(func, *args, timeout=15.0, default=None, **kwargs):
-    """ 🚨 [Case 31, 32, 33] TPS 캡핑(0.06s 땜질 소각) 및 지수 백오프 기반 중앙 통제망 래핑 """
     for attempt in range(3):
         try:
-            # MODIFIED: 파편화된 sleep 소각 및 GlobalThrottle 동기 대기를 비동기 스레드로 격리하여 위임
             await asyncio.to_thread(GlobalThrottle.wait_api_sync)
             
             if asyncio.iscoroutinefunction(func):
@@ -62,14 +56,12 @@ async def _safe_send(context, chat_id, text, timeout=15.0, **kwargs):
         return None
 
 def _fetch_market_schedule_sync(now_est):
-    """ 🚨 [제2헌법 준수] 달력 API(mcal) 스캔 로직 단일화 (GlobalThrottle 중앙 통제) """
     GlobalThrottle.wait_api_sync()
     import pandas_market_calendars as mcal
     nyse = mcal.get_calendar('NYSE')
     return nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
 
 async def _get_market_close_time(now_est):
-    """ 🚨 [DRY 원칙 및 제5헌법 결속] 달력 스캔 중복 소각 및 3단 백오프 기반 Fail-Open 폴백 """
     schedule = None
     for attempt in range(3):
         try:
@@ -93,12 +85,10 @@ async def _get_market_close_time(now_est):
             return None
 
 async def _read_state_safe(filepath, date_str, default_val):
-    """ 🚨 [Case 47] 전역 파일 뮤텍스 강제 적용 상태 읽기 래퍼 """
     with GlobalThrottle.get_file_lock(filepath):
         return await _retry_api(_read_json_safe_sync, filepath, date_str, default=default_val)
 
 async def _write_state_safe(filepath, state_dict):
-    """ 🚨 [Case 47] 전역 파일 뮤텍스 강제 적용 원자적 쓰기 래퍼 """
     with GlobalThrottle.get_file_lock(filepath):
         return await _retry_api(_atomic_write_json_sync, filepath, state_dict)
 
@@ -137,7 +127,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
     
     kst_zone = ZoneInfo('Asia/Seoul')
     now_kst = datetime.datetime.now(kst_zone)
-    today_kst_str = now_kst.strftime('%Y%m%d')
 
     async with tx_lock:
         res = await _retry_api(broker.get_account_balance, timeout=15.0)
@@ -176,14 +165,15 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                 if version == "V_REV" or (version == "V14" and is_manual_vwap):
                     slice_file = f"data/vrev_slice_state_{t}.json"
                     
+                    # 🚨 MODIFIED: [자본 잠김 마비(Capital Lock-up Paralysis) 궁극 수술]
+                    is_capital_locked_now = False
                     try:
                         after_state_file = f"data/vrev_aftermarket_state_{t}.json"
                         after_state = await _read_state_safe(after_state_file, today_hyphen, {})
                         if after_state.get('date') == today_hyphen:
-                            pending_aftermarket = any(isinstance(o, dict) and str(o.get('status')) == 'PENDING' for o in after_state.get('orders', []))
-                            if pending_aftermarket:
-                                logging.info(f"⏳ [{t}] 애프터장(16:01) 이관 대기 중. 정규장 마감 직전(16:00)의 Gap Hijack 및 슬라이싱 엔진을 전면 바이패스합니다.")
-                                continue
+                            if any(isinstance(o, dict) and str(o.get('status')) == 'PENDING' for o in after_state.get('orders', [])):
+                                is_capital_locked_now = True
+                                logging.info(f"⏳ [{t}] 자본 잠김 감지: 애프터장(16:01) 이관 대기 중. 하방 Gap Hijack을 차단하고 매도 슬라이싱만 정상 집행합니다.")
                     except Exception as e:
                         logging.error(f"🚨 [{t}] 애프터장 이관 상태 교차 검증 에러: {e}")
 
@@ -195,7 +185,7 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                     # ======================================================
                     # [ 1. Gap Hijack (오직 하방 폭락장 정량제 스윕 감시) ]
                     # ======================================================
-                    if version == "V_REV" and not is_downward_hijacked_now:
+                    if version == "V_REV" and not is_downward_hijacked_now and not is_capital_locked_now:
                         t_curr_p = _safe_float(await _retry_api(broker.get_current_price, t))
                         df_1min_t = await _retry_api(broker.get_1min_candles_df, t)
                                 
@@ -305,7 +295,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                         except Exception as e:
                                             logging.error(f"🚨 [{t}] 로컬 슬라이스 무효화 처리 에러: {e}")
 
-                                        # 🚨 MODIFIED: [정량제 팩트 스윕 매수] 스냅샷 지시서의 당일 잔여 목표 수량(Remaining Target Qty) 정밀 산출
                                         buy_qty = 0
                                         for ox in slice_state_disk.get('orders', []):
                                             if str(ox.get('side')) == 'BUY':
@@ -442,13 +431,18 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                     continue
                                 
                                 try:
-                                    _execs = await _retry_api(broker.get_execution_history, t, today_kst_str, today_kst_str, default=[])
+                                    # 🚨 MODIFIED: [KST 롤오버 체결 증발 패러독스 사수] 검색 범위를 D-2 ~ D-0으로 확장하여 이중 타격 원천 차단
+                                    now_kst_fresh = datetime.datetime.now(ZoneInfo('Asia/Seoul'))
+                                    kis_search_start_fresh = (now_kst_fresh - datetime.timedelta(days=2)).strftime('%Y%m%d')
+                                    query_end_dt_fresh = now_kst_fresh.strftime('%Y%m%d')
+                                    
+                                    _execs = await _retry_api(broker.get_execution_history, t, kis_search_start_fresh, query_end_dt_fresh, default=[])
                                     _safe_execs = _execs if isinstance(_execs, list) else []
                                     _filled_rec = next((ex for ex in _safe_execs if isinstance(ex, dict) and str(ex.get('odno', '')) == last_odno), None)
                                     
                                     if _filled_rec:
-                                        ccld_qty_this_tick = int(_safe_float(_filled_rec.get('ft_ccld_qty')))
-                                        real_exec_price = _safe_float(_filled_rec.get('ft_ccld_unpr3'))
+                                        ccld_qty_this_tick = int(self._safe_float(_filled_rec.get('ft_ccld_qty')))
+                                        real_exec_price = self._safe_float(_filled_rec.get('ft_ccld_unpr3'))
                                         if real_exec_price == 0.0: real_exec_price = target_price
                                     else:
                                         ccld_qty_this_tick = 0
@@ -500,12 +494,12 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                             
                             exec_price = 0.0
                             if side == "BUY":
-                                exec_price = _safe_float(await _retry_api(broker.get_ask_price, t))
+                                exec_price = self._safe_float(await _retry_api(broker.get_ask_price, t))
                             else:
-                                exec_price = _safe_float(await _retry_api(broker.get_bid_price, t))
+                                exec_price = self._safe_float(await _retry_api(broker.get_bid_price, t))
                                     
                             if exec_price <= 0.0:
-                                exec_price = _safe_float(await _retry_api(broker.get_current_price, t))
+                                exec_price = self._safe_float(await _retry_api(broker.get_current_price, t))
                                          
                             qty_to_send = 0
                             if target_price > 0.0:
@@ -518,7 +512,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                 if not is_target_hit:
                                     continue 
 
-                            # 🚨 MODIFIED: [1분 슬라이싱 정량제 캡핑] 정액제 강제 소진 로직을 소각하고, 오직 스냅샷 목표 수량 기반 정밀 슬라이싱(정량제) 100% 락온
                             qty_to_send = target_cum_qty - filled_qty
                                     
                             if qty_to_send <= 0: continue
@@ -538,7 +531,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
 
                                 res = None
                                 if qty_to_send > 0:
-                                    # 🚨 [Case 47: 자전거래(Wash Trade) 절대 방어막 - V-REV 슬라이싱]
                                     avwap_state_file = f"data/avwap_trade_state_{t}.json"
                                     need_avwap_resume = False
                                     is_overnight = await _retry_api(getattr(cfg, 'get_avwap_overnight_mode', lambda x: False), t, default=False)
@@ -565,8 +557,8 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                                 
                                                 if not is_overnight:
                                                     need_avwap_resume = True
-                                                    avwap_qty_to_restore = int(_safe_float(avwap_state.get('qty', 0)))
-                                                    avwap_avg_price = _safe_float(avwap_state.get('avg_price', 0.0))
+                                                    avwap_qty_to_restore = int(self._safe_float(avwap_state.get('qty', 0)))
+                                                    avwap_avg_price = self._safe_float(avwap_state.get('avg_price', 0.0))
                                                     avwap_price_to_restore = math.ceil(avwap_avg_price * 1.01 * 100) / 100.0
 
                                     res = await _retry_api(broker.send_order, t, side, qty_to_send, exec_price, "LIMIT")
