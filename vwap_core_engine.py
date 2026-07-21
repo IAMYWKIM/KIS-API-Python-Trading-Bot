@@ -6,6 +6,8 @@
 # 🚨 MODIFIED: [정량제(Fixed-Quantity) 팩트 스윕 락온] Gap Hijack 발동 시 잔여 예산을 억지로 100% 소진하던 맹독성 풀-스윕 로직을 영구 소각하고, 스냅샷에 락온된 '당일 잔여 목표 수량(Remaining Target Qty)'만을 100% 스윕 타격하여 하락장 시드 보존력(Runway)을 극대화함.
 # 🚨 MODIFIED: [상방 하이재킹 수익 캡핑(Profit Capping) 뇌관 100% 영구 소각] V-REV 전략의 거대 상승분(추세) 이익을 강제로 잘라먹던 '상방 하이재킹(+2.0% 도달 시 매도 덤핑)' 로직을 시스템 전역에서 영구 폐기하여 수익 극대화 팩트 수복 완료.
 # 🚨 MODIFIED: [런타임 즉사 붕괴 수술] 클래스가 아닌 모듈 레벨 함수에서 self._safe_float를 호출하여 발생하던 NameError를 _safe_float로 100% 팩트 교정 완료 (자동매매 마비 원인).
+# 🚨 NEW: [Thundering Herd 영구 소각] `_fetch_market_schedule_sync` 내부에 전역 인메모리 캐싱(`_MCAL_SCHEDULE_CACHE`)을 주입하여 스케줄러 병목 붕괴를 원천 차단.
+# 🚨 NEW: [사일런트 바이패스 타전 방어망 격상] 병목 등으로 인해 15:26 지시서(`vrev_slice_state`) 갱신이 누락되어 코어 엔진이 30분간 바이패스(Bypass)되는 대참사 발생 시, 즉시 텔레그램으로 경고 및 수동 타격을 권고하도록 팩트 방어망 결속 완료.
 # ==========================================================
 import logging
 import asyncio
@@ -20,6 +22,9 @@ import pandas as pd
 from scheduler_core import get_budget_allocation
 from state_io_manager import _read_json_safe_sync, _atomic_write_json_sync
 from global_throttle import GlobalThrottle 
+
+# 🚨 NEW: [Thundering Herd 방어용 달력 캐시]
+_MCAL_SCHEDULE_CACHE = {}
 
 def _safe_float(val):
     try:
@@ -57,10 +62,18 @@ async def _safe_send(context, chat_id, text, timeout=15.0, **kwargs):
         return None
 
 def _fetch_market_schedule_sync(now_est):
+    """ 🚨 MODIFIED: [제2헌법 준수 & 병목 수술] 달력 API(mcal) 전역 캐싱 락온 """
+    date_str = now_est.strftime('%Y-%m-%d')
+    if date_str in _MCAL_SCHEDULE_CACHE:
+        return _MCAL_SCHEDULE_CACHE[date_str]
+
     GlobalThrottle.wait_api_sync()
     import pandas_market_calendars as mcal
     nyse = mcal.get_calendar('NYSE')
-    return nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
+    sched = nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
+    
+    _MCAL_SCHEDULE_CACHE[date_str] = sched # 🚨 팩트 캐싱
+    return sched
 
 async def _get_market_close_time(now_est):
     schedule = None
@@ -178,6 +191,16 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                         logging.error(f"🚨 [{t}] 애프터장 이관 상태 교차 검증 에러: {e}")
 
                     slice_state_disk = await _read_state_safe(slice_file, today_hyphen, {})
+                    
+                    # 🚨 NEW: [사일런트 바이패스 텔레그램 타전 방어망 격상]
+                    # 병목 등으로 인해 지시서 갱신이 누락되어 타격이 100% 바이패스되는 대참사 발생 시, 침묵하지 않고 수동 지휘를 요청함.
+                    if slice_state_disk.get('date') != today_hyphen:
+                        if not vwap_cache.get(f"REV_{t}_bypass_warned"):
+                            msg = f"🚨 <b>[{html.escape(str(t))}] VWAP 슬라이싱 코어 바이패스(Bypass) 감지!</b>\n▫️ 당일({today_hyphen}) 생성된 지시서(slice_state)를 찾을 수 없습니다.\n▫️ 15:26 스케줄러 병목으로 본진 플랜 연산이 누락된 것으로 추정됩니다.\n▫️ <b>수동 타격 권고:</b> 관제탑( /avwap )에서 <b>[1회분 수동매수/매도]</b> 인라인 버튼을 통해 지연된 타격을 직접 지휘하십시오."
+                            await _safe_send(context, chat_id, msg, parse_mode='HTML')
+                            vwap_cache[f"REV_{t}_bypass_warned"] = True
+                        continue
+
                     disk_hijacked = slice_state_disk.get('hijacked', False)
 
                     is_downward_hijacked_now = vwap_cache.get(f"REV_{t}_gap_hijack_fired", False) or disk_hijacked
