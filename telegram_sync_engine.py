@@ -8,7 +8,8 @@
 # 🚨 MODIFIED: [Lost Update 궁극 방어] process_auto_sync 내부에서 상태 캐시(vwap_state_REV)를 갱신할 때, 읽기와 쓰기를 단일 동기 스레드 함수(_update_v_state)로 묶은 뒤 GlobalThrottle.get_file_lock()을 100% 팩트 래핑하여 원자적(Atomic) 무결성 사수 완료.
 # 🚨 MODIFIED: [유령 잔고 방어 팩트 수술] actual_qty < a_qty_for_check 로 인해 마이너스 값이 산출될 경우 0주 졸업 오인 방어망 결속.
 # 🚨 NEW: 본진 전략 타점 오염을 원천 차단하기 위해 KIS 실서버 원본 계좌 잔고 및 평단가를 시각적 세션으로 완전 격리 표출.
-# 🚨 MODIFIED: [지층 단가 역전 패러독스 방어] 수동 매도 후 장부 동기화(/sync) 시, '1회분 고정 예산(15%)'과 '정규장 종가'를 큐 장부 동기화 엔진에 팩트 주입하여 안전한 자동 분할(Auto-Split)이 100% 격발되도록 파라미터 누락 버그 완벽 수술 완료.
+# 🚨 MODIFIED: [통신 장애 핀셋 추적망 결속] process_auto_sync 내부에서 broker API (get_account_balance, get_execution_history 등) 호출 실패 시 무의미한 "ERROR" 반환을 소각하고, 정확한 실패 구간(Endpoint)과 사유를 문자열로 반환하여 상위 라우터가 진단할 수 있도록 팩트 락온.
+# 🚨 MODIFIED: [유령 잔고 근원적 방어] get_account_balance가 실패하여 holdings로 None을 반환했을 때 빈 딕셔너리로 치환되어 0주로 인식되던 치명적 맹독성 버그를 원천 차단하고 즉시 통신 에러로 컷오프(Cut-off) 처리.
 # ==========================================================
 
 import logging
@@ -121,10 +122,11 @@ class TelegramSyncEngine:
                 else:
                     target_ledger_str = now_est.strftime('%Y-%m-%d')
 
+                # 🚨 MODIFIED: [유령 잔고 근원적 방어] API 실패 시 holdings가 빈 딕셔너리로 폴백되어 잔고 0주로 오인되던 맹독성 버그를 원천 차단하고 명시적 사유 반환.
                 res_bal = await self._retry_api(self.broker.get_account_balance, timeout=15.0, default=None)
-                if not res_bal:
-                    await self._safe_send(context, chat_id, f"❌ <b>[{html.escape(str(ticker))}] API 오류</b>\n잔고를 불러오지 못했습니다.", parse_mode='HTML')
-                    return "ERROR"
+                if not res_bal or (isinstance(res_bal, (list, tuple)) and len(res_bal) > 1 and res_bal[1] is None):
+                    await self._safe_send(context, chat_id, f"❌ <b>[{html.escape(str(ticker))}] API 통신 차단</b>\n증권사 서버가 계좌 잔고를 반환하지 않습니다. (토큰 만료 또는 서버 점검 중)", parse_mode='HTML')
+                    return "잔고 조회(get_account_balance) 실패 - API 서버 무응답 또는 거절"
                     
                 holdings = res_bal[1] if isinstance(res_bal, (list, tuple)) and len(res_bal) > 1 else {}
                 safe_holdings = holdings if isinstance(holdings, dict) else {}
@@ -190,7 +192,9 @@ class TelegramSyncEngine:
                     prev_sold_today = -1
                     stable_cnt = 0
                     for attempt in range(max_retries):
-                        raw_execs = await self._retry_api(self.broker.get_execution_history, ticker, kis_search_start, query_end_dt, timeout=15.0, default=[])
+                        raw_execs = await self._retry_api(self.broker.get_execution_history, ticker, kis_search_start, query_end_dt, timeout=15.0, default=None)
+                        if raw_execs is None:
+                            return "체결 원장 조회(get_execution_history) 실패 - API 서버 무응답 또는 거절"
                         target_execs = filter_to_est(raw_execs)
                         sold_today = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01")
                         
@@ -206,7 +210,9 @@ class TelegramSyncEngine:
                             logging.info(f"⏳ [{ticker}] 체결 원장 지연(Lag) 감지. 데이터 안정화 및 EST 매핑 검증 중... ({attempt+1}/{max_retries})")
                             await asyncio.sleep(2.0)
                 else:
-                    raw_execs = await self._retry_api(self.broker.get_execution_history, ticker, kis_search_start, query_end_dt, timeout=15.0, default=[])
+                    raw_execs = await self._retry_api(self.broker.get_execution_history, ticker, kis_search_start, query_end_dt, timeout=15.0, default=None)
+                    if raw_execs is None:
+                        return "체결 원장 조회(get_execution_history) 실패 - API 서버 무응답 또는 거절"
                     target_execs = filter_to_est(raw_execs)
 
                 if target_execs:
@@ -317,7 +323,7 @@ class TelegramSyncEngine:
                         if safe_actual_qty_for_vrev == 0 and (vrev_ledger_qty > 0 or sold_today_vrev > 0):
                             if sold_today_vrev == 0 and vrev_ledger_qty > 0:
                                 await self._safe_send(context, chat_id, f"🚨 <b>[{html.escape(str(ticker))} 유령 잔고 방어 가동]</b>\nKIS 실잔고가 0주로 조회되었으나, 당일 매도 체결 내역이 0건입니다. 통신 오류(Ghost Balance)일 가능성이 매우 높아 장부 강제 소각(자동 졸업)을 차단합니다.\n▫️ HTS 등을 통해 수동으로 100% 전량 매도한 상태라면 <code>/reset</code> 명령어를 사용하여 봇을 초기화하십시오.", parse_mode='HTML')
-                                return "GHOST_BALANCE_BLOCKED"
+                                return "유령 잔고(Ghost Balance) 강제 차단 - 매도 체결 없이 KIS 잔고 0주 리턴됨"
 
                             added_seed = 0.0
                             _vrev_snap_ok = False
@@ -522,7 +528,7 @@ class TelegramSyncEngine:
                     if actual_qty == 0 and (ledger_qty > 0 or sold_today_v14 > 0):
                         if sold_today_v14 == 0 and ledger_qty > 0:
                             await self._safe_send(context, chat_id, f"🚨 <b>[{html.escape(str(ticker))} 유령 잔고 방어 가동]</b>\nKIS 실잔고가 0주로 조회되었으나, 당일 매도 체결 내역이 0건입니다. 통신 오류(Ghost Balance)일 가능성이 매우 높아 장부 강제 소각(자동 졸업)을 차단합니다.\n▫️ HTS 등을 통해 수동으로 100% 전량 매도한 상태라면 <code>/reset</code> 명령어를 사용하여 봇을 초기화하십시오.", parse_mode='HTML')
-                            return "GHOST_BALANCE_BLOCKED"
+                            return "유령 잔고(Ghost Balance) 강제 차단 - 매도 체결 없이 KIS 잔고 0주 리턴됨"
 
                         today_est_str = now_est.strftime('%Y-%m-%d')
                         prev_c = await self._retry_api(self.broker.get_previous_close, ticker, default=0.0)

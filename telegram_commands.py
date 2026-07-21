@@ -4,6 +4,7 @@
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 48대 엣지 케이스 완벽 결속 교차 검증 완료.
 # 🚨 MODIFIED: [제1헌법 철저 준수] 달력 API(mcal) 스캔 전 파편화된 호출망을 소각하고, GlobalThrottle.wait_api_sync()를 강제 주입하여 썬더링 허드 완벽 차단.
 # 🚨 MODIFIED: [중복 매도 패러독스 궁극 수술] `/add_q` 및 `/clear_q` 수동 조작 시, 스냅샷 파일뿐만 아니라 봇이 쥐고 있던 '당일 체결 기억(vwap_state)' 캐시 파일까지 와일드카드(Glob)로 100% 영구 소각하여 이중 매도 락온(Ghost Selling Block) 현상을 원천 봉쇄.
+# 🚨 MODIFIED: [원인 추적 시스템 락온] /record 명령어 실행 시 KIS 서버 통신 장애의 정확한 원인(Endpoint 및 Timeout 등)을 텔레그램 UI로 직접 표출하도록 에러 파싱 로직 전면 팩트 교정 완료.
 # ==========================================================
 import logging
 import datetime
@@ -140,11 +141,12 @@ class TelegramCommands:
         async with self.tx_lock:
             cash, holdings = 0.0, {}
             res = await self._retry_api(self.broker.get_account_balance, timeout=15.0)
-            if res:
+            # 🚨 MODIFIED: [원인 추적 시스템 락온] API 실패 시 None이 반환되는 구조를 정밀 타격하여 실패 원인 직접 표출
+            if res and (isinstance(res, (list, tuple)) and len(res) > 1 and res[1] is not None):
                 cash = self._safe_float(res[0]) if len(res) > 0 else 0.0
                 holdings = res[1] if len(res) > 1 and isinstance(res[1], dict) else {}
             else:
-                await self._safe_edit(status_msg, "❌ KIS API 통신 오류로 계좌 정보를 불러올 수 없습니다. 잠시 후 다시 시도해주세요.")
+                await self._safe_edit(status_msg, "❌ KIS API 통신 오류로 계좌 정보를 불러올 수 없습니다. (get_account_balance 통신 실패) 잠시 후 다시 시도해주세요.")
                 return
 
         target_hour, _ = self._get_dst_info() 
@@ -173,7 +175,6 @@ class TelegramCommands:
         now_est = datetime.datetime.now(est)
         
         def _check_schedule(target_now):
-            # 🚨 MODIFIED: [제1헌법] 달력 API 호출 전 중앙 통제소 락온 강제
             GlobalThrottle.wait_api_sync()
             nyse = mcal.get_calendar('NYSE')
             return nyse.schedule(start_date=target_now.date(), end_date=target_now.date())
@@ -425,13 +426,14 @@ class TelegramCommands:
                 if status_msg:
                     await self._safe_edit(status_msg, f"🛡️ <b>[{t}] 장부 무결성 검증 진행 중... (최대 1~2분 소요될 수 있습니다)</b>", parse_mode='HTML')
                 
+                # 🚨 MODIFIED: [원인 추적 시스템 락온] 에러 마스킹을 파기하고 하위 로직에서 반환된 '구체적인 통신 실패 원인' 텍스트를 그대로 캡처
                 res = await self.sync_engine.process_auto_sync(t, chat_id, context, silent_ledger=True)
                 if res == "SUCCESS": success_tickers.append(t)
                 elif res == "LOCKED": locked_tickers.append(t)
-                else: error_tickers.append(t)
+                else: error_tickers.append(f"{t} ({res})")
             except Exception as e:
                 logging.error(f"🚨 [{t}] 개별 종목 장부 동기화 중 에러 (격리): {e}")
-                error_tickers.append(t)
+                error_tickers.append(f"{t} (런타임 예외: {str(e)})")
         
         if success_tickers: 
             async with self.tx_lock:
@@ -452,14 +454,17 @@ class TelegramCommands:
                 await self._safe_send(context, chat_id, f"⚠️ <b>[동기화 지연]</b> {', '.join(locked_tickers)} 종목은 현재 백그라운드 스케줄러가 장부를 점유 중입니다. 잠시 후 다시 시도해주세요.", parse_mode='HTML')
             
             if error_tickers:
-                await self._safe_send(context, chat_id, f"❌ <b>[동기화 에러]</b> {', '.join(error_tickers)} 종목의 무결성 검증 중 통신 오류가 발생했습니다.", parse_mode='HTML')
+                # 🚨 MODIFIED: [원인 추적 시스템 락온] 정확한 통신 에러 사유를 UI 하단에 명시적으로 렌더링
+                err_details = '\n'.join([f"▫️ {err}" for err in error_tickers])
+                await self._safe_send(context, chat_id, f"❌ <b>[동기화 에러 상세 진단]</b>\n{err_details}\n\n💡 KIS 서버 일시 장애이거나 토큰 문제일 수 있습니다. 상세 통신 로그는 <code>/log</code> 명령어로 확인하세요.", parse_mode='HTML')
                 
         else:
             err_msg = "✅ <b>동기화 완료</b> (진행 중인 장부가 없습니다.)"
             if locked_tickers:
                 err_msg = f"⚠️ <b>[동기화 지연]</b> {', '.join(locked_tickers)} 종목은 백그라운드 작업이 장부를 점유 중입니다. 잠시 후 다시 시도해주세요."
             elif error_tickers:
-                err_msg = f"❌ <b>[동기화 에러]</b> {', '.join(error_tickers)} 종목의 KIS 서버 통신 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+                err_details = '\n'.join([f"▫️ {err}" for err in error_tickers])
+                err_msg = f"❌ <b>[동기화 에러 상세 진단]</b>\n{err_details}\n\n💡 KIS 서버 일시 장애이거나 토큰 문제일 수 있습니다. 상세 통신 로그는 <code>/log</code> 명령어로 확인하세요."
                  
             await self._safe_edit(status_msg, err_msg, parse_mode='HTML')
 
@@ -643,7 +648,6 @@ class TelegramCommands:
  
         await self._retry_api(self.queue_ledger.overwrite_queue, ticker, q_data)
         
-        # 🚨 MODIFIED: [중복 매도 패러독스 궁극 수술] 파일 뮤텍스 100% 래핑
         def _nuke_snapshot_and_state():
             for f in glob.glob(f"data/daily_snapshot_*_{ticker}.json"):
                 with GlobalThrottle.get_file_lock(f):
@@ -678,7 +682,6 @@ class TelegramCommands:
             
         await self._retry_api(self.queue_ledger.clear_queue, ticker)
         
-        # 🚨 MODIFIED: [중복 매도 패러독스 궁극 수술] 파일 뮤텍스 100% 래핑
         def _nuke_snapshot_and_state():
             for f in glob.glob(f"data/daily_snapshot_*_{ticker}.json"):
                 with GlobalThrottle.get_file_lock(f):
