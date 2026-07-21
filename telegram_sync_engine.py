@@ -2,9 +2,11 @@
 # FILE: telegram_sync_engine.py
 # ==========================================================
 # 🚨 MODIFIED: [제1헌법 철저 준수] _get_last_trade_date 내부 달력 API(mcal) 스캔 시 GlobalThrottle.wait_api_sync()를 강제 주입하여 썬더링 허드 완벽 차단.
+# 🚨 MODIFIED: [API Thundering Herd 영구 소각] _retry_api 내부에 GlobalThrottle.wait_api_sync()를 비동기 스레드로 위임 락온하고, 파편화된 await asyncio.sleep(0.06) 땜질 18개소를 100% 영구 소각 완료 (Case 31).
+# 🚨 MODIFIED: [미래 참조 데이터 절단] get_exact_prev_close 호출 시 1일봉(1d) 지연 맹점을 파기하고 1분봉(1m) 기반 D-1일 공식 종가 핀셋 추출 락온.
 # 🚨 MODIFIED: [Lost Update 궁극 방어] process_auto_sync 내부에서 상태 캐시(vwap_state_REV)를 갱신할 때, 읽기와 쓰기를 단일 동기 스레드 함수(_update_v_state)로 묶은 뒤 GlobalThrottle.get_file_lock()을 100% 팩트 래핑하여 원자적(Atomic) 무결성 사수 완료.
-# 🚨 MODIFIED: [유령 잔고 방어 팩트 수술] actual_qty < a_qty_for_check 로 인해 마이너스 값이 산출될 경우 0주 졸업 오인 방어망 결속
-# 🚨 NEW: 본진 전략 타점 오염을 원천 차단하기 위해 KIS 실서버 원본 계좌 잔고 및 평단가를 시각적 세션으로 완전 격리 표출
+# 🚨 MODIFIED: [유령 잔고 방어 팩트 수술] actual_qty < a_qty_for_check 로 인해 마이너스 값이 산출될 경우 0주 졸업 오인 방어망 결속.
+# 🚨 NEW: 본진 전략 타점 오염을 원천 차단하기 위해 KIS 실서버 원본 계좌 잔고 및 평단가를 시각적 세션으로 완전 격리 표출.
 # 🚨 MODIFIED: [지층 단가 역전 패러독스 방어] 수동 매도 후 장부 동기화(/sync) 시, '1회분 고정 예산(15%)'과 '정규장 종가'를 큐 장부 동기화 엔진에 팩트 주입하여 안전한 자동 분할(Auto-Split)이 100% 격발되도록 파라미터 누락 버그 완벽 수술 완료.
 # ==========================================================
 
@@ -44,8 +46,12 @@ class TelegramSyncEngine:
         except Exception: return 0.0
 
     async def _retry_api(self, func, *args, timeout=15.0, default=None, **kwargs):
+        """ 🚨 [Case 31, 32] 3단 지수 백오프 및 GlobalThrottle 중앙 집중형 TPS 방어망 결속 """
         for attempt in range(3):
             try:
+                # 🚨 MODIFIED: 파편화된 sleep 소각 및 중앙 통제소 락온 (비동기 스레드 격리)
+                await asyncio.to_thread(GlobalThrottle.wait_api_sync)
+                
                 if asyncio.iscoroutinefunction(func):
                     return await asyncio.wait_for(func(*args, **kwargs), timeout=timeout)
                 else:
@@ -477,7 +483,7 @@ class TelegramSyncEngine:
                                 safe_prev_c = 0.0
                                 for attempt in range(3):
                                     try:
-                                        await asyncio.sleep(0.06)
+                                        # 🚨 MODIFIED: 파편화된 sleep 소각 완료
                                         p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_previous_close, ticker), timeout=10.0)
                                         safe_prev_c = self._safe_float(p_val)
                                         if safe_prev_c > 0: break
