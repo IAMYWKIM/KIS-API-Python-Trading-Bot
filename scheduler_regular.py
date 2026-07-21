@@ -5,6 +5,7 @@
 # 🚨 MODIFIED: [Thundering Herd 영구 소각] 파편화된 await asyncio.sleep(0.06) 땜질을 무려 24개소에서 전면 삭제.
 # 🚨 MODIFIED: [중앙 통제소 위임] 모든 API 지연을 GlobalThrottle(중앙 통제소)로 100% 위임하여 비동기 이벤트 루프 마비 및 교착 상태 완벽 방어.
 # 🚨 MODIFIED: [예약 주문 증발(Ghost Order) 궁극 수술] V14 LOC 장전 시 하드코딩되어 있던 `is_market_active_now = False`를 영구 소각. 현재 시간(EST)을 동적으로 판별하여 프리장 개장 후(서머타임 04:05 EST)에는 실시간 본주문(`send_order`)을, 개장 전(윈터타임 03:05 EST)에는 예약 주문(`send_reservation_order`)을 격발하도록 팩트 락온 완료.
+# 🚨 MODIFIED: [자본 잠김 맹독성 컷오프 파기] 암살자 물량 보유 여부만으로 무조건 본진 타격을 지연 이관하던 오류를 영구 소각하고, 실질적 예산(safe_alloc_cash)이 목표 예산(15%)의 90% 미만일 때만 자본 잠김으로 판별하도록 팩트 교정 완료.
 # ==========================================================
 import logging
 import datetime
@@ -93,7 +94,6 @@ async def scheduled_early_regular_trade(context):
             cash, holdings = 0.0, None
             for attempt in range(3):
                 try:
-                    # 🚨 MODIFIED: 파편화된 sleep 소각 (GlobalThrottle 위임)
                     res = await asyncio.wait_for(asyncio.to_thread(broker.get_account_balance), timeout=15.0)
                     cash = _safe_float(res[0]) if isinstance(res, (list, tuple)) and len(res) > 0 else 0.0
                     holdings = res[1] if isinstance(res, (list, tuple)) and len(res) > 1 else {}
@@ -168,7 +168,6 @@ async def scheduled_early_regular_trade(context):
                     curr_p, prev_c = 0.0, 0.0
                     for _api_retry in range(3):
                         try:
-                            # 🚨 MODIFIED: 파편화된 sleep 소각 (GlobalThrottle 위임)
                             curr_p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_current_price, t), timeout=15.0)
                             curr_p = _safe_float(curr_p_val)
                             
@@ -208,7 +207,6 @@ async def scheduled_early_regular_trade(context):
                     if version == "V14":
                         msgs[t] += f"💎 <b>[{t}] V14 오리지널 정규장 실전 덫 장전 완료 (17:05 KST 타격망)</b>\n"
                         
-                        # 🚨 MODIFIED: [예약 주문 증발(Ghost Order) 궁극 수술] 하드코딩된 False를 파기하고 서머타임(04:05 EST, 프리장 개장) 여부를 동적으로 판별하여 실시간 본주문(True)으로 자동 전환 락온
                         is_market_active_now = curr_est.hour >= 4
 
                         target_orders = plan.get('core_orders') or plan.get('orders') or []
@@ -400,7 +398,6 @@ async def scheduled_regular_trade_delayed(context):
             cash, holdings = 0.0, None
             for attempt in range(3):
                 try:
-                    # 🚨 MODIFIED: 파편화된 sleep 소각 (GlobalThrottle 위임)
                     res = await asyncio.wait_for(asyncio.to_thread(broker.get_account_balance), timeout=15.0)
                     cash = _safe_float(res[0]) if isinstance(res, (list, tuple)) and len(res) > 0 else 0.0
                     holdings = res[1] if isinstance(res, (list, tuple)) and len(res) > 1 else {}
@@ -469,43 +466,46 @@ async def scheduled_regular_trade_delayed(context):
                         
                     if is_locked:
                         continue
-                        
+
+                    safe_alloc_cash = _safe_float(allocated_cash.get(t, 0.0))
+                    
+                    # 🚨 MODIFIED: [자본 잠김 판별 맹독성 버그 수술] 암살자 보유 여부와 무관하게, 주문가능금액 기반 할당 예산(safe_alloc_cash)이 목표 투입 예산(15%)의 90% 미만일 때만 자본 잠김으로 판단하도록 100% 팩트 교정 완료
                     is_capital_locked = False
-                    if version == "V_REV" and t == "SOXL":
-                        for attempt in range(3):
+                    if version == "V_REV":
+                        required_budget = 0.0
+                        for seed_attempt in range(3):
                             try:
-                                avwap_state = await asyncio.wait_for(asyncio.to_thread(read_avwap_state_sync, t, today_str), timeout=5.0)
-                                avwap_qty = int(_safe_float(avwap_state.get('qty', 0)))
-                                avwap_shutdown = bool(avwap_state.get('shutdown', False))
-                                if avwap_qty > 0 and not avwap_shutdown:
-                                    is_capital_locked = True
+                                seed_val = await asyncio.wait_for(asyncio.to_thread(cfg.get_seed, t), timeout=5.0)
+                                required_budget = _safe_float(seed_val) * 0.15
                                 break
                             except Exception as e:
-                                if attempt == 2: logging.error(f"🚨 [{t}] 암살자 자본 잠김 스캔 에러: {e}")
-                                else: await asyncio.sleep(1.0 * (2 ** attempt))
+                                if seed_attempt == 2: logging.error(f"🚨 [{t}] 자본 잠김 판별용 시드 추출 에러: {e}")
+                                else: await asyncio.sleep(1.0 * (2 ** seed_attempt))
+                        
+                        if required_budget > 0 and safe_alloc_cash < required_budget * 0.9:
+                            is_capital_locked = True
+                            logging.info(f"🚨 [{t}] 자본 잠김 팩트 감지: 가용 예산(${safe_alloc_cash:.2f})이 목표 예산(${required_budget:.2f})에 미달합니다. (암살자 점유 등 원인)")
                                 
                     capital_locked_map[t] = is_capital_locked 
 
                     h = safe_holdings.get(t) or {}
                     safe_avg = _safe_float(h.get('avg'))
                     safe_qty = int(_safe_float(h.get('qty')))
-                    safe_alloc_cash = _safe_float(allocated_cash.get(t, 0.0))
 
                     if is_capital_locked:
                         for seed_attempt in range(3):
                             try:
                                 seed_val = await asyncio.wait_for(asyncio.to_thread(cfg.get_seed, t), timeout=5.0)
                                 safe_alloc_cash = _safe_float(seed_val) * 0.15
-                                logging.info(f"🚨 [{t}] 자본 잠김 감지: 이관 플랜 생성을 위해 가상의 1일 고정 예산(${safe_alloc_cash:.2f})을 강제 복원합니다.")
+                                logging.info(f"🚨 [{t}] 지연 이관 플랜 생성을 위해 가상의 1일 고정 예산(${safe_alloc_cash:.2f})을 일시 복원합니다.")
                                 break
                             except Exception as e:
-                                if seed_attempt == 2: logging.error(f"🚨 [{t}] 가상 예산 복원 실패 (기존 0.0 예산 유지): {e}")
+                                if seed_attempt == 2: logging.error(f"🚨 [{t}] 가상 예산 복원 실패: {e}")
                                 else: await asyncio.sleep(1.0 * (2 ** seed_attempt))
 
                     curr_p, prev_c = 0.0, 0.0
                     for _api_retry in range(3):
                         try:
-                            # 🚨 MODIFIED: 파편화된 sleep 소각 (GlobalThrottle 위임)
                             curr_p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_current_price, t), timeout=15.0)
                             curr_p = _safe_float(curr_p_val)
                             
@@ -545,7 +545,7 @@ async def scheduled_regular_trade_delayed(context):
                     plans[t] = plan
                     if plan.get('core_orders') or plan.get('orders') or plan.get('bonus_orders'):
                         if is_capital_locked:
-                            msgs[t] += f"⏳ <b>[{t}] 자본 잠김(Capital Lock-up) 감지!</b>\n▫️ 암살자 100% 점유로 인해 정규장 플랜을 <b>16:01 애프터장 일괄 타격</b>으로 지연 이관(Delay & Transfer)합니다.\n"
+                            msgs[t] += f"⏳ <b>[{t}] 자본 잠김(Capital Lock-up) 팩트 감지!</b>\n▫️ 예산 고갈(암살자 점유 등)로 인해 정규장 <b>매수(BUY) 플랜을 16:01 애프터장 일괄 타격으로 지연 이관</b>(Delay & Transfer)합니다. (매도는 정상 투하)\n"
                         else:
                             msgs[t] += f"🔄 <b>[{t}] V-REV 역추세 실전 덫(로컬 엔진 포함) 장전 완료</b>\n"
                 except Exception as e:
@@ -601,7 +601,7 @@ async def scheduled_regular_trade_delayed(context):
                             logging.error(f"🚨 락 설정 타임아웃: {e}")
                     
                         if is_capital_locked:
-                            msgs[t] += "\n🔒 <b>V-REV 플랜 애프터장 이관 완료 (잠금 설정됨)</b>"
+                            msgs[t] += "\n🔒 <b>V-REV 매수 플랜 애프터장 이관 완료 (매도 정상 장전, 잠금 설정됨)</b>"
                         else:
                             msgs[t] += "\n🔒 <b>V-REV 필수 덫(로컬 엔진 포함) 전송 완료 (잠금 설정됨)</b>"
                     elif not all_success_map[t] and (target_orders or target_bonus):
