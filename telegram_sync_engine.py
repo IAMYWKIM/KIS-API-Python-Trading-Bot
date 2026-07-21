@@ -5,6 +5,7 @@
 # 🚨 MODIFIED: [Event Loop 마비 궁극 수술] get_exact_prev_close 내부에 잔존하던 맹독성 time.sleep(0.06)을 영구 소각하고 GlobalThrottle.wait_api_sync() 중앙 통제 락온 완료.
 # 🚨 MODIFIED: [자전거래/암살자 찌꺼기 맹독성 유입 궁극 방어] 16:05 EST 정산 시 KIS 실원장(target_execs)의 모든 당일 체결 내역을 맹목적으로 무한 편입하던 로직을 전면 소각. 암살자 단타 기록이 본진 메인 장부를 오염시키는 대참사(Ghost Record)를 원천 차단하기 위해, 오직 누락/오차 수량(diff)에 대해서만 정밀하게 비파괴 보정(CALIB) 로트를 단 1줄 주입하도록 100% 팩트 교정.
 # 🚨 MODIFIED: [통신 장애 핀셋 추적망 결속] process_auto_sync 내부에서 broker API (get_account_balance, get_execution_history 등) 호출 실패 시 무의미한 "ERROR" 반환을 소각하고, 정확한 실패 구간(Endpoint)과 사유를 문자열로 반환하여 상위 라우터가 진단할 수 있도록 팩트 락온.
+# 🚨 MODIFIED: [단일 지층 팽창 자가 치유 방해 맹독성 Bypass 소각] `/sync` 시 KIS 잔고와 큐 잔고가 일치할 경우 `sync_with_broker` 호출을 아예 건너뛰어버리던(`pass`) 조기 종료 논리를 시스템 전역에서 영구 파기. 잔고가 일치하더라도 무조건 종가 및 예산 팩트를 큐 장부로 주입하여, 비정상 팽창된 단일 지층이 스스로 2개 지층으로 정밀 분할(Self-Healing) 하도록 동기화 배선을 100% 강제 락온.
 # ==========================================================
 
 import logging
@@ -413,44 +414,44 @@ class TelegramSyncEngine:
                             else:
                                 await self._safe_send(context, chat_id, f"⚠️ <b>[{html.escape(str(ticker))}] V-REV 0주 강제 정산 완료]</b>\n▫️ 0주를 확인하여 큐를 안전하게 비웠으나 통신 지연으로 졸업 카드는 생략되었습니다.", parse_mode='HTML')
                        
-                        if safe_actual_qty_for_vrev == vrev_ledger_qty:
-                            pass
-                        elif safe_actual_qty_for_vrev > 0 and safe_actual_qty_for_vrev < vrev_ledger_qty:
+                        # 🚨 MODIFIED: [단일 지층 팽창 자가 치유 방해 맹독성 Bypass 소각]
+                        if safe_actual_qty_for_vrev > 0 and safe_actual_qty_for_vrev <= vrev_ledger_qty:
                             gap_qty = vrev_ledger_qty - safe_actual_qty_for_vrev
                             
-                            def _update_v_state(tkr, g_qty):
-                                f_path = f"data/vwap_state_REV_{tkr}.json"
-                                with GlobalThrottle.get_file_lock(f_path):
-                                    try:
-                                        with open(f_path, 'r', encoding='utf-8') as vf: v_state = json.load(vf)
-                                    except Exception:
-                                        v_state = {}
-                                        
-                                    if isinstance(v_state, dict) and "executed" in v_state and isinstance(v_state["executed"], dict) and "SELL_QTY" in v_state["executed"]:
-                                        old_sell_qty = v_state["executed"]["SELL_QTY"]
-                                        v_state["executed"]["SELL_QTY"] = max(0, old_sell_qty - g_qty)
-                                        
-                                    fd = None
-                                    tmp_path = None
-                                    try:
-                                        fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(f_path) or '.')
-                                        with os.fdopen(fd, 'w', encoding='utf-8') as _vf_out:
-                                            fd = None
-                                            json.dump(v_state, _vf_out, ensure_ascii=False, indent=4)
-                                            _vf_out.flush()
-                                            os.fsync(_vf_out.fileno())
-                                        os.replace(tmp_path, f_path)
+                            if gap_qty > 0:
+                                def _update_v_state(tkr, g_qty):
+                                    f_path = f"data/vwap_state_REV_{tkr}.json"
+                                    with GlobalThrottle.get_file_lock(f_path):
+                                        try:
+                                            with open(f_path, 'r', encoding='utf-8') as vf: v_state = json.load(vf)
+                                        except Exception:
+                                            v_state = {}
+                                            
+                                        if isinstance(v_state, dict) and "executed" in v_state and isinstance(v_state["executed"], dict) and "SELL_QTY" in v_state["executed"]:
+                                            old_sell_qty = v_state["executed"]["SELL_QTY"]
+                                            v_state["executed"]["SELL_QTY"] = max(0, old_sell_qty - g_qty)
+                                            
+                                        fd = None
                                         tmp_path = None
-                                    except Exception as write_err:
-                                        if fd is not None:
-                                            try: os.close(fd)
-                                            except OSError: pass
-                                        if tmp_path:
-                                            try: os.remove(tmp_path)
-                                            except OSError: pass
-                                        raise write_err
-
-                            await self._retry_api(_update_v_state, ticker, gap_qty, timeout=10.0)
+                                        try:
+                                            fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(f_path) or '.')
+                                            with os.fdopen(fd, 'w', encoding='utf-8') as _vf_out:
+                                                fd = None
+                                                json.dump(v_state, _vf_out, ensure_ascii=False, indent=4)
+                                                _vf_out.flush()
+                                                os.fsync(_vf_out.fileno())
+                                            os.replace(tmp_path, f_path)
+                                            tmp_path = None
+                                        except Exception as write_err:
+                                            if fd is not None:
+                                                try: os.close(fd)
+                                                except OSError: pass
+                                            if tmp_path:
+                                                try: os.remove(tmp_path)
+                                                except OSError: pass
+                                            raise write_err
+    
+                                await self._retry_api(_update_v_state, ticker, gap_qty, timeout=10.0)
 
                             actual_clear_price_for_sync = 0.0
                             if target_execs:
@@ -488,7 +489,11 @@ class TelegramSyncEngine:
                                     default=False
                                 )
                              
-                            if calibrated: await self._safe_send(context, chat_id, f"🔧 <b>[{html.escape(str(ticker))}] V-REV 큐(Queue) 비파괴 보정 및 리앵커링 완료!</b>\n▫️ 수동 매도 물량(<b>{gap_qty}주</b>)을 LIFO 큐에서 안전하게 차감하고, 수익금만큼 잔여 지층의 평단가를 일괄 차감했습니다.", parse_mode='HTML')
+                            if calibrated:
+                                if gap_qty > 0:
+                                    await self._safe_send(context, chat_id, f"🔧 <b>[{html.escape(str(ticker))}] V-REV 큐(Queue) 비파괴 보정 및 리앵커링 완료!</b>\n▫️ 수동 매도 물량(<b>{gap_qty}주</b>)을 LIFO 큐에서 안전하게 차감하고, 수익금만큼 잔여 지층의 평단가를 일괄 차감했습니다.", parse_mode='HTML')
+                                else:
+                                    await self._safe_send(context, chat_id, f"🔧 <b>[{html.escape(str(ticker))}] V-REV 큐(Queue) 단일 지층 자가 치유 완료!</b>\n▫️ 비정상적으로 팽창된 단일 지층을 1층과 상위층으로 정밀 분할(Split)하여 팩트 복구했습니다.", parse_mode='HTML')
                              
                         elif safe_actual_qty_for_vrev > 0 and safe_actual_qty_for_vrev > vrev_ledger_qty:
                             gap_qty = safe_actual_qty_for_vrev - vrev_ledger_qty
