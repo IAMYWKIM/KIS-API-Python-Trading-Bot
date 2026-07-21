@@ -10,6 +10,7 @@
 # 🚨 NEW: 본진 전략 타점 오염을 원천 차단하기 위해 KIS 실서버 원본 계좌 잔고 및 평단가를 시각적 세션으로 완전 격리 표출.
 # 🚨 MODIFIED: [통신 장애 핀셋 추적망 결속] process_auto_sync 내부에서 broker API (get_account_balance, get_execution_history 등) 호출 실패 시 무의미한 "ERROR" 반환을 소각하고, 정확한 실패 구간(Endpoint)과 사유를 문자열로 반환하여 상위 라우터가 진단할 수 있도록 팩트 락온.
 # 🚨 MODIFIED: [유령 잔고 근원적 방어] get_account_balance가 실패하여 holdings로 None을 반환했을 때 빈 딕셔너리로 치환되어 0주로 인식되던 치명적 맹독성 버그를 원천 차단하고 즉시 통신 에러로 컷오프(Cut-off) 처리.
+# 🚨 MODIFIED: [NameError 즉사 버그 궁극 수술] status_code 미정의 런타임 에러를 유발하던 맹독성 분기문을 전면 소각하고, 16:00 EST 컷오프 기반의 독립적 YF 종가 핀셋 추출 엔진으로 100% 팩트 대체 완료.
 # ==========================================================
 
 import logging
@@ -565,55 +566,52 @@ class TelegramSyncEngine:
                             await self._retry_api(self.cfg._save_json, self.cfg.FILES["LEDGER"], all_recs, timeout=10.0)
                             await self._safe_send(context, chat_id, f"⚠️ <b>[{html.escape(str(ticker))} 강제 정산 완료]</b>\n잔고가 0주이나 마이너스 수익 상태이므로 명예의 전당 박제 없이 장부를 비우고 새출발 타점을 장전합니다.", parse_mode='HTML')
 
-                if status_code in ["AFTER", "CLOSE", "PRE"]:
-                    def get_exact_prev_close(ticker_name):
-                        # 🚨 MODIFIED: [Event Loop 마비 원천 봉쇄] time.sleep(0.06) 영구 소각 및 중앙 통제 락온
-                        GlobalThrottle.wait_api_sync()
-                        df = yf.Ticker(ticker_name).history(period="5d", interval="1m", prepost=True, timeout=5)
-                        if not df.empty and 'Close' in df.columns:
-                            tz_est = ZoneInfo('America/New_York')
-                            tz_now = datetime.datetime.now(tz_est)
-                            cutoff_date = tz_now.date()
-                            
-                            # 🚨 MODIFIED: [미래 참조(Look-ahead) 방어] 16:00:30 이전일 경우에만 하루를 빼서 D-1 종가 매핑
-                            if tz_now.time() <= datetime.time(16, 0, 30):
-                                cutoff_date -= datetime.timedelta(days=1)
-                            
-                            if df.index.tzinfo is None:
-                                df.index = df.index.tz_localize('UTC').tz_convert(tz_est)
-                            else:
-                                df.index = df.index.tz_convert(tz_est)
-                                
-                            past_df = df[df.index.date <= cutoff_date].copy()
-                            if not past_df.empty:
-                                past_df['Close'] = past_df['Close'].ffill().bfill()
-                                regular_past = past_df.between_time('09:30', '15:59')
-                                if not regular_past.empty:
-                                    val = float(regular_past['Close'].iloc[-1])
-                                else:
-                                    val = float(past_df['Close'].iloc[-1])
-                                return val if not math.isnan(val) else None
-                        return None
-
-                    yf_close = None
-                    for attempt in range(3):
-                        try:
-                            yf_close = await asyncio.wait_for(asyncio.to_thread(get_exact_prev_close, ticker), timeout=10.0)
-                            break
-                        except Exception:
-                            if attempt == 2: pass
-                            else: await asyncio.sleep(1.0 * (2 ** attempt))
-                    
-                    if yf_close and yf_close > 0:
-                        safe_prev_close = yf_close
-                
+                # 🚨 MODIFIED: [NameError 궁극 수술] status_code 오염을 소각하고 16:00 EST 시간 팩트로만 스냅샷 박제를 수행하도록 리빌딩.
                 if now_est.time() >= datetime.time(16, 0):
                     try:
                         curr_p_val = await self._retry_api(self.broker.get_current_price, ticker, timeout=10.0)
                         curr_p = self._safe_float(curr_p_val)
-                    
-                        # 🚨 MODIFIED: [MOC 핀셋 종가 오버라이드 팩트 락온] KIS 종가를 무시하고 YF 공식 종가로 무조건 덮어씌움
-                        prev_c = safe_prev_close 
+                        
+                        def get_exact_prev_close(ticker_name):
+                            GlobalThrottle.wait_api_sync()
+                            df = yf.Ticker(ticker_name).history(period="5d", interval="1m", prepost=True, timeout=5)
+                            if not df.empty and 'Close' in df.columns:
+                                tz_est = ZoneInfo('America/New_York')
+                                tz_now = datetime.datetime.now(tz_est)
+                                cutoff_date = tz_now.date()
+                                if tz_now.time() <= datetime.time(16, 0, 30):
+                                    cutoff_date -= datetime.timedelta(days=1)
+                                
+                                if df.index.tzinfo is None:
+                                    df.index = df.index.tz_localize('UTC').tz_convert(tz_est)
+                                else:
+                                    df.index = df.index.tz_convert(tz_est)
+                                    
+                                past_df = df[df.index.date <= cutoff_date].copy()
+                                if not past_df.empty:
+                                    past_df['Close'] = past_df['Close'].ffill().bfill()
+                                    regular_past = past_df.between_time('09:30', '15:59')
+                                    if not regular_past.empty:
+                                        val = float(regular_past['Close'].iloc[-1])
+                                    else:
+                                        val = float(past_df['Close'].iloc[-1])
+                                    return val if not math.isnan(val) else None
+                            return None
+
+                        yf_close = None
+                        for attempt in range(3):
+                            try:
+                                yf_close = await asyncio.wait_for(asyncio.to_thread(get_exact_prev_close, ticker), timeout=10.0)
+                                break
+                            except Exception:
+                                if attempt == 2: pass
+                                else: await asyncio.sleep(1.0 * (2 ** attempt))
+                        
+                        prev_c = yf_close if yf_close and yf_close > 0 else curr_p
+
+                        # 🚨 MODIFIED: 주말/장마감 현재가 오버라이드 (16:00 이후에만 발동)
+                        if now_est.weekday() >= 5 or now_est.time() < datetime.time(4, 0):
+                            curr_p = prev_c
                     
                         ma_5day_val = await self._retry_api(self.broker.get_5day_ma, ticker, timeout=10.0)
                         ma_5day = self._safe_float(ma_5day_val)
