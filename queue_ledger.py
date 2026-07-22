@@ -11,6 +11,7 @@
 # 🚨 NEW: [Case 48: 2-Tier Auto-Merge Protocol 락온] 3개 이상의 지층 생성 시 즉각 상위 지층을 통합하여 최대 2개 지층(2-Bucket)만을 유지하도록 `_enforce_two_tier_limit` 헬퍼 메서드 팩트 주입.
 # 🚨 NEW: [지층 단가 역전 방어막 (Price Inversion Shield) 락온] 1회분 초과 지층 분할(Tier Split) 시, 전체 평단가(new_pure_price)가 1층 앵커가 될 정규장 종가(prev_close)보다 낮을 경우 2층의 단가가 1층보다 낮아지는 맹독성 역전 패러독스가 발생함. 이를 원천 차단하기 위해 `new_pure_price > prev_close` 일 때만 분할을 허용하고, 반대의 경우 분할을 포기하고 저점 단일 지층으로 보존하도록 안전장치 100% 결속 완료.
 # 🚨 NEW: [풍선 효과(Balloon Effect) 하드 캡핑 락온] 부분 익절 후 단일 지층 분할(Split) 격발 시, 잔여 투자금이 2층으로 과도하게 쏠려 2층 단가가 '매도 전 총 평단가'를 초과하여 폭등하는 단가 상승 패러독스를 시스템 전역에서 원천 차단하기 위해, 상위층 분할 단가(rem_price)를 이전 총 평단가로 강제 캡핑(Capping)하는 쉴드를 100% 결속 완료.
+# 🚨 MODIFIED: [리앵커링 타임라인 절대 락온] 단일 지층이 1층과 상위층으로 쪼개질 때(Split), 두 지층 모두 과거의 동일한 물리적 매수 날짜를 상속받아 렌더링에 혼선을 주던 맹점을 원천 소각. 상위층은 과거 날짜를 보존하되, 새롭게 앵커링된 1층은 무조건 '분할 연산이 발생한 당일 현재 타임스탬프'를 강제 주입하도록 타임라인 무결성 팩트 교정 완료.
 # ==========================================================
 import os
 import json
@@ -179,6 +180,9 @@ class QueueLedger:
                         
                         lot_date = lot.get("date", self._get_trading_date_str())
                         
+                        # 🚨 MODIFIED: [리앵커링 타임라인 절대 락온] 1지층은 새로운 닻(Anchor)이므로 현재 타임스탬프 강제 부여
+                        now_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
+                        
                         new_l2 = {
                             "qty": rem_qty,
                             "price": rem_price,
@@ -189,7 +193,7 @@ class QueueLedger:
                         new_l1 = {
                             "qty": new_l1_qty,
                             "price": round(prev_close_f, 4),
-                            "date": lot_date,
+                            "date": now_str,
                             "type": "AUTO_SPLIT_L1"
                         }
                         
@@ -331,6 +335,9 @@ class QueueLedger:
                                 logging.info(f"🎈 [{ticker}] 풍선 효과 감지(pop_lots): 상위층 단가(${rem_price:.2f})가 기존 총 평단가(${previous_total_avg:.2f}) 초과 ➔ 하드 캡핑(Capping) 발동")
                                 rem_price = round(previous_total_avg, 4)
                             
+                            # 🚨 MODIFIED: [리앵커링 타임라인 절대 락온] 1지층은 새로운 닻이므로 당일 타임스탬프 강제 부여
+                            now_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
+                            
                             q[0]["qty"] = rem_qty
                             q[0]["price"] = rem_price
                             q[0]["type"] = "AUTO_SPLIT_UPPER"
@@ -338,7 +345,7 @@ class QueueLedger:
                             q.append({
                                 "qty": new_l1_qty,
                                 "price": round(prev_close, 4),
-                                "date": q[0]["date"],
+                                "date": now_str,
                                 "type": "AUTO_SPLIT_L1"
                             })
                             logging.info(f"🔪 [{ticker}] 단일 지층 마법 및 초과분 분할(Split) 완료 (1층: {new_l1_qty}주 @ ${prev_close:.2f} / 상위층: {rem_qty}주 @ ${rem_price:.2f})")
@@ -386,6 +393,9 @@ class QueueLedger:
                                 logging.info(f"🎈 [{ticker}] 풍선 효과 감지(자가치유): 상위층 단가(${rem_price:.2f})가 기존 평단가(${lot_price:.2f}) 초과 ➔ 캡핑 발동")
                                 rem_price = round(lot_price, 4)
 
+                            # 🚨 MODIFIED: [리앵커링 타임라인 절대 락온] 1지층은 새로운 닻이므로 당일 타임스탬프 강제 부여
+                            now_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
+
                             q[0]["qty"] = rem_qty
                             q[0]["price"] = rem_price
                             q[0]["type"] = "AUTO_SPLIT_UPPER"
@@ -393,7 +403,7 @@ class QueueLedger:
                             q.append({
                                 "qty": new_l1_qty,
                                 "price": round(prev_close, 4),
-                                "date": q[0]["date"],
+                                "date": now_str,
                                 "type": "AUTO_SPLIT_L1"
                             })
                             data[ticker] = q
@@ -486,6 +496,9 @@ class QueueLedger:
                                     logging.info(f"🎈 [{ticker}] 풍선 효과 감지(동기화): 상위층 단가(${rem_price:.2f})가 이전 총 평단가(${previous_total_avg:.2f}) 초과 ➔ 캡핑 발동")
                                     rem_price = round(previous_total_avg, 4)
                                     
+                                # 🚨 MODIFIED: [리앵커링 타임라인 절대 락온] 1지층은 새로운 닻이므로 당일 타임스탬프 강제 부여
+                                now_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
+
                                 q[0]["qty"] = rem_qty
                                 q[0]["price"] = rem_price
                                 q[0]["type"] = "AUTO_SPLIT_UPPER"
@@ -493,7 +506,7 @@ class QueueLedger:
                                 q.append({
                                     "qty": new_l1_qty,
                                     "price": round(prev_close, 4),
-                                    "date": q[0]["date"],
+                                    "date": now_str,
                                     "type": "AUTO_SPLIT_L1"
                                 })
                                 logging.info(f"🔪 [{ticker}] 동기화 단일 지층 마법 및 초과분 분할 완료 (1층: {new_l1_qty}주 @ ${prev_close:.2f})")
