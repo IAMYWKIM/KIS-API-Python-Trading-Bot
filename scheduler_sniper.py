@@ -2,8 +2,8 @@
 # FILE: scheduler_sniper.py
 # ==========================================================
 # 🚨 MODIFIED: [제1헌법 철저 준수] 달력 API 및 모든 통신 전 하드코딩된 await asyncio.sleep(0.06) 땜질을 영구 소각하고, await asyncio.to_thread(GlobalThrottle.wait_api_sync)로 100% 락온.
-# 🚨 MODIFIED: [스케줄러 병목 붕괴 궁극 수술] 스나이퍼 매수/매도 검증 루프 내에 기생하던 불필요한 sleep(2.0) * 4회 다중 폴링 대기열을 sleep(1.0) * 3회로 진공 압축.
-# 🚨 MODIFIED: [Thundering Herd 영구 소각] 파편화된 try-except 래핑 및 동기 I/O 블로킹을 _retry_api 단일 래퍼로 100% 통합하여 TimeoutError 연쇄 폭발을 원천 봉쇄.
+# 🚨 MODIFIED: [스케줄러 병목 붕괴 궁극 수술] 스나이퍼 매수/매도 검증 루프 내에 기생하던 불필요한 다중 폴링 대기열(sleep 1.0 * 3회)을 단 1회(sleep 2.0) 타격 판별로 진공 압축하여 55초 TimeoutError 연쇄 폭발을 원천 봉쇄.
+# 🚨 MODIFIED: [Thundering Herd 영구 소각] 파편화된 try-except 래핑 및 동기 I/O 블로킹을 _retry_api 단일 래퍼로 100% 통합.
 # 🚨 MODIFIED: [부분 체결 동적 차감 수술] 암살자 매도 덫이 전량 체결되지 않더라도 부분 체결(Partial Fill) 수량만큼 실시간으로 암살자 장부 및 상태 캐시에서 차감하여 SSOT 무결성 사수 완료.
 # 🚨 MODIFIED: [상태 기억 상실(State Amnesia) 붕괴 궁극 수술] JSONDecodeError 등으로 상태 캐시 파일이 비정상 초기화되는 현상을 원천 차단하기 위해 듀얼 세이프티(.bak) 원자적 백업 및 자가 치유(Self-Healing) 파이프라인 100% 결속.
 # 🚨 MODIFIED: [KST 타임라인 롤오버 맹점 수술] EST 기준 장중(예: 11:00 AM)에 KST 자정이 지나 날짜가 변경될 경우, 당일 체결 내역 조회 시 주문이 증발(Ghost Order)한 것으로 오인하는 KIS API 패러독스를 방어하기 위해 검색 기간을 D-2 ~ D-0으로 강제 확장.
@@ -157,7 +157,7 @@ async def _retry_api(func, *args, timeout=15.0, default=None, **kwargs):
     # 🚨 MODIFIED: [제1헌법 준수 및 병목 소각] 파편화된 sleep 영구 삭제, 중앙 통제소 비동기 격리 100% 락온
     for attempt in range(3):
         try:
-            await asyncio.to_thread(GlobalThrottle.wait_api_sync) 
+            await asyncio.to_thread(GlobalThrottle.wait_api_sync)
             if asyncio.iscoroutinefunction(func):
                 return await asyncio.wait_for(func(*args, **kwargs), timeout=timeout)
             else:
@@ -553,20 +553,14 @@ async def scheduled_sniper_monitor(context):
                     if action == "BUY" and not is_rev and not sniper_buy_locked and master_switch != "UP_ONLY":
                         qty = res.get("qty", 0)
                         if qty > 0:
-                            # 🚨 MODIFIED: [Thundering Herd 및 병목 소각] 1.0초 단위 정밀 폴링으로 압축
+                            # 🚨 MODIFIED: [스케줄러 병목 붕괴 수술] 2초 대기 1회 폴링으로 팩트 압축
                             await _retry_api(broker.cancel_targeted_orders, t, "BUY", "00")
                             await asyncio.sleep(0.5)
                             
-                            has_unfilled = False
-                            for _ in range(3):
-                                unfilled = await _retry_api(broker.get_unfilled_orders_detail, t)
-                                safe_unfilled = unfilled if isinstance(unfilled, list) else []
-                                if any(isinstance(o, dict) and o.get('sll_buy_dvsn_cd') == '02' and str(o.get('ord_dvsn_cd') or o.get('ord_dvsn') or '').strip().zfill(2) == '00' for o in safe_unfilled):
-                                    has_unfilled = True
-                                    break
-                                await asyncio.sleep(1.0)
-                            
-                            if has_unfilled: continue
+                            unfilled = await _retry_api(broker.get_unfilled_orders_detail, t)
+                            safe_unfilled = unfilled if isinstance(unfilled, list) else []
+                            if any(isinstance(o, dict) and o.get('sll_buy_dvsn_cd') == '02' and str(o.get('ord_dvsn_cd') or o.get('ord_dvsn') or '').strip().zfill(2) == '00' for o in safe_unfilled):
+                                continue # 🚨 진행 중인 취소가 있으면 다음 분(Minute)으로 패스하여 병목 원천 차단
                             
                             ask_price = _safe_float(await _retry_api(broker.get_ask_price, t))
                             exec_price = ask_price if ask_price > 0 else limit_p
@@ -578,27 +572,25 @@ async def scheduled_sniper_monitor(context):
                                 now_kst_fresh = datetime.datetime.now(ZoneInfo('Asia/Seoul'))
                                 kis_search_start_fresh = (now_kst_fresh - datetime.timedelta(days=2)).strftime('%Y%m%d')
                                 query_end_dt_fresh = now_kst_fresh.strftime('%Y%m%d')
-                                ccld_qty = 0
                                 
-                                for _ in range(3):
-                                    await asyncio.sleep(1.0)
-                                    unfilled_check = await _retry_api(broker.get_unfilled_orders_detail, t)
-                                    safe_unfilled = unfilled_check if isinstance(unfilled_check, list) else []
-                                    my_order = next((ox for ox in safe_unfilled if isinstance(ox, dict) and str(ox.get('odno', '')) == odno), None)
-                                    if my_order:
-                                        ccld_qty = int(_safe_float(my_order.get('tot_ccld_qty')))
-                                        if ccld_qty >= qty: break
-                                    else:
-                                        exec_hist = await _retry_api(broker.get_execution_history, t, kis_search_start_fresh, query_end_dt_fresh)
-                                        safe_exec = exec_hist if isinstance(exec_hist, list) else []
-                                        filled_rec = next((ex for ex in safe_exec if isinstance(ex, dict) and str(ex.get('odno', '')) == odno), None)
-                                        if filled_rec: ccld_qty = int(_safe_float(filled_rec.get('ft_ccld_qty')))
-                                        else: ccld_qty = 0
-                                        break
+                                await asyncio.sleep(2.0) # 🚨 체결 반영 대기 (단 1회)
+                                
+                                unfilled_check = await _retry_api(broker.get_unfilled_orders_detail, t)
+                                safe_unfilled_check = unfilled_check if isinstance(unfilled_check, list) else []
+                                my_order = next((ox for ox in safe_unfilled_check if isinstance(ox, dict) and str(ox.get('odno', '')) == odno), None)
+                                
+                                ccld_qty = 0
+                                if my_order:
+                                    ccld_qty = int(_safe_float(my_order.get('tot_ccld_qty')))
+                                else:
+                                    exec_hist = await _retry_api(broker.get_execution_history, t, kis_search_start_fresh, query_end_dt_fresh)
+                                    safe_exec = exec_hist if isinstance(exec_hist, list) else []
+                                    filled_rec = next((ex for ex in safe_exec if isinstance(ex, dict) and str(ex.get('odno', '')) == odno), None)
+                                    if filled_rec: ccld_qty = int(_safe_float(filled_rec.get('ft_ccld_qty')))
     
                                 if ccld_qty < qty:
                                     await _retry_api(broker.cancel_order, t, odno)
-                                    await asyncio.sleep(1.0)
+                                    await asyncio.sleep(0.5)
 
                                 if ccld_qty > 0:
                                     if hasattr(cfg, 'set_sniper_buy_locked'):
@@ -662,20 +654,14 @@ async def scheduled_sniper_monitor(context):
                     if is_upward_active and action in ["SELL_QUARTER", "SELL_JACKPOT"]:
                         qty = res.get("qty", 0)
                         if qty > 0:
-                            # 🚨 MODIFIED: [Thundering Herd 및 병목 소각] 1.0초 단위 정밀 폴링으로 압축
+                            # 🚨 MODIFIED: [스케줄러 병목 붕괴 수술] 2초 대기 1회 폴링으로 팩트 압축
                             await _retry_api(broker.cancel_targeted_orders, t, "SELL", "00")
                             await asyncio.sleep(0.5)
                             
-                            has_unfilled = False
-                            for _ in range(3):
-                                unfilled = await _retry_api(broker.get_unfilled_orders_detail, t)
-                                safe_unfilled = unfilled if isinstance(unfilled, list) else []
-                                if any(isinstance(o, dict) and o.get('sll_buy_dvsn_cd') == '01' and str(o.get('ord_dvsn_cd') or o.get('ord_dvsn') or '').strip().zfill(2) == '00' for o in safe_unfilled):
-                                    has_unfilled = True
-                                    break
-                                await asyncio.sleep(1.0)
-                            
-                            if has_unfilled: continue
+                            unfilled = await _retry_api(broker.get_unfilled_orders_detail, t)
+                            safe_unfilled = unfilled if isinstance(unfilled, list) else []
+                            if any(isinstance(o, dict) and o.get('sll_buy_dvsn_cd') == '01' and str(o.get('ord_dvsn_cd') or o.get('ord_dvsn') or '').strip().zfill(2) == '00' for o in safe_unfilled):
+                                continue # 🚨 진행 중인 취소가 있으면 다음 분(Minute)으로 패스하여 병목 원천 차단
           
                             bid_price = _safe_float(await _retry_api(broker.get_bid_price, t))
                             exec_price = bid_price if bid_price > 0 else limit_p
@@ -702,27 +688,25 @@ async def scheduled_sniper_monitor(context):
                                 now_kst_fresh = datetime.datetime.now(ZoneInfo('Asia/Seoul'))
                                 kis_search_start_fresh = (now_kst_fresh - datetime.timedelta(days=2)).strftime('%Y%m%d')
                                 query_end_dt_fresh = now_kst_fresh.strftime('%Y%m%d')
-                                ccld_qty = 0
                                 
-                                for _ in range(3):
-                                    await asyncio.sleep(1.0)
-                                    unfilled_check = await _retry_api(broker.get_unfilled_orders_detail, t)
-                                    safe_unfilled = unfilled_check if isinstance(unfilled_check, list) else []
-                                    my_order = next((ox for ox in safe_unfilled if isinstance(ox, dict) and str(ox.get('odno', '')) == odno), None)
-                                    if my_order:
-                                        ccld_qty = int(_safe_float(my_order.get('tot_ccld_qty')))
-                                        if ccld_qty >= qty: break
-                                    else:
-                                        exec_hist = await _retry_api(broker.get_execution_history, t, kis_search_start_fresh, query_end_dt_fresh)
-                                        safe_exec = exec_hist if isinstance(exec_hist, list) else []
-                                        filled_rec = next((ex for ex in safe_exec if isinstance(ex, dict) and str(ex.get('odno', '')) == odno), None)
-                                        if filled_rec: ccld_qty = int(_safe_float(filled_rec.get('ft_ccld_qty')))
-                                        else: ccld_qty = 0
-                                        break
+                                await asyncio.sleep(2.0) # 🚨 체결 반영 대기 (단 1회)
+                                
+                                unfilled_check = await _retry_api(broker.get_unfilled_orders_detail, t)
+                                safe_unfilled_check = unfilled_check if isinstance(unfilled_check, list) else []
+                                my_order = next((ox for ox in safe_unfilled_check if isinstance(ox, dict) and str(ox.get('odno', '')) == odno), None)
+                                
+                                ccld_qty = 0
+                                if my_order:
+                                    ccld_qty = int(_safe_float(my_order.get('tot_ccld_qty')))
+                                else:
+                                    exec_hist = await _retry_api(broker.get_execution_history, t, kis_search_start_fresh, query_end_dt_fresh)
+                                    safe_exec = exec_hist if isinstance(exec_hist, list) else []
+                                    filled_rec = next((ex for ex in safe_exec if isinstance(ex, dict) and str(ex.get('odno', '')) == odno), None)
+                                    if filled_rec: ccld_qty = int(_safe_float(filled_rec.get('ft_ccld_qty')))
     
                                 if ccld_qty < qty:
                                     await _retry_api(broker.cancel_order, t, odno)
-                                    await asyncio.sleep(1.0)
+                                    await asyncio.sleep(0.5)
 
                                 if ccld_qty > 0:
                                     if hasattr(cfg, 'set_sniper_sell_locked'): 
