@@ -10,6 +10,7 @@
 # 🚨 VERIFIED: [제4헌법 절대 사수] 메인 장부뿐만 아니라 백업 파일(.bak) 생성 시에도 임시 파일(.bak.tmp)을 거치는 원자적 복사(Atomic Copy)를 강제하여 OS 커널 패닉 시 백업본 오염 원천 차단.
 # 🚨 NEW: [Case 48: 2-Tier Auto-Merge Protocol 락온] 3개 이상의 지층 생성 시 즉각 상위 지층을 통합하여 최대 2개 지층(2-Bucket)만을 유지하도록 `_enforce_two_tier_limit` 헬퍼 메서드 팩트 주입.
 # 🚨 NEW: [지층 단가 역전 방어막 (Price Inversion Shield) 락온] 1회분 초과 지층 분할(Tier Split) 시, 전체 평단가(new_pure_price)가 1층 앵커가 될 정규장 종가(prev_close)보다 낮을 경우 2층의 단가가 1층보다 낮아지는 맹독성 역전 패러독스가 발생함. 이를 원천 차단하기 위해 `new_pure_price > prev_close` 일 때만 분할을 허용하고, 반대의 경우 분할을 포기하고 저점 단일 지층으로 보존하도록 안전장치 100% 결속 완료.
+# 🚨 NEW: [풍선 효과(Balloon Effect) 하드 캡핑 락온] 부분 익절 후 단일 지층 분할(Split) 격발 시, 잔여 투자금이 2층으로 과도하게 쏠려 2층 단가가 '매도 전 총 평단가'를 초과하여 폭등하는 단가 상승 패러독스를 시스템 전역에서 원천 차단하기 위해, 상위층 분할 단가(rem_price)를 이전 총 평단가로 강제 캡핑(Capping)하는 쉴드를 100% 결속 완료.
 # ==========================================================
 import os
 import json
@@ -171,6 +172,11 @@ class QueueLedger:
                         rem_invested = total_invested - new_l1_invested
                         rem_price = round(max(0.01, rem_invested / rem_qty), 4)
                         
+                        # 🚨 NEW: 풍선 효과 캡핑 (단독 팽창 시 기존 단가를 상한선으로 방어)
+                        if price > 0 and rem_price > price:
+                            logging.info(f"🎈 [{ticker}] 풍선 효과 감지(단독 팽창): 상위층 단가(${rem_price:.2f})가 기존 평단가(${price:.2f}) 초과 ➔ 캡핑(Capping) 발동")
+                            rem_price = round(price, 4)
+                        
                         lot_date = lot.get("date", self._get_trading_date_str())
                         
                         new_l2 = {
@@ -274,7 +280,10 @@ class QueueLedger:
             
             if not q: return 0
             
+            # 🚨 NEW: 매도 전 총 평단가 추출 (풍선 효과 캡핑을 위한 Base Fact 확보)
             vrev_total_invested = sum(int(self._safe_float(item.get('qty'))) * self._safe_float(item.get('price')) for item in q)
+            previous_total_qty = sum(int(self._safe_float(item.get('qty'))) for item in q)
+            previous_total_avg = vrev_total_invested / previous_total_qty if previous_total_qty > 0 else 0.0
             
             popped_total = 0
             realized_cash = 0.0
@@ -316,6 +325,11 @@ class QueueLedger:
                             rem_qty = remaining_qty - new_l1_qty
                             rem_invested = remaining_invested - new_l1_invested
                             rem_price = round(max(0.01, rem_invested / rem_qty), 4)
+                            
+                            # 🚨 NEW: 풍선 효과(Balloon Effect) 캡핑 - 상위층 단가가 매도 전 총 평단가를 초과하지 못하도록 차단
+                            if previous_total_avg > 0 and rem_price > previous_total_avg:
+                                logging.info(f"🎈 [{ticker}] 풍선 효과 감지(pop_lots): 상위층 단가(${rem_price:.2f})가 기존 총 평단가(${previous_total_avg:.2f}) 초과 ➔ 하드 캡핑(Capping) 발동")
+                                rem_price = round(previous_total_avg, 4)
                             
                             q[0]["qty"] = rem_qty
                             q[0]["price"] = rem_price
@@ -366,6 +380,11 @@ class QueueLedger:
                             rem_qty = lot_qty - new_l1_qty
                             rem_invested = total_invested - new_l1_invested
                             rem_price = round(max(0.01, rem_invested / rem_qty), 4)
+
+                            # 🚨 NEW: 풍선 효과 캡핑 (단독 팽창 자가치유 시에도 적용)
+                            if lot_price > 0 and rem_price > lot_price:
+                                logging.info(f"🎈 [{ticker}] 풍선 효과 감지(자가치유): 상위층 단가(${rem_price:.2f})가 기존 평단가(${lot_price:.2f}) 초과 ➔ 캡핑 발동")
+                                rem_price = round(lot_price, 4)
 
                             q[0]["qty"] = rem_qty
                             q[0]["price"] = rem_price
@@ -420,7 +439,10 @@ class QueueLedger:
                 popped_total = 0
                 realized_cash = 0.0
                 
+                # 🚨 NEW: 매도 전 총 평단가 추출 (풍선 효과 캡핑용)
                 vrev_total_invested = sum(int(self._safe_float(item.get('qty'))) * self._safe_float(item.get('price')) for item in q)
+                previous_total_qty = sum(int(self._safe_float(item.get('qty'))) for item in q)
+                previous_total_avg = vrev_total_invested / previous_total_qty if previous_total_qty > 0 else 0.0
                 
                 while q and diff > 0:
                     last_lot = q[-1]
@@ -459,6 +481,11 @@ class QueueLedger:
                                 rem_invested = remaining_invested - new_l1_invested
                                 rem_price = round(max(0.01, rem_invested / rem_qty), 4)
                                 
+                                # 🚨 NEW: 풍선 효과 캡핑 (동기화 블록)
+                                if previous_total_avg > 0 and rem_price > previous_total_avg:
+                                    logging.info(f"🎈 [{ticker}] 풍선 효과 감지(동기화): 상위층 단가(${rem_price:.2f})가 이전 총 평단가(${previous_total_avg:.2f}) 초과 ➔ 캡핑 발동")
+                                    rem_price = round(previous_total_avg, 4)
+                                    
                                 q[0]["qty"] = rem_qty
                                 q[0]["price"] = rem_price
                                 q[0]["type"] = "AUTO_SPLIT_UPPER"
