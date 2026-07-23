@@ -10,6 +10,7 @@
 # 🚨 MODIFIED: [이벤트 루프 교착 방어] cancel_all_orders_safe 내부의 과도한 time.sleep(5)를 1.0초로 단축하여 Caller 타임아웃(10초) 폭발 원천 차단
 # 🚨 VERIFIED: [Case 36 절대 방어망 결속] MOC(시장가 매도) 주문 리젝 시 현재가 -5% 최유리 지정가(LIMIT) 덤핑 자동 폴백 100% 팩트 가동
 # 🚨 MODIFIED: [주문가능금액 역산 팩트 복구] KIS API가 특정 시간대에 예수금을 0.0으로 반환하는 고질적 결함을 우회하기 위해, 오리지널 수리적 역산(Reverse Calc) 공식(외화예수금+매도정산-매수정산)을 100% 롤백 완료.
+# 🚨 MODIFIED: [Case 36 절대 방어망 팩트 교정] 단순 -5% 하향 로직 소각 및 매수 1호가 팩트 스윕 요격망 결속 완료.
 # ==========================================================
 
 import time
@@ -292,15 +293,21 @@ class KisOrderEngine(MarketDataProvider):
                     time.sleep(1.0 * (2 ** attempt))
                     continue
                 
-                # 🚨 VERIFIED: [Case 36 절대 방어망] 리버스 모드 MOC(시장가 매도) 리젝 시 최유리 지정가(-5%) 덤핑 자동 팩트 요격
+                # 🚨 MODIFIED: [Case 36 절대 방어망 팩트 교정] MOC 덤핑 시 단순 -5% 하향 로직을 소각하고, 매수 1호가(Bid Price) 팩트 타격으로 교정
                 if order_type == "MOC":
-                    logging.warning(f"🚨 [Case 36 방어망] KIS MOC 주문 리젝 감지 ({safe_msg}). 현재가 -5% 덤핑 폴백 가동!")
-                    curr_p = self.get_current_price(ticker)
-                    if curr_p > 0:
-                        dump_price = self._ceil_2(curr_p * 0.95)
-                        logging.info(f"🔄 [{ticker}] MOC ➔ LIMIT(${dump_price:.2f}) 전환 요격 전송")
+                    logging.warning(f"🚨 [Case 36 방어망] KIS MOC 주문 리젝 감지 ({safe_msg}). 매수 1호가 덤핑 폴백 가동!")
+                    bid_p = self.get_bid_price(ticker)
+                    if bid_p > 0:
+                        dump_price = bid_p
+                        logging.info(f"🔄 [{ticker}] MOC ➔ LIMIT(${dump_price:.2f}, 매수 1호가) 전환 요격 전송")
                         # 🚨 [무한 루프 차단] LIMIT으로 재귀 호출하므로 2차 리젝 시 폴백이 중복 격발되지 않음
                         return self.send_order(ticker, side, qty, dump_price, order_type="LIMIT")
+                    else:
+                        curr_p = self.get_current_price(ticker)
+                        if curr_p > 0:
+                            dump_price = self._ceil_2(curr_p * 0.95)
+                            logging.info(f"🔄 [{ticker}] MOC ➔ LIMIT(${dump_price:.2f}, 통신지연 -5% 폴백) 전환 요격 전송")
+                            return self.send_order(ticker, side, qty, dump_price, order_type="LIMIT")
                 
                 return {'rt_cd': str(res.get('rt_cd') or '999'), 'msg1': safe_msg or '오류', 'odno': ''}
                 
@@ -473,3 +480,4 @@ class KisOrderEngine(MarketDataProvider):
         if curr_qty > 0: ledger_records.append({'date': 'INCOMPLETE', 'side': 'UNKNOWN', 'qty': curr_qty, 'price': self._safe_float(t_info.get('avg', 0.0)), 'is_incomplete': True})
         ledger_records.reverse()
         return ledger_records, int(self._safe_float(t_info.get('qty', 0))), self._safe_float(t_info.get('avg', 0.0))
+

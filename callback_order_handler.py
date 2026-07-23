@@ -14,7 +14,7 @@
 #  └ 3. [2-Tier 지층 자동 병합 사수] 타격 직후 QueueLedger의 add_lot/pop_lots를 원자적으로 호출하여 하위 2-Tier 병합 아키텍처를 무결하게 자동 연동.
 #  └ 4. [애프터장 족쇄 해제 및 REG Lock 결속] 애프터마켓(AFTER) 진입 후에도 수동 타격을 100% 상시 허용하고, 체결 즉시 당일 스케줄러를 무효화(REG Lock)하여 중복 매매를 원천 차단함.
 # 🚨 MODIFIED: [팻핑거 절대 방어망 결속] MANUAL_PORTION 실행 시 즉시 격발되는 맹독성 로직을 소각하고, 예상 체결 수량과 단가를 브리핑하는 [2단계 확인 메뉴(Confirmation Menu)]를 강제 주입하여 오작동 대참사를 원천 봉쇄.
-# 🚨 MODIFIED: [Syntax 붕괴 2차 수술] MANUAL_PORTION 실제 격발 단계에서 `try-except` 블록의 들여쓰기 계층 오류(Indentation Error)를 원자적으로 교정하여 런타임 즉사 에러(SyntaxError)를 시스템 전역에서 100% 영구 소각 완료.
+# 🚨 MODIFIED: [제1헌법 철저 준수] get_exact_prev_close 내부 동기 블로킹 time.sleep(0.06)을 영구 소각하고 GlobalThrottle.wait_api_sync()로 100% 위임하여 스레드 마비 원천 차단 완료.
 # ==========================================================
 import logging
 import datetime
@@ -26,6 +26,7 @@ import yfinance as yf
 import html
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+from global_throttle import GlobalThrottle # 🚨 NEW: 중앙 통제소 결속
 
 class CallbackOrderHandler:
     def __init__(self, config, broker, strategy, queue_ledger, sync_engine, view, tx_lock):
@@ -200,8 +201,8 @@ class CallbackOrderHandler:
             if status_code in ["AFTER", "CLOSE", "PRE"]:
                 try:
                     def get_exact_prev_close(ticker_name):
-                        import time
-                        time.sleep(0.06)
+                        # 🚨 MODIFIED: [제1헌법 준수] 동기적 time.sleep 맹독성 블로킹 소각 및 중앙 통제소 락온
+                        GlobalThrottle.wait_api_sync()
                         df = yf.Ticker(ticker_name).history(period="5d", interval="1d", timeout=5)
                         if not df.empty and 'Close' in df.columns:
                             tz_est = ZoneInfo('America/New_York')
