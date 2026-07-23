@@ -8,6 +8,7 @@
 # 🚨 MODIFIED: [전역 락(tx_lock) 데드락 붕괴 수술 (Case 50 헌법 사수)] `execute_vwap_trade` 함수 전체를 감싸 이벤트 루프를 통째로 마비시키던 `async with tx_lock:` 족쇄를 전면 소각. 오직 주문/취소(`send_order`, `cancel_order`) 및 잔고 스캔 임계 구역(Critical Section)에만 국소적으로 락을 래핑하여 병렬 처리(Parallel Execution) 성능 극대화 완료.
 # 🚨 MODIFIED: [자본 잠김 마비(Capital Lock-up Paralysis) 궁극 수술] 자본 잠김으로 인해 매수 플랜이 애프터장으로 이관(pending_aftermarket=True)되었을 때, VWAP 슬라이싱 엔진 전체를 스킵(continue)해버리던 맹독성 버그를 원천 소각. 하방 Gap Hijack만 안전하게 차단하고 매도(SELL) 슬라이싱은 100% 정상 가동되도록 팩트 디커플링 완료.
 # 🚨 MODIFIED: [정량제(Fixed-Quantity) 팩트 스윕 락온] Gap Hijack 발동 시 잔여 예산을 억지로 100% 소진하던 맹독성 풀-스윕 로직을 영구 소각하고, 스냅샷에 락온된 '당일 잔여 목표 수량(Remaining Target Qty)'만을 100% 스윕 타격하여 하락장 시드 보존력(Runway)을 극대화함.
+# 🚨 NEW: [핑퐁 패러독스(Ping-Pong Paradox) 진공 압축 수술] 매 1분 슬라이싱 틱마다 암살자 덫을 취소하고 재장전하던 O(N) 맹독성 핑퐁 로직을 전면 소각. 첫 타격 시 단 1회만 취소 후 `suppress_sell=True` 팩트 락온으로 억제하여 KIS 서버 I/O 낭비 및 호가 순위 강등을 원천 봉쇄.
 # ==========================================================
 import logging
 import asyncio
@@ -22,9 +23,8 @@ import pandas as pd
 
 from scheduler_core import get_budget_allocation
 from state_io_manager import _read_json_safe_sync, _atomic_write_json_sync
-from global_throttle import GlobalThrottle # 🚨 NEW: 전역 통제소 결속
+from global_throttle import GlobalThrottle
 
-# 🚨 NEW: [Thundering Herd 방어용 달력 캐시]
 _MCAL_SCHEDULE_CACHE = {}
 
 def _safe_float(val):
@@ -63,7 +63,6 @@ async def _safe_send(context, chat_id, text, timeout=15.0, **kwargs):
         return None
 
 def _fetch_market_schedule_sync(now_est):
-    """ 🚨 MODIFIED: [제2헌법 준수 & 병목 수술] 달력 API(mcal) 전역 캐싱 락온 """
     date_str = now_est.strftime('%Y-%m-%d')
     if date_str in _MCAL_SCHEDULE_CACHE:
         return _MCAL_SCHEDULE_CACHE[date_str]
@@ -73,7 +72,7 @@ def _fetch_market_schedule_sync(now_est):
     nyse = mcal.get_calendar('NYSE')
     sched = nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
     
-    _MCAL_SCHEDULE_CACHE[date_str] = sched # 🚨 팩트 캐싱
+    _MCAL_SCHEDULE_CACHE[date_str] = sched
     return sched
 
 async def _get_market_close_time(now_est):
@@ -100,7 +99,6 @@ async def _get_market_close_time(now_est):
             return None
 
 def _read_json_ignore_date_sync(filepath):
-    """ 🚨 MODIFIED: [자전거래 방어막 기억 상실 수술] 오버나이트 시 날짜 제약 없이 상태를 무조건 가져오는 헬퍼 """
     with GlobalThrottle.get_file_lock(filepath):
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
@@ -109,15 +107,12 @@ def _read_json_ignore_date_sync(filepath):
             return {}
 
 async def _read_state_safe(filepath, date_str, default_val):
-    # 🚨 MODIFIED: [데드락 원천 소각] 메인 스레드 락핑거 제거
     return await _retry_api(_read_json_safe_sync, filepath, date_str, default=default_val)
 
 async def _write_state_safe(filepath, state_dict):
-    # 🚨 MODIFIED: [데드락 원천 소각] 메인 스레드 락핑거 제거
     return await _retry_api(_atomic_write_json_sync, filepath, state_dict)
 
 async def execute_vwap_init(tx_lock, cfg, broker, chat_id, context, vwap_cache):
-    # 🚨 MODIFIED: [전역 락(tx_lock) 데드락 붕괴 수술] 불필요한 락 소각
     active_tickers = await _retry_api(cfg.get_active_tickers, default=[])
     if isinstance(active_tickers, str): active_tickers = [active_tickers]
     elif not isinstance(active_tickers, list): active_tickers = []
@@ -152,7 +147,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
     kst_zone = ZoneInfo('Asia/Seoul')
     now_kst = datetime.datetime.now(kst_zone)
 
-    # 🚨 MODIFIED: [전역 락(tx_lock) 데드락 붕괴 수술] 함수 전체를 감싸던 족쇄 영구 소각 완료
     async with tx_lock:
         res = await _retry_api(broker.get_account_balance, timeout=15.0)
         
@@ -193,7 +187,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
             if version == "V_REV" or (version == "V14" and is_manual_vwap):
                 slice_file = f"data/vrev_slice_state_{t}.json"
                 
-                # 🚨 MODIFIED: [O(N) API 중복 호출 맹점 궁극 수술] 덫 루프 내부에서 병목을 유발하던 호가 조회를 단 1회로 전진 배치 진공 압축 락온
                 t_curr_p = _safe_float(await _retry_api(broker.get_current_price, t))
                 t_ask_p = _safe_float(await _retry_api(broker.get_ask_price, t))
                 t_bid_p = _safe_float(await _retry_api(broker.get_bid_price, t))
@@ -211,8 +204,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
 
                 slice_state_disk = await _read_state_safe(slice_file, today_hyphen, {})
                 
-                # 🚨 NEW: [사일런트 바이패스 텔레그램 타전 방어망 격상]
-                # 병목 등으로 인해 지시서 갱신이 누락되어 타격이 100% 바이패스되는 대참사 발생 시, 침묵하지 않고 수동 지휘를 요청함.
                 if slice_state_disk.get('date') != today_hyphen:
                     if not vwap_cache.get(f"REV_{t}_bypass_warned"):
                         msg = f"🚨 <b>[{html.escape(str(t))}] VWAP 슬라이싱 코어 바이패스(Bypass) 감지!</b>\n▫️ 당일({today_hyphen}) 생성된 지시서(slice_state)를 찾을 수 없습니다.\n▫️ 15:26 스케줄러 병목으로 본진 플랜 연산이 누락된 것으로 추정됩니다.\n▫️ <b>수동 타격 권고:</b> 관제탑( /avwap )에서 <b>[1회분 수동매수/매도]</b> 인라인 버튼을 통해 지연된 타격을 직접 지휘하십시오."
@@ -255,9 +246,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                             gap_thresh = _safe_float(await _retry_api(getattr(cfg, 'get_vrev_gap_threshold', lambda x: -2.0), t, default=-2.0))
                             if gap_thresh == -0.67: gap_thresh = -2.0
                             
-                            # ----------------------------------------------------
-                            # 🚨 [하방 매수 하이재킹 격발망]
-                            # ----------------------------------------------------
                             if gap_pct <= gap_thresh:
                                 slice_state_check = slice_state_disk
                                 has_buy_plan = any(isinstance(o, dict) and str(o.get('side')) == 'BUY' for o in slice_state_check.get('orders', []))
@@ -265,8 +253,8 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                 sell_orders = [o for o in slice_state_check.get('orders', []) if str(o.get('side')) == 'SELL']
                                 is_sell_condition = False
                                 for o in sell_orders:
-                                    tp = _safe_float(o.get('target_price', o.get('price', 0.0))) # 🚨 RESTORED: 스키마 팩트 추출 듀얼 폴백 적용
-                                    if tp > 0.0 and t_curr_p >= tp:
+                                    tp_val = _safe_float(o.get('target_price', o.get('price', 0.0)))
+                                    if tp_val > 0.0 and t_curr_p >= tp_val:
                                         is_sell_condition = True
                                         break
                                         
@@ -368,7 +356,7 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                                 final_slice_state['date'] = today_hyphen
                                                 await _write_state_safe(slice_file, final_slice_state)
                                             except Exception as e:
-                                                logging.error(f"🚨 [{t}] 하이재킹 체결 후 로컬 지시서 수량(filled_qty) 만기 처리 중 I/O 에러: {e}")
+                                                logging.error(f"🚨 [{t}] 하이재킹 체결 후 로컬 지시서 수량 만기 처리 에러: {e}")
 
                                             msg = f"⚡ <b>[{html.escape(str(t))}] 🤖 하방 모멘텀 자율주행 (Gap Hijack) 스윕 오버라이드 격발!</b>\n"
                                             msg += f"▫️ 당일 누적 VWAP 이탈률(<b>{gap_pct:+.2f}%</b>)이 임계치(<b>{gap_thresh}%</b>)를 하향 돌파했습니다.\n"
@@ -444,7 +432,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                         
                         total_qty = int(_safe_float(o.get('total_qty')))
                         filled_qty = int(_safe_float(o.get('filled_qty')))
-                        # 🚨 RESTORED: [타점 요격망 수복] target_price와 price 모두 스캔하여 100% 맵핑 보장
                         target_price = _safe_float(o.get('target_price', o.get('price', 0.0)))
                         side = str(o.get('side', 'BUY'))
                         last_odno = str(o.get('last_odno', ''))
@@ -544,8 +531,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                         if exec_price <= 0.0:
                             exec_price = t_curr_p
 
-                        # 🚨 RESTORED: [무지성 스윕(Wash Trade) 방어막 팩트 재가동]
-                        # 타점이 정상적으로 추출되었으므로, 현재가가 이를 만족시킬 때만 격발을 허용함
                         if target_price > 0.0:
                             is_target_hit = False
                             if side == "BUY" and exec_price <= target_price:
@@ -576,47 +561,28 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                             res = None
                             if qty_to_send > 0:
                                 avwap_state_file = f"data/avwap_trade_state_{t}.json"
-                                need_avwap_resume = False
-                                is_overnight = await _retry_api(getattr(cfg, 'get_avwap_overnight_mode', lambda x: False), t, default=False)
-                                avwap_qty_to_restore = 0
-                                avwap_price_to_restore = 0.0
                                 
                                 if side == "BUY":
                                     avwap_state = await _retry_api(_read_json_ignore_date_sync, avwap_state_file)
                                     if avwap_state and avwap_state.get('qty', 0) > 0 and avwap_state.get('sell_odno'):
                                         avwap_sell_odno = avwap_state.get('sell_odno')
-                                        logging.info(f"🛡️ [{t}] 자전거래 방어: 암살자 덫({avwap_sell_odno}) 임시 취소 집행")
+                                        # 🚨 MODIFIED: [핑퐁 패러독스 궁극 수술] 즉각 재장전(need_avwap_resume) 맹독성 로직 영구 소각 및 일괄 억제 락온
+                                        logging.info(f"🛡️ [{t}] 자전거래 방어: 암살자 덫({avwap_sell_odno}) 임시 취소 집행 및 핑퐁 패러독스 차단")
                                         async with tx_lock:
                                             c_res = await _retry_api(broker.cancel_order, t, avwap_sell_odno, timeout=10.0)
                                         
                                         if isinstance(c_res, dict) and str(c_res.get('rt_cd', '')) == '0':
                                             avwap_state['sell_odno'] = ""
-                                            if is_overnight:
-                                                avwap_state['suppress_sell'] = True
-                                                if chat_id and not vwap_cache.get(f"REV_{t}_wash_trade_msg"):
-                                                    vwap_cache[f"REV_{t}_wash_trade_msg"] = True
-                                                    await _safe_send(context, chat_id, f"🛡️ <b>[{html.escape(t)} 자전거래 방어 가동]</b>\n▫️ 암살자 오버나이트 모드(ON) 확인.\n▫️ 본진 슬라이싱 타격 중 자전거래 차단을 위해 암살자 매도 덫을 임시 수거합니다. (애프터장 재장전 예정)", parse_mode='HTML')
+                                            avwap_state['suppress_sell'] = True
+                                            if chat_id and not vwap_cache.get(f"REV_{t}_wash_trade_msg"):
+                                                vwap_cache[f"REV_{t}_wash_trade_msg"] = True
+                                                await _safe_send(context, chat_id, f"🛡️ <b>[{html.escape(t)} 자전거래 방어 및 핑퐁 패러독스 차단 가동]</b>\n▫️ 본진 슬라이싱 타격 중 자전거래 및 무한 재장전 병목을 막기 위해 암살자 매도 덫을 일괄 수거(suppress_sell=True)합니다. (애프터장 재장전 예정)", parse_mode='HTML')
                                             
                                             await _write_state_safe(avwap_state_file, avwap_state)
                                             await asyncio.sleep(1.0)
                                             
-                                            if not is_overnight:
-                                                need_avwap_resume = True
-                                                avwap_qty_to_restore = int(_safe_float(avwap_state.get('qty', 0)))
-                                                avwap_avg_price = _safe_float(avwap_state.get('avg_price', 0.0))
-                                                avwap_price_to_restore = math.ceil(avwap_avg_price * 1.01 * 100) / 100.0
-
                                 async with tx_lock:
                                     res = await _retry_api(broker.send_order, t, side, qty_to_send, exec_price, "LIMIT")
-
-                                if need_avwap_resume:
-                                    logging.info(f"🛡️ [{t}] 자전거래 방어 해제: 암살자 덫 복구(재장전) 집행")
-                                    async with tx_lock:
-                                        s_res = await _retry_api(broker.send_order, t, "SELL", avwap_qty_to_restore, avwap_price_to_restore, "LIMIT", timeout=15.0)
-                                    if isinstance(s_res, dict) and str(s_res.get('rt_cd', '')) == '0':
-                                        avwap_state_fresh = await _retry_api(_read_json_ignore_date_sync, avwap_state_file)
-                                        avwap_state_fresh['sell_odno'] = str(s_res.get('odno', ''))
-                                        await _write_state_safe(avwap_state_file, avwap_state_fresh)
                             else:
                                 logging.warning(f"🚨 [{t}] VWAP 슬라이싱 매도 스킵: 큐/잔고 0주 캡핑 (Ghost-Dumping 방어)")
                                 res = {'rt_cd': '999', 'msg1': '보유 수량 0주 캡핑으로 매도 스킵'}
