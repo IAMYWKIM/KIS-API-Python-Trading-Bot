@@ -1,22 +1,19 @@
 # ==========================================================
 # FILE: vwap_core_engine.py
 # ==========================================================
+# 🚨 MODIFIED: [자전거래 방어막 기억 상실(Wash Trade Amnesia) 궁극 수술] 오버나이트 모드로 이관된 암살자의 매도 덫이 존재함에도 불구하고, 상태 파일 읽기(`_read_state_safe`)의 엄격한 당일 날짜(`date_str`) 필터링으로 인해 방어막이 암살자를 인식하지 못해(빈 딕셔너리 반환) 본진 매수 시 자전거래 충돌(Reject)이 발생하던 대참사를 원천 봉쇄. `_read_json_ignore_date_sync` 헬퍼를 신규 주입하여 날짜와 무관하게 미체결 덫이 존재하면 100% 무조건 회수하도록 팩트 락온.
 # 🚨 MODIFIED: [동기/비동기 스레드 데드락(Deadlock) 궁극 수술] `_read_state_safe` 및 `_write_state_safe` 내부에서 메인 스레드가 `GlobalThrottle.get_file_lock`을 쥔 채 백그라운드 스레드(`_retry_api`)를 호출하고, 백그라운드 스레드 역시 동일한 락을 요구하여 발생하던 '55초 타임아웃 연쇄 폭발'의 주범(교착 상태)을 완벽히 도려냈습니다. I/O 모듈 내부에 이미 락이 결속되어 있으므로 래퍼(Wrapper) 층의 락을 전면 소각했습니다.
 # 🚨 MODIFIED: [O(N) API 중복 호출 맹점 궁극 수술] 덫(주문) 루프 내부에 기생하며 TimeoutError를 유발하던 `get_ask_price` 및 `get_bid_price` 중복 호출을 영구 소각. 호가 스캔을 루프 바깥(최상단)으로 전진 배치하여 종목당 단 1회의 호출만으로 모든 덫 타점을 연산하도록 O(1) 진공 압축 팩트 락온 완료.
 # 🚨 MODIFIED: [전역 락(tx_lock) 데드락 붕괴 수술 (Case 50 헌법 사수)] `execute_vwap_trade` 함수 전체를 감싸 이벤트 루프를 통째로 마비시키던 `async with tx_lock:` 족쇄를 전면 소각. 오직 주문/취소(`send_order`, `cancel_order`) 및 잔고 스캔 임계 구역(Critical Section)에만 국소적으로 락을 래핑하여 병렬 처리(Parallel Execution) 성능 극대화 완료.
 # 🚨 MODIFIED: [자본 잠김 마비(Capital Lock-up Paralysis) 궁극 수술] 자본 잠김으로 인해 매수 플랜이 애프터장으로 이관(pending_aftermarket=True)되었을 때, VWAP 슬라이싱 엔진 전체를 스킵(continue)해버리던 맹독성 버그를 원천 소각. 하방 Gap Hijack만 안전하게 차단하고 매도(SELL) 슬라이싱은 100% 정상 가동되도록 팩트 디커플링 완료.
-# 🚨 MODIFIED: [KST 롤오버 체결 증발 궁극 수술] 15:27 EST 타격 시 한국 시간(KST)은 이미 다음 날 새벽이 되어 당일 체결 내역(get_execution_history)을 놓치는 패러독스를 방어하기 위해, 스캔 범위를 무조건 D-2 ~ D-0으로 확장하여 이중 타격(Double Firing) 대참사 원천 봉쇄.
 # 🚨 MODIFIED: [정량제(Fixed-Quantity) 팩트 스윕 락온] Gap Hijack 발동 시 잔여 예산을 억지로 100% 소진하던 맹독성 풀-스윕 로직을 영구 소각하고, 스냅샷에 락온된 '당일 잔여 목표 수량(Remaining Target Qty)'만을 100% 스윕 타격하여 하락장 시드 보존력(Runway)을 극대화함.
-# 🚨 MODIFIED: [상방 하이재킹 수익 캡핑(Profit Capping) 뇌관 100% 영구 소각] V-REV 전략의 거대 상승분(추세) 이익을 강제로 잘라먹던 '상방 하이재킹(+2.0% 도달 시 매도 덤핑)' 로직을 시스템 전역에서 영구 폐기하여 수익 극대화 팩트 수복 완료.
-# 🚨 MODIFIED: [런타임 즉사 붕괴 수술] 클래스가 아닌 모듈 레벨 함수에서 self._safe_float를 호출하여 발생하던 NameError를 _safe_float로 100% 팩트 교정 완료 (자동매매 마비 원인).
-# 🚨 NEW: [Thundering Herd 영구 소각] `_fetch_market_schedule_sync` 내부에 전역 인메모리 캐싱(`_MCAL_SCHEDULE_CACHE`)을 주입하여 스케줄러 병목 붕괴를 원천 차단.
-# 🚨 NEW: [사일런트 바이패스 타전 방어망 격상] 병목 등으로 인해 15:26 지시서(`vrev_slice_state`) 갱신이 누락되어 코어 엔진이 30분간 바이패스(Bypass)되는 대참사 발생 시, 즉시 텔레그램으로 경고 및 수동 타격을 권고하도록 팩트 방어망 결속 완료.
 # ==========================================================
 import logging
 import asyncio
 import math
 import time
 import datetime
+import json
 from zoneinfo import ZoneInfo
 import html
 import functools
@@ -101,12 +98,21 @@ async def _get_market_close_time(now_est):
         else:
             return None
 
+def _read_json_ignore_date_sync(filepath):
+    """ 🚨 MODIFIED: [자전거래 방어막 기억 상실 수술] 오버나이트 시 날짜 제약 없이 상태를 무조건 가져오는 헬퍼 """
+    with GlobalThrottle.get_file_lock(filepath):
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
 async def _read_state_safe(filepath, date_str, default_val):
-    # 🚨 MODIFIED: [데드락 원천 소각] 백그라운드 스레드의 _read_json_safe_sync가 이미 File Mutex를 획득하므로 메인 스레드 락핑거 제거
+    # 🚨 MODIFIED: [데드락 원천 소각] 메인 스레드 락핑거 제거
     return await _retry_api(_read_json_safe_sync, filepath, date_str, default=default_val)
 
 async def _write_state_safe(filepath, state_dict):
-    # 🚨 MODIFIED: [데드락 원천 소각] 백그라운드 스레드의 _atomic_write_json_sync가 이미 File Mutex를 획득하므로 메인 스레드 락핑거 제거
+    # 🚨 MODIFIED: [데드락 원천 소각] 메인 스레드 락핑거 제거
     return await _retry_api(_atomic_write_json_sync, filepath, state_dict)
 
 async def execute_vwap_init(tx_lock, cfg, broker, chat_id, context, vwap_cache):
@@ -563,7 +569,8 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                 avwap_price_to_restore = 0.0
                                 
                                 if side == "BUY":
-                                    avwap_state = await _read_state_safe(avwap_state_file, today_hyphen, {})
+                                    # 🚨 MODIFIED: [자전거래 방어막 기억상실 수술] 오버나이트 덫을 100% 인식하도록 날짜 무시 헬퍼 주입
+                                    avwap_state = await _retry_api(_read_json_ignore_date_sync, avwap_state_file)
                                     if avwap_state and avwap_state.get('qty', 0) > 0 and avwap_state.get('sell_odno'):
                                         avwap_sell_odno = avwap_state.get('sell_odno')
                                         logging.info(f"🛡️ [{t}] 자전거래 방어: 암살자 덫({avwap_sell_odno}) 임시 취소 집행")
@@ -595,7 +602,8 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                     async with tx_lock:
                                         s_res = await _retry_api(broker.send_order, t, "SELL", avwap_qty_to_restore, avwap_price_to_restore, "LIMIT", timeout=15.0)
                                     if isinstance(s_res, dict) and str(s_res.get('rt_cd', '')) == '0':
-                                        avwap_state_fresh = await _read_state_safe(avwap_state_file, today_hyphen, {})
+                                        # 🚨 MODIFIED: [자전거래 방어막] 복구 시에도 날짜 무시 헬퍼 주입
+                                        avwap_state_fresh = await _retry_api(_read_json_ignore_date_sync, avwap_state_file)
                                         avwap_state_fresh['sell_odno'] = str(s_res.get('odno', ''))
                                         await _write_state_safe(avwap_state_file, avwap_state_fresh)
                             else:
