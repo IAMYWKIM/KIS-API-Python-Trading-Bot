@@ -1,7 +1,8 @@
 # ==========================================================
 # FILE: vwap_core_engine.py
 # ==========================================================
-# 🚨 MODIFIED: [O(N) API 중복 호출 맹점 궁극 수술] 덫(주문) 루프 내부에 기생하며 55초 TimeoutError 연쇄 폭발을 유발하던 `get_ask_price` 및 `get_bid_price` 중복 호출을 영구 소각. 호가 스캔을 루프 바깥(최상단)으로 전진 배치하여 종목당 단 1회의 호출만으로 모든 덫 타점을 연산하도록 O(1) 진공 압축 팩트 락온 완료.
+# 🚨 MODIFIED: [동기/비동기 스레드 데드락(Deadlock) 궁극 수술] `_read_state_safe` 및 `_write_state_safe` 내부에서 메인 스레드가 `GlobalThrottle.get_file_lock`을 쥔 채 백그라운드 스레드(`_retry_api`)를 호출하고, 백그라운드 스레드 역시 동일한 락을 요구하여 발생하던 '55초 타임아웃 연쇄 폭발'의 주범(교착 상태)을 완벽히 도려냈습니다. I/O 모듈 내부에 이미 락이 결속되어 있으므로 래퍼(Wrapper) 층의 락을 전면 소각했습니다.
+# 🚨 MODIFIED: [O(N) API 중복 호출 맹점 궁극 수술] 덫(주문) 루프 내부에 기생하며 TimeoutError를 유발하던 `get_ask_price` 및 `get_bid_price` 중복 호출을 영구 소각. 호가 스캔을 루프 바깥(최상단)으로 전진 배치하여 종목당 단 1회의 호출만으로 모든 덫 타점을 연산하도록 O(1) 진공 압축 팩트 락온 완료.
 # 🚨 MODIFIED: [전역 락(tx_lock) 데드락 붕괴 수술 (Case 50 헌법 사수)] `execute_vwap_trade` 함수 전체를 감싸 이벤트 루프를 통째로 마비시키던 `async with tx_lock:` 족쇄를 전면 소각. 오직 주문/취소(`send_order`, `cancel_order`) 및 잔고 스캔 임계 구역(Critical Section)에만 국소적으로 락을 래핑하여 병렬 처리(Parallel Execution) 성능 극대화 완료.
 # 🚨 MODIFIED: [자본 잠김 마비(Capital Lock-up Paralysis) 궁극 수술] 자본 잠김으로 인해 매수 플랜이 애프터장으로 이관(pending_aftermarket=True)되었을 때, VWAP 슬라이싱 엔진 전체를 스킵(continue)해버리던 맹독성 버그를 원천 소각. 하방 Gap Hijack만 안전하게 차단하고 매도(SELL) 슬라이싱은 100% 정상 가동되도록 팩트 디커플링 완료.
 # 🚨 MODIFIED: [KST 롤오버 체결 증발 궁극 수술] 15:27 EST 타격 시 한국 시간(KST)은 이미 다음 날 새벽이 되어 당일 체결 내역(get_execution_history)을 놓치는 패러독스를 방어하기 위해, 스캔 범위를 무조건 D-2 ~ D-0으로 확장하여 이중 타격(Double Firing) 대참사 원천 봉쇄.
@@ -101,12 +102,12 @@ async def _get_market_close_time(now_est):
             return None
 
 async def _read_state_safe(filepath, date_str, default_val):
-    with GlobalThrottle.get_file_lock(filepath):
-        return await _retry_api(_read_json_safe_sync, filepath, date_str, default=default_val)
+    # 🚨 MODIFIED: [데드락 원천 소각] 백그라운드 스레드의 _read_json_safe_sync가 이미 File Mutex를 획득하므로 메인 스레드 락핑거 제거
+    return await _retry_api(_read_json_safe_sync, filepath, date_str, default=default_val)
 
 async def _write_state_safe(filepath, state_dict):
-    with GlobalThrottle.get_file_lock(filepath):
-        return await _retry_api(_atomic_write_json_sync, filepath, state_dict)
+    # 🚨 MODIFIED: [데드락 원천 소각] 백그라운드 스레드의 _atomic_write_json_sync가 이미 File Mutex를 획득하므로 메인 스레드 락핑거 제거
+    return await _retry_api(_atomic_write_json_sync, filepath, state_dict)
 
 async def execute_vwap_init(tx_lock, cfg, broker, chat_id, context, vwap_cache):
     # 🚨 MODIFIED: [전역 락(tx_lock) 데드락 붕괴 수술] 불필요한 락 소각
