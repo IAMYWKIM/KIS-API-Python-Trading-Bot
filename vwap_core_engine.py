@@ -1,6 +1,7 @@
 # ==========================================================
 # FILE: vwap_core_engine.py
 # ==========================================================
+# 🚨 RESTORED: [무지성 스윕(Wash Trade) 및 타점 상실 패러독스 궁극 방어] O(N) 최적화 수술 중 유실되었던 `is_target_hit` (타점 요격망 검증 로직)을 100% 팩트 수복 완료. 타점 검증 누락으로 인해, 가격(Buy Low/Sell High)을 무시하고 시간만 되면 매수/매도를 동시에 무지성 격발하여 자전거래 리젝과 손실 덤핑을 유발하던 치명적 대참사를 완벽히 도려냈습니다.
 # 🚨 MODIFIED: [자전거래 방어막 기억 상실(Wash Trade Amnesia) 궁극 수술] 오버나이트 모드로 이관된 암살자의 매도 덫이 존재함에도 불구하고, 상태 파일 읽기(`_read_state_safe`)의 엄격한 당일 날짜(`date_str`) 필터링으로 인해 방어막이 암살자를 인식하지 못해(빈 딕셔너리 반환) 본진 매수 시 자전거래 충돌(Reject)이 발생하던 대참사를 원천 봉쇄. `_read_json_ignore_date_sync` 헬퍼를 신규 주입하여 날짜와 무관하게 미체결 덫이 존재하면 100% 무조건 회수하도록 팩트 락온.
 # 🚨 MODIFIED: [동기/비동기 스레드 데드락(Deadlock) 궁극 수술] `_read_state_safe` 및 `_write_state_safe` 내부에서 메인 스레드가 `GlobalThrottle.get_file_lock`을 쥔 채 백그라운드 스레드(`_retry_api`)를 호출하고, 백그라운드 스레드 역시 동일한 락을 요구하여 발생하던 '55초 타임아웃 연쇄 폭발'의 주범(교착 상태)을 완벽히 도려냈습니다. I/O 모듈 내부에 이미 락이 결속되어 있으므로 래퍼(Wrapper) 층의 락을 전면 소각했습니다.
 # 🚨 MODIFIED: [O(N) API 중복 호출 맹점 궁극 수술] 덫(주문) 루프 내부에 기생하며 TimeoutError를 유발하던 `get_ask_price` 및 `get_bid_price` 중복 호출을 영구 소각. 호가 스캔을 루프 바깥(최상단)으로 전진 배치하여 종목당 단 1회의 호출만으로 모든 덫 타점을 연산하도록 O(1) 진공 압축 팩트 락온 완료.
@@ -264,7 +265,7 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                 sell_orders = [o for o in slice_state_check.get('orders', []) if str(o.get('side')) == 'SELL']
                                 is_sell_condition = False
                                 for o in sell_orders:
-                                    tp = _safe_float(o.get('target_price', 0.0))
+                                    tp = _safe_float(o.get('price', 0.0))
                                     if tp > 0.0 and t_curr_p >= tp:
                                         is_sell_condition = True
                                         break
@@ -443,7 +444,7 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                         
                         total_qty = int(_safe_float(o.get('total_qty')))
                         filled_qty = int(_safe_float(o.get('filled_qty')))
-                        target_price = _safe_float(o.get('target_price'))
+                        target_price = _safe_float(o.get('price')) # 🚨 MODIFIED: [타점 요격 팩트 수복] target_price 오류 파기 및 'price' 키값으로 100% 맵핑
                         side = str(o.get('side', 'BUY'))
                         last_odno = str(o.get('last_odno', ''))
                         
@@ -533,7 +534,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
 
                         target_cum_qty = round(total_qty * cum_weight)
                         
-                        # 🚨 MODIFIED: [O(N) 붕괴 수술] 기 캐싱된 호가 데이터 팩트 주입
                         exec_price = 0.0
                         if side == "BUY":
                             exec_price = t_ask_p
@@ -542,6 +542,18 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                 
                         if exec_price <= 0.0:
                             exec_price = t_curr_p
+
+                        # 🚨 RESTORED: [무지성 스윕(Wash Trade) 및 타점 상실 패러독스 궁극 방어]
+                        # 타점 확인 로직 누락으로 인해 시간만 되면 매수/매도를 동시 발사하던 맹독성 버그를 원천 차단
+                        if target_price > 0.0:
+                            is_target_hit = False
+                            if side == "BUY" and exec_price <= target_price:
+                                is_target_hit = True
+                            elif side == "SELL" and exec_price >= target_price:
+                                is_target_hit = True
+
+                            if not is_target_hit:
+                                continue 
                                 
                         qty_to_send = target_cum_qty - filled_qty
                                 
@@ -569,7 +581,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                 avwap_price_to_restore = 0.0
                                 
                                 if side == "BUY":
-                                    # 🚨 MODIFIED: [자전거래 방어막 기억상실 수술] 오버나이트 덫을 100% 인식하도록 날짜 무시 헬퍼 주입
                                     avwap_state = await _retry_api(_read_json_ignore_date_sync, avwap_state_file)
                                     if avwap_state and avwap_state.get('qty', 0) > 0 and avwap_state.get('sell_odno'):
                                         avwap_sell_odno = avwap_state.get('sell_odno')
@@ -602,7 +613,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                     async with tx_lock:
                                         s_res = await _retry_api(broker.send_order, t, "SELL", avwap_qty_to_restore, avwap_price_to_restore, "LIMIT", timeout=15.0)
                                     if isinstance(s_res, dict) and str(s_res.get('rt_cd', '')) == '0':
-                                        # 🚨 MODIFIED: [자전거래 방어막] 복구 시에도 날짜 무시 헬퍼 주입
                                         avwap_state_fresh = await _retry_api(_read_json_ignore_date_sync, avwap_state_file)
                                         avwap_state_fresh['sell_odno'] = str(s_res.get('odno', ''))
                                         await _write_state_safe(avwap_state_file, avwap_state_fresh)
