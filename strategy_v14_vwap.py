@@ -2,6 +2,7 @@
 # FILE: strategy_v14_vwap.py
 # ==========================================================
 # 🚨 MODIFIED: [Lost Update 궁극 방어] 스냅샷 및 상태 캐시 읽기/쓰기 시 GlobalThrottle.get_file_lock()을 전면 결속하여 데이터 훼손(Corruption) 원천 봉쇄.
+# 🚨 NEW: [0주 스냅샷 오염 팩트 자가치유(Self-Healing) 결속] 통신 지연으로 YF 종가가 훼손되어 스냅샷 타점이 0.0 등으로 오염될 경우, 로드 시 공식 종가(prev_c) 기반으로 타점($)과 수량(Q)을 원자적으로 재계산하여 덮어쓰는(Self-Healing) 방어망 100% 락온 (Case 46 방어 강화).
 # ==========================================================
 import math
 import logging
@@ -10,7 +11,7 @@ import json
 import tempfile
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from global_throttle import GlobalThrottle # 🚨 NEW: 중앙 통제소 결속
+from global_throttle import GlobalThrottle
 
 class V14VwapStrategy:
     def __init__(self, config):
@@ -57,7 +58,6 @@ class V14VwapStrategy:
         state_file = self._get_state_file(ticker)
         
         is_disk_valid = False
-        # 🚨 MODIFIED: File Mutex 결속
         with GlobalThrottle.get_file_lock(state_file):
             try:
                 with open(state_file, 'r', encoding='utf-8') as f:
@@ -99,7 +99,6 @@ class V14VwapStrategy:
             }
         }
         
-        # 🚨 MODIFIED: File Mutex 결속
         with GlobalThrottle.get_file_lock(state_file):
             fd = None
             temp_path = None
@@ -133,7 +132,6 @@ class V14VwapStrategy:
             "plan": plan_data
         }
         
-        # 🚨 MODIFIED: File Mutex 결속
         with GlobalThrottle.get_file_lock(snap_file):
             fd = None
             temp_path = None
@@ -160,7 +158,6 @@ class V14VwapStrategy:
 
     def load_daily_snapshot(self, ticker):
         snap_file = self._get_snapshot_file(ticker)
-        # 🚨 MODIFIED: File Mutex 결속
         with GlobalThrottle.get_file_lock(snap_file):
             try:
                 with open(snap_file, 'r', encoding='utf-8') as f:
@@ -263,7 +260,42 @@ class V14VwapStrategy:
         if not is_snapshot_mode:
             cached_plan = self.load_daily_snapshot(ticker)
             if cached_plan:
-                 return cached_plan
+                # 🚨 NEW: [Case 46 자가치유 방어망] 0주 스냅샷 오염 감지 시 YF 공식 종가 기반 타점 팩트 롤오버
+                is_zero_val = cached_plan.get("is_zero_start")
+                is_zero_snap = bool(is_zero_val) if is_zero_val is not None else (int(self._safe_float(cached_plan.get("initial_qty", -1))) == 0)
+                
+                if is_zero_snap and prev_close > 0.0:
+                    target_p1 = max(0.01, round(self._ceil(prev_close * 1.15) - 0.01, 2))
+                    is_polluted = False
+                    
+                    for o in cached_plan.get("core_orders", []):
+                        if str(o.get("side")) == "BUY":
+                            p = self._safe_float(o.get("price"))
+                            if p > 0 and abs(p - target_p1) / target_p1 >= 0.01:
+                                is_polluted = True
+                                break
+                                
+                    if is_polluted:
+                        logging.warning(f"🚨 [{ticker}] 0주 스냅샷 오염 감지! YF 무결성 종가(${prev_close}) 기반으로 V14_VWAP 타점을 즉각 자가 치유(Self-Healing)합니다.")
+                        one_portion_amt = self._safe_float(cached_plan.get("one_portion", 0.0))
+                        
+                        half_budget = one_portion_amt * 0.5
+                        new_q1 = int(math.floor(half_budget / target_p1)) if target_p1 > 0 else 0
+                        new_q2 = int(math.floor((one_portion_amt - half_budget) / target_p1)) if target_p1 > 0 else 0
+                        
+                        if new_q1 == 0 and new_q2 == 0 and target_p1 > 0 and one_portion_amt >= target_p1:
+                            new_q1 = int(math.floor(one_portion_amt / target_p1))
+                            
+                        for o_list in [cached_plan.get("core_orders", []), cached_plan.get("orders", [])]:
+                            idx = 1
+                            for o in o_list:
+                                if str(o.get("side")) == "BUY" and "새출발" in str(o.get("desc", "")):
+                                    o["price"] = target_p1
+                                    o["qty"] = new_q1 if idx == 1 else new_q2
+                                    idx += 1
+                                    
+                        self.save_daily_snapshot(ticker, cached_plan)
+                return cached_plan
 
         split = self._safe_float(self.cfg.get_split_count(ticker))
         target_ratio = self._safe_float(self.cfg.get_target_profit(ticker)) / 100.0
