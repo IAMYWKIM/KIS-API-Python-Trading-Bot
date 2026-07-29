@@ -4,6 +4,7 @@
 # 🚨 MODIFIED: [Lost Update 궁극 방어] 스냅샷 파일 I/O 전역에 GlobalThrottle.get_file_lock()을 100% 팩트 래핑 완료.
 # 🚨 MODIFIED: [TypeError 런타임 붕괴 방어] datetime.time 충돌 소각 및 정수 연산 락온 유지.
 # 🚨 NEW: [0주 스냅샷 오염 팩트 자가치유(Self-Healing) 결속] 통신 지연으로 YF 종가가 훼손되어 스냅샷 타점이 0.0 등으로 오염될 경우, 로드 시 공식 종가(prev_c) 기반으로 타점($)과 수량(Q)을 원자적으로 재계산하여 덮어쓰는(Self-Healing) 방어망 100% 락온 (Case 46 방어 강화).
+# 🚨 MODIFIED: [리버스 자본 격리 아키텍처 결속] 스냅샷 생성 모드(is_snapshot_mode=True)일 때만 cfg.apply_reverse_daily_settlement(ticker)를 호출하여 1일 1회 원자적 장부 정산이 실행되도록 팩트 락온.
 # ==========================================================
 import math
 import os
@@ -146,7 +147,6 @@ class V14Strategy:
         if not is_snapshot_mode:
             snap = self.load_daily_snapshot(ticker)
             if snap:
-                # 🚨 NEW: [Case 46 자가치유 방어망] 0주 스냅샷 오염 감지 시 YF 공식 종가 기반 타점 팩트 롤오버
                 is_zero_val = snap.get("is_zero_start")
                 is_zero_snap = bool(is_zero_val) if is_zero_val is not None else (int(self._safe_float(snap.get("total_q", -1))) == 0)
                 
@@ -245,8 +245,13 @@ class V14Strategy:
                     logging.info(f"🚨 [{ticker}] T값({t_val})이 {split-1}을 돌파하여 리버스 모드(소진 방어)로 강제 진입합니다.")
                     self.cfg.set_reverse_state(ticker, True, 0, 0.0, dynamic_t=t_val, rem_cash=real_available_cash, is_day_one=True)
                     is_rev_active = True
-                    rev_state = self.cfg.get_reverse_state(ticker)
+                else:
+                    # 🚨 NEW: 리버스 장부 정산(잔액 역산 및 T값 스케일링)을 스냅샷 모드에서 원자적 1회 호출
+                    if is_snapshot_mode:
+                        self.cfg.apply_reverse_daily_settlement(ticker)
 
+                # 🚨 MODIFIED: 갱신된 리버스 상태 다시 로드
+                rev_state = self.cfg.get_reverse_state(ticker)
                 dynamic_t = self._safe_float(rev_state.get('dynamic_t', 0.0))
                 rem_cash = self._safe_float(rev_state.get('rem_cash', 0.0))
                 is_day_one = rev_state.get('is_day_one', True)
@@ -370,24 +375,3 @@ class V14Strategy:
         }
         if is_snapshot_mode: self.save_daily_snapshot(ticker, plan_result)
         return plan_result
-
-    def check_sniper_condition(self, ticker, cfg, broker, chat_id):
-        snap = self.load_daily_snapshot(ticker)
-        if not snap:
-            return {"action": "HOLD", "reason": "스냅샷 부재", "limit_price": 0.0, "qty": 0}
-            
-        qty = int(self._safe_float(snap.get('total_q', 0)))
-        avg_price = self._safe_float(snap.get('avg_price', 0.0))
-        star_price = self._safe_float(snap.get('star_price', 0.0))
-        target_price = self._safe_float(snap.get('target_price', 0.0))
-        is_reverse = bool(snap.get('is_reverse', False))
-        
-        if qty <= 0 or is_reverse:
-            return {"action": "HOLD", "reason": "보유량 0주 또는 리버스 가동", "limit_price": 0.0, "qty": 0}
-
-        q_qty = int(math.ceil(qty / 4))
-        rem_qty = int(qty - q_qty)
-        
-        target = target_price if target_price > 0 else 0.0
-        
-        return {"action": "HOLD", "reason": "V14 상방 스나이퍼 감시 중", "limit_price": target, "qty": q_qty}
