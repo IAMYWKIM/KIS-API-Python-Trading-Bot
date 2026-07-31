@@ -4,7 +4,8 @@
 # 🚨 VERIFIED: [최종 무결점 판정] 3중 딥다이브 교차 검증 통과 완료.
 # 🚨 MODIFIED: [인스턴스 락 영구 소각] self._io_lock 및 self._locks_mutex를 시스템 전역에서 영구 파기.
 # 🚨 MODIFIED: [전역 파일 뮤텍스 100% 결속] GlobalThrottle.get_file_lock()을 이식하여 파일별 100% 독립적인 Mutex Lock 획득 보장 (Lost Update 원천 차단).
-# 🚨 MODIFIED: fcntl 기반 OS 의존성 락 소각 및 GlobalThrottle 중앙 통제소 일원화 락온 완료.
+# 🚨 MODIFIED: [리버스 자본 격리 아키텍처 팩트 결속] 다중 종목 예수금 충돌 대참사를 막기 위해 KIS 예수금 참조를 파기하고 오직 장부 체결 대금 기반의 apply_reverse_daily_settlement() 엔진 결속 완료.
+# 🚨 MODIFIED: [데드코드 소각] 무용지물이던 낡은 scale_dynamic_t() 영구 소각 완료.
 # ==========================================================
 
 import json
@@ -101,7 +102,6 @@ class ConfigManager:
 
     def _atomic_update_locks(self, update_fn):
         lock_file_path = self.FILES["LOCKS"]
-        # 🚨 MODIFIED: [File Mutex 락온] GlobalThrottle 100% 교체
         with GlobalThrottle.get_file_lock(lock_file_path):
             dir_name = os.path.dirname(lock_file_path) or '.'
             try:
@@ -517,11 +517,13 @@ class ConfigManager:
             if not isinstance(val, dict):
                 return {
                     "is_active": False, "day_count": 0, "exit_target": 0.0, 
-                    "last_update_date": "", "dynamic_t": 0.0, "rem_cash": 0.0, "is_day_one": True
+                    "last_update_date": "", "dynamic_t": 0.0, "rem_cash": 0.0, "is_day_one": True,
+                    "last_t_update_date": ""
                 }
             val.setdefault("dynamic_t", 0.0)
             val.setdefault("rem_cash", 0.0)
             val.setdefault("is_day_one", val.get("day_count", 0) == 0)
+            val.setdefault("last_t_update_date", val.get("last_update_date", ""))
             return val
 
     def set_reverse_state(self, ticker, is_active, day_count, exit_target=0.0, last_update_date=None, dynamic_t=0.0, rem_cash=0.0, is_day_one=None):
@@ -536,29 +538,85 @@ class ConfigManager:
                 "day_count": day_count, 
                 "exit_target": self._safe_float(exit_target), 
                 "last_update_date": last_update_date,
+                "last_t_update_date": last_update_date, # 🚨 NEW: 팩트 주입
                 "dynamic_t": self._safe_float(dynamic_t),
                 "rem_cash": self._safe_float(rem_cash),
                 "is_day_one": (day_count == 0) if is_day_one is None else bool(is_day_one)
             }
             self._save_json(self.FILES["REVERSE_CFG"], d)
-            
-    def scale_dynamic_t(self, ticker, action):
+
+    def apply_reverse_daily_settlement(self, ticker):
+        """
+        🚨 [리버스 모드 팩트 정산 및 자본 격리]
+        스냅샷 생성 직전 1회 호출되어, 전날(마지막 갱신일 ~ 오늘 사이)의 
+        'is_reverse: True' 체결 장부 내역을 기반으로 잔금(rem_cash)과 T값(dynamic_t)을 원자적으로 역산 갱신한다.
+        """
         with GlobalThrottle.get_file_lock(self.FILES["REVERSE_CFG"]):
             d = self._load_json(self.FILES["REVERSE_CFG"], {})
             state = d.get(ticker)
             if not isinstance(state, dict) or not state.get("is_active", False):
                 return
-                
+
+            est = ZoneInfo('America/New_York')
+            today_str = datetime.datetime.now(est).strftime('%Y-%m-%d')
+
+            last_t_update_date = state.get("last_t_update_date", "")
+            if not last_t_update_date:
+                last_t_update_date = state.get("last_update_date", "")
+            
+            if last_t_update_date == today_str:
+                return
+
             split = self.get_split_count(ticker)
             dynamic_t = self._safe_float(state.get("dynamic_t", 0.0))
+            rem_cash = self._safe_float(state.get("rem_cash", 0.0))
+
+            with GlobalThrottle.get_file_lock(self.FILES["LEDGER"]):
+                ledger = self._load_json(self.FILES["LEDGER"], [])
             
-            if action == "SELL":
-                if split <= 20: dynamic_t *= 0.9
-                else: dynamic_t *= 0.95
-            elif action == "BUY":
-                dynamic_t += (split - dynamic_t) * 0.25
+            if not isinstance(ledger, list):
+                ledger = []
+
+            target_recs = [
+                r for r in ledger
+                if isinstance(r, dict) and r.get("ticker") == ticker and r.get("is_reverse", False)
+                and last_t_update_date <= str(r.get("date", ""))[:10] < today_str
+            ]
+
+            buy_sum = 0.0
+            sell_sum = 0.0
+            had_buy = False
+            had_sell = False
+
+            for r in target_recs:
+                qty = int(self._safe_float(r.get("qty", 0)))
+                price = self._safe_float(r.get("price", 0.0))
+                amt = qty * price
                 
+                if r.get("side") == "BUY":
+                    buy_sum += amt
+                    had_buy = True
+                elif r.get("side") == "SELL":
+                    sell_sum += amt
+                    had_sell = True
+
+            if had_buy or had_sell:
+                # 🚨 MODIFIED: KIS 예수금 의존 파기 및 순수 장부 역산으로 자본 격리 완벽 사수
+                rem_cash = max(0.0, rem_cash + sell_sum - buy_sum)
+
+                if had_sell:
+                    if split <= 20: dynamic_t *= 0.9
+                    else: dynamic_t *= 0.95
+                
+                if had_buy:
+                    dynamic_t += (split - dynamic_t) * 0.25
+
+                logging.info(f"♻️ [{ticker}] 리버스 일일 정산 완료: sell=${sell_sum:.2f}, buy=${buy_sum:.2f} ➔ 잔액=${rem_cash:.2f}, T값={dynamic_t:.4f}")
+
+            state["rem_cash"] = round(rem_cash, 2)
             state["dynamic_t"] = round(dynamic_t, 4)
+            state["last_t_update_date"] = today_str
+            
             d[ticker] = state
             self._save_json(self.FILES["REVERSE_CFG"], d)
 
