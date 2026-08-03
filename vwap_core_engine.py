@@ -9,6 +9,7 @@
 # 🚨 MODIFIED: [자본 잠김 마비(Capital Lock-up Paralysis) 궁극 수술] 자본 잠김으로 인해 매수 플랜이 애프터장으로 이관(pending_aftermarket=True)되었을 때, VWAP 슬라이싱 엔진 전체를 스킵(continue)해버리던 맹독성 버그를 원천 소각. 하방 Gap Hijack만 안전하게 차단하고 매도(SELL) 슬라이싱은 100% 정상 가동되도록 팩트 디커플링 완료.
 # 🚨 MODIFIED: [정량제(Fixed-Quantity) 팩트 스윕 락온] Gap Hijack 발동 시 잔여 예산을 억지로 100% 소진하던 맹독성 풀-스윕 로직을 영구 소각하고, 스냅샷에 락온된 '당일 잔여 목표 수량(Remaining Target Qty)'만을 100% 스윕 타격하여 하락장 시드 보존력(Runway)을 극대화함.
 # 🚨 NEW: [핑퐁 패러독스(Ping-Pong Paradox) 진공 압축 수술] 매 1분 슬라이싱 틱마다 암살자 덫을 취소하고 재장전하던 O(N) 맹독성 핑퐁 로직을 전면 소각. 첫 타격 시 단 1회만 취소 후 `suppress_sell=True` 팩트 락온으로 억제하여 KIS 서버 I/O 낭비 및 호가 순위 강등을 원천 봉쇄.
+# 🚨 NEW: [하이재킹 타점 오염 방어막 (Price Over-Hijack Shield) 결속] 하방 Gap Hijack이 발동되었을 때, 실시간 현재가가 스냅샷 지시서의 최고 매수 목표가보다 비쌀 경우(Buy Low 원칙 위배), 무지성 스윕 매수를 강제로 차단하여 비싸게 타격되는 대참사 완벽 방어.
 # ==========================================================
 import logging
 import asyncio
@@ -23,7 +24,7 @@ import pandas as pd
 
 from scheduler_core import get_budget_allocation
 from state_io_manager import _read_json_safe_sync, _atomic_write_json_sync
-from global_throttle import GlobalThrottle
+from global_throttle import GlobalThrottle # 🚨 NEW: 전역 통제소 결속
 
 _MCAL_SCHEDULE_CACHE = {}
 
@@ -257,7 +258,13 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                     if tp_val > 0.0 and t_curr_p >= tp_val:
                                         is_sell_condition = True
                                         break
-                                        
+                                
+                                # 🚨 NEW: [하이재킹 타점 오염 방어막] 지시서의 최고 매수 목표가 추출
+                                buy_orders = [o for o in slice_state_check.get('orders', []) if str(o.get('side')) == 'BUY']
+                                max_buy_target = 0.0
+                                if buy_orders:
+                                    max_buy_target = max(_safe_float(o.get('target_price', o.get('price', 0.0))) for o in buy_orders)
+
                                 if not has_buy_plan:
                                     if not vwap_cache.get(f"REV_{t}_gap_hijack_blocked_log", False):
                                         logging.info(f"⚡ [{t}] 하방 Gap Hijack 조건 도달({gap_pct:.2f}%) ➔ 🛑 금일 통합지시서에 매수(BUY) 플랜이 없어 스윕 매수를 전면 차단(Bypass)합니다.")
@@ -270,9 +277,16 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                     if not vwap_cache.get(f"REV_{t}_gap_hijack_sell_blocked_log", False):
                                         logging.info(f"⚡ [{t}] 하방 Gap Hijack 조건 도달({gap_pct:.2f}%) ➔ 🛑 현재가(${t_curr_p:.2f})가 매도(SELL) 타점 이상이므로 스윕 매수를 차단하고 관망합니다 (Buy Low 원칙 사수).")
                                         vwap_cache[f"REV_{t}_gap_hijack_sell_blocked_log"] = True
-                                    
+                                
+                                # 🚨 NEW: 현재가가 스냅샷 매수 목표가보다 높은 경우 갭 하이재킹 차단 (Buy Low 원칙 사수)
+                                elif max_buy_target > 0.0 and t_curr_p > max_buy_target:
+                                    if not vwap_cache.get(f"REV_{t}_gap_hijack_price_blocked_log", False):
+                                        logging.info(f"⚡ [{t}] 하방 Gap Hijack 조건 도달({gap_pct:.2f}%) ➔ 🛑 현재가(${t_curr_p:.2f})가 지시서 매수 목표가(${max_buy_target:.2f})보다 비쌉니다. 비싼 가격에 하이재킹되는 것을 차단하고 매수 단가를 기다립니다 (Buy Low).")
+                                        vwap_cache[f"REV_{t}_gap_hijack_price_blocked_log"] = True
+                                        
                                 else:
                                     vwap_cache.pop(f"REV_{t}_gap_hijack_sell_blocked_log", None)
+                                    vwap_cache.pop(f"REV_{t}_gap_hijack_price_blocked_log", None)
                                     logging.info(f"⚡ [{t}] Downward Gap Hijack Triggered! gap: {gap_pct:.2f}%, thresh: {gap_thresh}%")
                                     nuked_count = 0
                                     
@@ -566,7 +580,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                     avwap_state = await _retry_api(_read_json_ignore_date_sync, avwap_state_file)
                                     if avwap_state and avwap_state.get('qty', 0) > 0 and avwap_state.get('sell_odno'):
                                         avwap_sell_odno = avwap_state.get('sell_odno')
-                                        # 🚨 MODIFIED: [핑퐁 패러독스 궁극 수술] 즉각 재장전(need_avwap_resume) 맹독성 로직 영구 소각 및 일괄 억제 락온
                                         logging.info(f"🛡️ [{t}] 자전거래 방어: 암살자 덫({avwap_sell_odno}) 임시 취소 집행 및 핑퐁 패러독스 차단")
                                         async with tx_lock:
                                             c_res = await _retry_api(broker.cancel_order, t, avwap_sell_odno, timeout=10.0)

@@ -5,6 +5,7 @@
 # 🚨 MODIFIED: [중앙 통제소 위임] 모든 API 지연을 GlobalThrottle(중앙 통제소)로 100% 위임하여 이벤트 루프 교착 상태 완벽 방어.
 # 🚨 NEW: [Case 47 자전거래(Wash Trade) 절대 방어망 결속] 암살자 오버나이트 모드 허용 시 기장전된 +1.0% 지정가 익절 덫과 본진(V-REV)의 16:01 애프터장 지연 고가 매수 덫이 충돌하여 KIS 서버에서 리젝(Reject)당하는 맹독성 패러독스를 완벽히 차단하기 위해, 타격 직전 암살자 덫 임시 취소 및 타격 직후 원상 복구(재장전) 파이프라인 100% 팩트 이식 완료.
 # 🚨 MODIFIED: [예수금 0원 매도 컷오프 맹점 수술] 애프터장 예수금 조회 결과 0원(cash=0.0)일 때 루프 자체를 continue로 끊어버리는 코드를 영구 소각하고, 하위 로직에서 매수(BUY) 플랜만 스킵하고 매도(SELL) 플랜은 정상 집행하도록 100% 팩트 교정 완료.
+# 🚨 MODIFIED: [Case 54 상태 파일 스키마 불일치 붕괴 수술] target_price 단일 추출을 폐기하고 o.get('target_price', o.get('price', 0.0)) 듀얼 폴백을 결속하여 0.0달러 무지성 덤핑 패러독스 완벽 방어.
 # ==========================================================
 import logging
 import asyncio
@@ -164,7 +165,9 @@ async def execute_aftermarket_trade(tx_lock, cfg, broker, strategy, queue_ledger
                     
                     side = str(o.get('side', 'BUY'))
                     total_qty = int(_safe_float(o.get('total_qty')))
-                    target_price = _safe_float(o.get('target_price'))
+                    
+                    # 🚨 MODIFIED: [Case 54] 상태 파일 스키마 불일치 방어(Target Price Amnesia) 듀얼 폴백 팩트 결속
+                    target_price = _safe_float(o.get('target_price', o.get('price', 0.0)))
                     desc = html.escape(str(o.get('desc', '')))
                     
                     exec_price = 0.0
