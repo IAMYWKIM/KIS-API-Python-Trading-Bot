@@ -16,6 +16,7 @@
 # 🚨 MODIFIED: [팻핑거 절대 방어망 결속] MANUAL_PORTION 실행 시 즉시 격발되는 맹독성 로직을 소각하고, 예상 체결 수량과 단가를 브리핑하는 [2단계 확인 메뉴(Confirmation Menu)]를 강제 주입하여 오작동 대참사를 원천 봉쇄.
 # 🚨 MODIFIED: [제1헌법 철저 준수] get_exact_prev_close 내부 동기 블로킹 time.sleep(0.06)을 영구 소각하고 GlobalThrottle.wait_api_sync()로 100% 위임하여 스레드 마비 원천 차단 완료.
 # 🚨 MODIFIED: [데드락(Deadlock) 궁극 수술] MANUAL_PORTION 실행 직후 호출되는 process_auto_sync 로직을 tx_lock 임계 구역 바깥으로 100% 디커플링하여, 동기화 엔진 내부의 tx_lock 재진입 요구로 인한 스케줄러 연쇄 폭발(Timeout) 대참사를 완벽히 봉쇄 완료.
+# 🚨 MODIFIED: [Case 50 전역 락 병목 원천 봉쇄] EXEC 및 MANUAL_PORTION 내부에 광범위하게 적용되어 있던 `async with self.tx_lock:` 족쇄를 해체. 잔고/호가 스캔 등 API 대기 시간(Network I/O)을 락 외부로 100% 끄집어내고, 오직 `send_order` 주문 발사 찰나의 임계 구역에만 국소적으로 락을 래핑하여 병렬 처리 성능 극대화 팩트 락온.
 # ==========================================================
 import logging
 import datetime
@@ -103,7 +104,8 @@ class CallbackOrderHandler:
             emergency_qty = int(float(str(valid_q_data[-1].get('qty') or 0).replace(',', ''))) 
             
             if emergency_qty > 0:
-                await asyncio.sleep(0.06) 
+                await asyncio.to_thread(GlobalThrottle.wait_api_sync)
+                # 🚨 MODIFIED: [Case 50] 최소 임계 구역 락온 유지
                 async with self.tx_lock:
                     try:
                         res = await asyncio.wait_for(
@@ -143,18 +145,18 @@ class CallbackOrderHandler:
             except Exception:
                 pass
             
-            async with self.tx_lock:
-                holdings = None
-                cash = 0.0
-                for attempt in range(3):
-                    try:
-                        await asyncio.sleep(0.06)
-                        res = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=10.0)
-                        cash, holdings = res[0] if isinstance(res, (list, tuple)) and len(res) > 0 else 0.0, res[1] if isinstance(res, (list, tuple)) and len(res) > 1 else {}
-                        break
-                    except Exception:
-                        if attempt == 2: holdings = None
-                        else: await asyncio.sleep(1.0 * (2 ** attempt))
+            # 🚨 MODIFIED: [Case 50 전역 락 병목 소각] 잔고 조회를 tx_lock 외부로 100% 디커플링
+            holdings = None
+            cash = 0.0
+            for attempt in range(3):
+                try:
+                    await asyncio.to_thread(GlobalThrottle.wait_api_sync)
+                    res = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=10.0)
+                    cash, holdings = res[0] if isinstance(res, (list, tuple)) and len(res) > 0 else 0.0, res[1] if isinstance(res, (list, tuple)) and len(res) > 1 else {}
+                    break
+                except Exception:
+                    if attempt == 2: holdings = None
+                    else: await asyncio.sleep(1.0 * (2 ** attempt))
                 
             if holdings is None:
                 try:
@@ -185,7 +187,7 @@ class CallbackOrderHandler:
             curr_p, prev_c = 0.0, 0.0
             for attempt in range(3):
                 try:
-                    await asyncio.sleep(0.06)
+                    await asyncio.to_thread(GlobalThrottle.wait_api_sync)
                     curr_p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, t), timeout=10.0)
                     curr_p = float(str(curr_p_val or 0.0).replace(',', ''))
                     prev_c_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_previous_close, t), timeout=10.0)
@@ -202,7 +204,6 @@ class CallbackOrderHandler:
             if status_code in ["AFTER", "CLOSE", "PRE"]:
                 try:
                     def get_exact_prev_close(ticker_name):
-                        # 🚨 MODIFIED: [제1헌법 준수] 동기적 time.sleep 맹독성 블로킹 소각 및 중앙 통제소 락온
                         GlobalThrottle.wait_api_sync()
                         df = yf.Ticker(ticker_name).history(period="5d", interval="1d", timeout=5)
                         if not df.empty and 'Close' in df.columns:
@@ -243,7 +244,7 @@ class CallbackOrderHandler:
             ma_5day = 0.0
             for attempt in range(3):
                 try:
-                    await asyncio.sleep(0.06)
+                    await asyncio.to_thread(GlobalThrottle.wait_api_sync)
                     ma_5day_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_5day_ma, t), timeout=10.0)
                     ma_5day = float(str(ma_5day_val or 0.0).replace(',', ''))
                     break
@@ -287,25 +288,28 @@ class CallbackOrderHandler:
             for o in target_orders:
                 if not isinstance(o, dict): continue
                 try:
-                    await asyncio.sleep(0.06)
+                    await asyncio.to_thread(GlobalThrottle.wait_api_sync)
                     if str(o.get('type', '')) == 'VWAP' or is_market_active_now:
-                        res = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                self.broker.send_order, 
-                                t, str(o.get('side', '')), int(float(str(o.get('qty') or 0).replace(',', ''))), float(str(o.get('price') or 0.0).replace(',', '')), str(o.get('type', '')),
-                                start_time=dyn_start_t if str(o.get('type', '')) == 'VWAP' else None,
-                                end_time=dyn_end_t if str(o.get('type', '')) == 'VWAP' else None
-                            ),
-                            timeout=10.0
-                        )
+                        # 🚨 MODIFIED: [Case 50] 주문 발송 순간에만 국소적 tx_lock 래핑 강제
+                        async with self.tx_lock:
+                            res = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    self.broker.send_order, 
+                                    t, str(o.get('side', '')), int(float(str(o.get('qty') or 0).replace(',', ''))), float(str(o.get('price') or 0.0).replace(',', '')), str(o.get('type', '')),
+                                    start_time=dyn_start_t if str(o.get('type', '')) == 'VWAP' else None,
+                                    end_time=dyn_end_t if str(o.get('type', '')) == 'VWAP' else None
+                                ),
+                                timeout=10.0
+                            )
                     else:
-                        res = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                self.broker.send_reservation_order, 
-                                t, str(o.get('side', '')), int(float(str(o.get('qty') or 0).replace(',', ''))), float(str(o.get('price') or 0.0).replace(',', '')), str(o.get('type', ''))
-                            ),
-                            timeout=10.0
-                        )
+                        async with self.tx_lock:
+                            res = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    self.broker.send_reservation_order, 
+                                    t, str(o.get('side', '')), int(float(str(o.get('qty') or 0).replace(',', ''))), float(str(o.get('price') or 0.0).replace(',', '')), str(o.get('type', ''))
+                                ),
+                                timeout=10.0
+                            )
                 except Exception as e:
                     logging.error(f"🚨 V14/VREV 1차 덫 장전 통신 에러/타임아웃: {e}")
                     res = None
@@ -317,7 +321,6 @@ class CallbackOrderHandler:
                 err_msg = html.escape(str(res.get('msg1') or '오류')) if isinstance(res, dict) else '응답 없음/통신 장애'
                 status_icon = '✅' if is_success else f'❌({err_msg})'
                 msg += f"└ 1차 필수: {html.escape(str(o.get('desc', '')))} {int(float(str(o.get('qty') or 0).replace(',', '')))}주: {status_icon}\n"
-                await asyncio.sleep(0.2) 
             
             target_bonus = plan.get('bonus_orders') or []
             if not isinstance(target_bonus, list): target_bonus = []
@@ -325,25 +328,27 @@ class CallbackOrderHandler:
             for o in target_bonus:
                 if not isinstance(o, dict): continue
                 try:
-                    await asyncio.sleep(0.06)
+                    await asyncio.to_thread(GlobalThrottle.wait_api_sync)
                     if str(o.get('type', '')) == 'VWAP' or is_market_active_now:
-                        res = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                self.broker.send_order, 
-                                t, str(o.get('side', '')), int(float(str(o.get('qty') or 0).replace(',', ''))), float(str(o.get('price') or 0.0).replace(',', '')), str(o.get('type', '')),
-                                start_time=dyn_start_t if str(o.get('type', '')) == 'VWAP' else None,
-                                end_time=dyn_end_t if str(o.get('type', '')) == 'VWAP' else None
-                            ),
-                            timeout=10.0
-                        )
+                        async with self.tx_lock:
+                            res = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    self.broker.send_order, 
+                                    t, str(o.get('side', '')), int(float(str(o.get('qty') or 0).replace(',', ''))), float(str(o.get('price') or 0.0).replace(',', '')), str(o.get('type', '')),
+                                    start_time=dyn_start_t if str(o.get('type', '')) == 'VWAP' else None,
+                                    end_time=dyn_end_t if str(o.get('type', '')) == 'VWAP' else None
+                                ),
+                                timeout=10.0
+                            )
                     else:
-                        res = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                self.broker.send_reservation_order, 
-                                t, str(o.get('side', '')), int(float(str(o.get('qty') or 0).replace(',', ''))), float(str(o.get('price') or 0.0).replace(',', '')), str(o.get('type', ''))
-                            ),
-                            timeout=10.0
-                        )
+                        async with self.tx_lock:
+                            res = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    self.broker.send_reservation_order, 
+                                    t, str(o.get('side', '')), int(float(str(o.get('qty') or 0).replace(',', ''))), float(str(o.get('price') or 0.0).replace(',', '')), str(o.get('type', ''))
+                                ),
+                                timeout=10.0
+                            )
                 except Exception as e:
                     logging.error(f"🚨 V14/VREV 2차 보너스 덫 장전 통신 에러/타임아웃: {e}")
                     res = None
@@ -352,7 +357,6 @@ class CallbackOrderHandler:
                 err_msg = html.escape(str(res.get('msg1') or '잔금패스')) if isinstance(res, dict) else '응답 없음/통신 장애'
                 status_icon = '✅' if is_success else f'❌({err_msg})'
                 msg += f"└ 2차 보너스: {html.escape(str(o.get('desc', '')))} {int(float(str(o.get('qty') or 0).replace(',', '')))}주: {status_icon}\n"
-                await asyncio.sleep(0.2) 
             
             if len(target_orders) == 0 and len(target_bonus) == 0:
                  msg += "\n💤 <b>장전할 주문이 없습니다 (관망/예산소진)</b>"
@@ -382,7 +386,7 @@ class CallbackOrderHandler:
                 resv_orders = []
                 for attempt in range(3):
                     try:
-                        await asyncio.sleep(0.06)
+                        await asyncio.to_thread(GlobalThrottle.wait_api_sync)
                         resv_orders = await asyncio.wait_for(
                             asyncio.to_thread(self.broker.get_reservation_orders, t, d_str, d_str),
                             timeout=10.0
@@ -399,13 +403,13 @@ class CallbackOrderHandler:
                         ord_dt = str(req.get('rsvn_ord_rcit_dt') or req.get('ord_dt') or d_str)
                         if odno:
                             try:
-                                await asyncio.sleep(0.06)
-                                await asyncio.wait_for(
-                                    asyncio.to_thread(self.broker.cancel_reservation_order, ord_dt, odno),
-                                    timeout=10.0
-                                )
+                                await asyncio.to_thread(GlobalThrottle.wait_api_sync)
+                                async with self.tx_lock:
+                                    await asyncio.wait_for(
+                                        asyncio.to_thread(self.broker.cancel_reservation_order, ord_dt, odno),
+                                        timeout=10.0
+                                    )
                                 nuked_count += 1
-                                await asyncio.sleep(0.2)
                             except Exception as e:
                                 logging.error(f"🚨 [{t}] 수동 예약 덫 취소 실패: {e}")
                                 err_count += 1
@@ -416,7 +420,7 @@ class CallbackOrderHandler:
                 unfilled = []
                 for attempt in range(3):
                     try:
-                        await asyncio.sleep(0.06)
+                        await asyncio.to_thread(GlobalThrottle.wait_api_sync)
                         unfilled = await asyncio.wait_for(
                             asyncio.to_thread(self.broker.get_unfilled_orders_detail, t),
                             timeout=10.0
@@ -432,13 +436,13 @@ class CallbackOrderHandler:
                         u_odno = str(uo.get('odno') or '')
                         if u_odno:
                             try:
-                                await asyncio.sleep(0.06)
-                                await asyncio.wait_for(
-                                    asyncio.to_thread(self.broker.cancel_order, t, u_odno),
-                                    timeout=10.0
-                                )
+                                await asyncio.to_thread(GlobalThrottle.wait_api_sync)
+                                async with self.tx_lock:
+                                    await asyncio.wait_for(
+                                        asyncio.to_thread(self.broker.cancel_order, t, u_odno),
+                                        timeout=10.0
+                                    )
                                 nuked_count += 1
-                                await asyncio.sleep(0.2)
                             except Exception as e:
                                 logging.error(f"🚨 [{t}] 수동 일반 덫 취소 실패: {e}")
                                 err_count += 1
@@ -476,112 +480,115 @@ class CallbackOrderHandler:
                 try: await query.answer(f"⏳ [{ticker}] 1회분 수동 {side} 타점 계산 중...", show_alert=False)
                 except Exception: pass
 
-                async with self.tx_lock:
-                    try:
-                        seed = float(await asyncio.to_thread(self.cfg.get_seed, ticker) or 0.0)
-                        budget = seed * 0.15 
+                # 🚨 MODIFIED: [Case 50 전역 락 병목 소각] 예상 타점 연산 시 tx_lock 진입 원천 배제
+                try:
+                    seed = float(await asyncio.to_thread(self.cfg.get_seed, ticker) or 0.0)
+                    budget = seed * 0.15 
 
-                        if not getattr(self, 'queue_ledger', None):
-                            from queue_ledger import QueueLedger
-                            self.queue_ledger = await asyncio.to_thread(QueueLedger)
+                    if not getattr(self, 'queue_ledger', None):
+                        from queue_ledger import QueueLedger
+                        self.queue_ledger = await asyncio.to_thread(QueueLedger)
 
-                        res_bal = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=10.0)
-                        cash = float(res_bal[0]) if isinstance(res_bal, (list, tuple)) and len(res_bal) > 0 else 0.0
+                    res_bal = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=10.0)
+                    cash = float(res_bal[0]) if isinstance(res_bal, (list, tuple)) and len(res_bal) > 0 else 0.0
 
-                        if side == "BUY":
-                            exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_ask_price, ticker), timeout=10.0))
-                        else:
-                            exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_bid_price, ticker), timeout=10.0))
+                    if side == "BUY":
+                        exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_ask_price, ticker), timeout=10.0))
+                    else:
+                        exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_bid_price, ticker), timeout=10.0))
 
-                        if exec_price <= 0.0:
-                            exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=10.0))
+                    if exec_price <= 0.0:
+                        exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=10.0))
 
-                        if exec_price <= 0.0:
-                            try: await query.answer("❌ 실시간 호가 스캔 실패", show_alert=True)
-                            except Exception: pass
-                            return
-
-                        target_qty = math.floor(budget / exec_price)
-
-                        if side == "BUY":
-                            max_buy_qty = math.floor(cash / exec_price)
-                            final_qty = min(target_qty, max_buy_qty)
-                        else:
-                            q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) or []
-                            total_q = sum(int(float(str(item.get("qty") or 0).replace(',', ''))) for item in q_data if isinstance(item, dict))
-                            final_qty = min(target_qty, total_q)
-
-                        if final_qty <= 0:
-                            try: await query.answer("⚠️ 예산 부족 또는 잔고/큐 수량이 부족하여 0주 산출됨.", show_alert=True)
-                            except Exception: pass
-                            return
-
-                        action_kr = "매수" if side == "BUY" else "매도"
-                        safe_t = html.escape(str(ticker))
-                        
-                        msg = f"🚨 <b>[{safe_t} 수동 1회분 {action_kr} 승인 대기]</b> 🚨\n\n"
-                        msg += f"▫️ 타격 예정 수량: <b>{final_qty}주</b>\n"
-                        msg += f"▫️ 타격 예상 단가: <b>${exec_price:.2f}</b> (LIMIT)\n\n"
-                        msg += "⚠️ <b>포트폴리오 매니저 경고:</b>\n"
-                        msg += "하단 승인 버튼 클릭 시, KIS 서버로 실시간 API가 즉시 발사되며 취소할 수 없습니다. 정말 전송하시겠습니까?"
-
-                        keyboard = [
-                            [InlineKeyboardButton(f"🔥 [{safe_t}] {final_qty}주 {action_kr} 최종 격발", callback_data=f"MANUAL_PORTION:{side}:{ticker}:EXEC")],
-                            [InlineKeyboardButton("❌ 작전 취소 (장부 대시보드 복귀)", callback_data=f"REC:VIEW:{ticker}")]
-                        ]
-                        markup = InlineKeyboardMarkup(keyboard)
-                        await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
-
-                    except Exception as e:
-                        logging.error(f"🚨 수동 1회분 예상 타점 연산 에러: {e}")
-                        try: await query.answer(f"❌ 오류: {e}", show_alert=True)
+                    if exec_price <= 0.0:
+                        try: await query.answer("❌ 실시간 호가 스캔 실패", show_alert=True)
                         except Exception: pass
+                        return
+
+                    target_qty = math.floor(budget / exec_price)
+
+                    if side == "BUY":
+                        max_buy_qty = math.floor(cash / exec_price)
+                        final_qty = min(target_qty, max_buy_qty)
+                    else:
+                        q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) or []
+                        total_q = sum(int(float(str(item.get("qty") or 0).replace(',', ''))) for item in q_data if isinstance(item, dict))
+                        final_qty = min(target_qty, total_q)
+
+                    if final_qty <= 0:
+                        try: await query.answer("⚠️ 예산 부족 또는 잔고/큐 수량이 부족하여 0주 산출됨.", show_alert=True)
+                        except Exception: pass
+                        return
+
+                    action_kr = "매수" if side == "BUY" else "매도"
+                    safe_t = html.escape(str(ticker))
+                    
+                    msg = f"🚨 <b>[{safe_t} 수동 1회분 {action_kr} 승인 대기]</b> 🚨\n\n"
+                    msg += f"▫️ 타격 예정 수량: <b>{final_qty}주</b>\n"
+                    msg += f"▫️ 타격 예상 단가: <b>${exec_price:.2f}</b> (LIMIT)\n\n"
+                    msg += "⚠️ <b>포트폴리오 매니저 경고:</b>\n"
+                    msg += "하단 승인 버튼 클릭 시, KIS 서버로 실시간 API가 즉시 발사되며 취소할 수 없습니다. 정말 전송하시겠습니까?"
+
+                    keyboard = [
+                        [InlineKeyboardButton(f"🔥 [{safe_t}] {final_qty}주 {action_kr} 최종 격발", callback_data=f"MANUAL_PORTION:{side}:{ticker}:EXEC")],
+                        [InlineKeyboardButton("❌ 작전 취소 (장부 대시보드 복귀)", callback_data=f"REC:VIEW:{ticker}")]
+                    ]
+                    markup = InlineKeyboardMarkup(keyboard)
+                    await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
+
+                except Exception as e:
+                    logging.error(f"🚨 수동 1회분 예상 타점 연산 에러: {e}")
+                    try: await query.answer(f"❌ 오류: {e}", show_alert=True)
+                    except Exception: pass
 
             else:
                 try: await query.answer(f"⏳ [{ticker}] 1회분 수동 {side} 전송 중...", show_alert=False)
                 except Exception: pass
 
                 trigger_sync = False
-                async with self.tx_lock:
-                    try:
-                        seed = float(await asyncio.to_thread(self.cfg.get_seed, ticker) or 0.0)
-                        budget = seed * 0.15
+                
+                # 🚨 MODIFIED: [Case 50 전역 락 병목 소각] 가격 스캔 및 예산 연산 로직을 락 외부로 완전히 추출
+                try:
+                    seed = float(await asyncio.to_thread(self.cfg.get_seed, ticker) or 0.0)
+                    budget = seed * 0.15
 
-                        if not getattr(self, 'queue_ledger', None):
-                            from queue_ledger import QueueLedger
-                            self.queue_ledger = await asyncio.to_thread(QueueLedger)
+                    if not getattr(self, 'queue_ledger', None):
+                        from queue_ledger import QueueLedger
+                        self.queue_ledger = await asyncio.to_thread(QueueLedger)
 
-                        res_bal = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=10.0)
-                        cash = float(res_bal[0]) if isinstance(res_bal, (list, tuple)) and len(res_bal) > 0 else 0.0
+                    res_bal = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=10.0)
+                    cash = float(res_bal[0]) if isinstance(res_bal, (list, tuple)) and len(res_bal) > 0 else 0.0
 
-                        if side == "BUY":
-                            exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_ask_price, ticker), timeout=10.0))
-                        else:
-                            exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_bid_price, ticker), timeout=10.0))
+                    if side == "BUY":
+                        exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_ask_price, ticker), timeout=10.0))
+                    else:
+                        exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_bid_price, ticker), timeout=10.0))
 
-                        if exec_price <= 0.0:
-                            exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=10.0))
+                    if exec_price <= 0.0:
+                        exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=10.0))
 
-                        if exec_price <= 0.0:
-                            try: await query.edit_message_text("❌ 실시간 호가 스캔 실패. 취소되었습니다.", parse_mode='HTML')
-                            except Exception: pass
-                            return
+                    if exec_price <= 0.0:
+                        try: await query.edit_message_text("❌ 실시간 호가 스캔 실패. 취소되었습니다.", parse_mode='HTML')
+                        except Exception: pass
+                        return
 
-                        target_qty = math.floor(budget / exec_price)
+                    target_qty = math.floor(budget / exec_price)
 
-                        if side == "BUY":
-                            max_buy_qty = math.floor(cash / exec_price)
-                            final_qty = min(target_qty, max_buy_qty)
-                        else:
-                            q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) or []
-                            total_q = sum(int(float(str(item.get("qty") or 0).replace(',', ''))) for item in q_data if isinstance(item, dict))
-                            final_qty = min(target_qty, total_q)
+                    if side == "BUY":
+                        max_buy_qty = math.floor(cash / exec_price)
+                        final_qty = min(target_qty, max_buy_qty)
+                    else:
+                        q_data = await asyncio.to_thread(self.queue_ledger.get_queue, ticker) or []
+                        total_q = sum(int(float(str(item.get("qty") or 0).replace(',', ''))) for item in q_data if isinstance(item, dict))
+                        final_qty = min(target_qty, total_q)
 
-                        if final_qty <= 0:
-                            try: await query.edit_message_text("⚠️ 예산 부족 또는 잔고/큐 수량이 부족하여 취소되었습니다.", parse_mode='HTML')
-                            except Exception: pass
-                            return
+                    if final_qty <= 0:
+                        try: await query.edit_message_text("⚠️ 예산 부족 또는 잔고/큐 수량이 부족하여 취소되었습니다.", parse_mode='HTML')
+                        except Exception: pass
+                        return
 
+                    # 🚨 MODIFIED: [Case 50 최소 임계 구역 락온] 오직 주문 발송 순간에만 국소적으로 락을 점유함
+                    async with self.tx_lock:
                         res = await asyncio.wait_for(
                             asyncio.to_thread(self.broker.send_order, ticker, side, final_qty, exec_price, "LIMIT"),
                             timeout=10.0
@@ -609,10 +616,10 @@ class CallbackOrderHandler:
                             try: await query.edit_message_text(f"❌ <b>[{html.escape(str(ticker))}] 1회분 {side} 실패:</b> {err_msg}", parse_mode='HTML')
                             except Exception: pass
 
-                    except Exception as e:
-                        logging.error(f"🚨 1회분 수동 제어 실제 격발 에러: {e}")
-                        try: await query.edit_message_text(f"❌ 오류: {html.escape(str(e))}", parse_mode='HTML')
-                        except Exception: pass
+                except Exception as e:
+                    logging.error(f"🚨 1회분 수동 제어 실제 격발 에러: {e}")
+                    try: await query.edit_message_text(f"❌ 오류: {html.escape(str(e))}", parse_mode='HTML')
+                    except Exception: pass
 
                 # 🚨 MODIFIED: [데드락 붕괴 수술] tx_lock 블록을 완전히 빠져나온 후 동기화 엔진 가동
                 if trigger_sync:
