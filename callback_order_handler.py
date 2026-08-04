@@ -15,6 +15,7 @@
 #  └ 4. [애프터장 족쇄 해제 및 REG Lock 결속] 애프터마켓(AFTER) 진입 후에도 수동 타격을 100% 상시 허용하고, 체결 즉시 당일 스케줄러를 무효화(REG Lock)하여 중복 매매를 원천 차단함.
 # 🚨 MODIFIED: [팻핑거 절대 방어망 결속] MANUAL_PORTION 실행 시 즉시 격발되는 맹독성 로직을 소각하고, 예상 체결 수량과 단가를 브리핑하는 [2단계 확인 메뉴(Confirmation Menu)]를 강제 주입하여 오작동 대참사를 원천 봉쇄.
 # 🚨 MODIFIED: [제1헌법 철저 준수] get_exact_prev_close 내부 동기 블로킹 time.sleep(0.06)을 영구 소각하고 GlobalThrottle.wait_api_sync()로 100% 위임하여 스레드 마비 원천 차단 완료.
+# 🚨 MODIFIED: [데드락(Deadlock) 궁극 수술] MANUAL_PORTION 실행 직후 호출되는 process_auto_sync 로직을 tx_lock 임계 구역 바깥으로 100% 디커플링하여, 동기화 엔진 내부의 tx_lock 재진입 요구로 인한 스케줄러 연쇄 폭발(Timeout) 대참사를 완벽히 봉쇄 완료.
 # ==========================================================
 import logging
 import datetime
@@ -540,6 +541,7 @@ class CallbackOrderHandler:
                 try: await query.answer(f"⏳ [{ticker}] 1회분 수동 {side} 전송 중...", show_alert=False)
                 except Exception: pass
 
+                trigger_sync = False
                 async with self.tx_lock:
                     try:
                         seed = float(await asyncio.to_thread(self.cfg.get_seed, ticker) or 0.0)
@@ -601,11 +603,7 @@ class CallbackOrderHandler:
                             msg += "▫️ <b>당일 스케줄러 자동 매매 잠금(REG Lock)이 안전하게 락온되었습니다.</b>"
                             await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
 
-                            if ticker not in self.sync_engine.sync_locks:
-                                self.sync_engine.sync_locks[ticker] = asyncio.Lock()
-                            if not self.sync_engine.sync_locks[ticker].locked():
-                                await self.sync_engine.process_auto_sync(ticker, chat_id, context, silent_ledger=False)
-
+                            trigger_sync = True
                         else:
                             err_msg = html.escape(str(res.get('msg1') or '알 수 없는 에러')) if isinstance(res, dict) else '통신 장애'
                             try: await query.edit_message_text(f"❌ <b>[{html.escape(str(ticker))}] 1회분 {side} 실패:</b> {err_msg}", parse_mode='HTML')
@@ -616,3 +614,9 @@ class CallbackOrderHandler:
                         try: await query.edit_message_text(f"❌ 오류: {html.escape(str(e))}", parse_mode='HTML')
                         except Exception: pass
 
+                # 🚨 MODIFIED: [데드락 붕괴 수술] tx_lock 블록을 완전히 빠져나온 후 동기화 엔진 가동
+                if trigger_sync:
+                    if ticker not in self.sync_engine.sync_locks:
+                        self.sync_engine.sync_locks[ticker] = asyncio.Lock()
+                    if not self.sync_engine.sync_locks[ticker].locked():
+                        await self.sync_engine.process_auto_sync(ticker, chat_id, context, silent_ledger=False)
