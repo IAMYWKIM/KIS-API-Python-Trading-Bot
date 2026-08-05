@@ -14,7 +14,7 @@
 #  └ 3. [2-Tier 지층 자동 병합 사수] 타격 직후 QueueLedger의 add_lot/pop_lots를 원자적으로 호출하여 하위 2-Tier 병합 아키텍처를 무결하게 자동 연동.
 #  └ 4. [애프터장 족쇄 해제 및 REG Lock 결속] 애프터마켓(AFTER) 진입 후에도 수동 타격을 100% 상시 허용하고, 체결 즉시 당일 스케줄러를 무효화(REG Lock)하여 중복 매매를 원천 차단함.
 # 🚨 MODIFIED: [팻핑거 절대 방어망 결속] MANUAL_PORTION 실행 시 즉시 격발되는 맹독성 로직을 소각하고, 예상 체결 수량과 단가를 브리핑하는 [2단계 확인 메뉴(Confirmation Menu)]를 강제 주입하여 오작동 대참사를 원천 봉쇄.
-# 🚨 MODIFIED: [제1헌법 철저 준수] get_exact_prev_close 내부 동기 블로킹 time.sleep(0.06)을 영구 소각하고 GlobalThrottle.wait_api_sync()로 100% 위임하여 스레드 마비 원천 차단 완료.
+# 🚨 MODIFIED: [제1헌법 철저 준수] get_exact_prev_close 및 모든 API 통신 내부 동기 블로킹 time.sleep(0.06)을 영구 소각하고 GlobalThrottle.wait_api_sync()로 100% 위임하여 스레드 마비 원천 차단 완료.
 # 🚨 MODIFIED: [데드락(Deadlock) 궁극 수술] MANUAL_PORTION 실행 직후 호출되는 process_auto_sync 로직을 tx_lock 임계 구역 바깥으로 100% 디커플링하여, 동기화 엔진 내부의 tx_lock 재진입 요구로 인한 스케줄러 연쇄 폭발(Timeout) 대참사를 완벽히 봉쇄 완료.
 # 🚨 MODIFIED: [Case 50 전역 락 병목 원천 봉쇄] EXEC 및 MANUAL_PORTION 내부에 광범위하게 적용되어 있던 `async with self.tx_lock:` 족쇄를 해체. 잔고/호가 스캔 등 API 대기 시간(Network I/O)을 락 외부로 100% 끄집어내고, 오직 `send_order` 주문 발사 찰나의 임계 구역에만 국소적으로 락을 래핑하여 병렬 처리 성능 극대화 팩트 락온.
 # ==========================================================
@@ -204,6 +204,7 @@ class CallbackOrderHandler:
             if status_code in ["AFTER", "CLOSE", "PRE"]:
                 try:
                     def get_exact_prev_close(ticker_name):
+                        # 🚨 MODIFIED: [제1헌법 준수] 동기적 time.sleep 맹독성 블로킹 소각 및 중앙 통제소 락온
                         GlobalThrottle.wait_api_sync()
                         df = yf.Ticker(ticker_name).history(period="5d", interval="1d", timeout=5)
                         if not df.empty and 'Close' in df.columns:
@@ -480,7 +481,7 @@ class CallbackOrderHandler:
                 try: await query.answer(f"⏳ [{ticker}] 1회분 수동 {side} 타점 계산 중...", show_alert=False)
                 except Exception: pass
 
-                # 🚨 MODIFIED: [Case 50 전역 락 병목 소각] 예상 타점 연산 시 tx_lock 진입 원천 배제
+                # 🚨 MODIFIED: [Case 50 전역 락 병목 소각] 예상 타점 연산 시 tx_lock 진입 원천 배제, 3단 지수 백오프 결속
                 try:
                     seed = float(await asyncio.to_thread(self.cfg.get_seed, ticker) or 0.0)
                     budget = seed * 0.15 
@@ -489,16 +490,41 @@ class CallbackOrderHandler:
                         from queue_ledger import QueueLedger
                         self.queue_ledger = await asyncio.to_thread(QueueLedger)
 
-                    res_bal = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=10.0)
-                    cash = float(res_bal[0]) if isinstance(res_bal, (list, tuple)) and len(res_bal) > 0 else 0.0
+                    cash = 0.0
+                    for attempt in range(3):
+                        try:
+                            await asyncio.to_thread(GlobalThrottle.wait_api_sync)
+                            res_bal = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=10.0)
+                            cash = float(str(res_bal[0]).replace(',', '')) if isinstance(res_bal, (list, tuple)) and len(res_bal) > 0 else 0.0
+                            break
+                        except Exception:
+                            if attempt == 2: pass
+                            else: await asyncio.sleep(1.0 * (2 ** attempt))
 
-                    if side == "BUY":
-                        exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_ask_price, ticker), timeout=10.0))
-                    else:
-                        exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_bid_price, ticker), timeout=10.0))
+                    exec_price = 0.0
+                    for attempt in range(3):
+                        try:
+                            await asyncio.to_thread(GlobalThrottle.wait_api_sync)
+                            if side == "BUY":
+                                p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_ask_price, ticker), timeout=10.0)
+                            else:
+                                p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_bid_price, ticker), timeout=10.0)
+                            exec_price = float(str(p_val or 0.0).replace(',', ''))
+                            if exec_price > 0: break
+                        except Exception:
+                            if attempt == 2: pass
+                            else: await asyncio.sleep(1.0 * (2 ** attempt))
 
                     if exec_price <= 0.0:
-                        exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=10.0))
+                        for attempt in range(3):
+                            try:
+                                await asyncio.to_thread(GlobalThrottle.wait_api_sync)
+                                c_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=10.0)
+                                exec_price = float(str(c_val or 0.0).replace(',', ''))
+                                if exec_price > 0: break
+                            except Exception:
+                                if attempt == 2: pass
+                                else: await asyncio.sleep(1.0 * (2 ** attempt))
 
                     if exec_price <= 0.0:
                         try: await query.answer("❌ 실시간 호가 스캔 실패", show_alert=True)
@@ -547,7 +573,7 @@ class CallbackOrderHandler:
 
                 trigger_sync = False
                 
-                # 🚨 MODIFIED: [Case 50 전역 락 병목 소각] 가격 스캔 및 예산 연산 로직을 락 외부로 완전히 추출
+                # 🚨 MODIFIED: [Case 50 전역 락 병목 소각] 가격 스캔 및 예산 연산 로직을 락 외부로 완전히 추출, 3단 지수 백오프 결속
                 try:
                     seed = float(await asyncio.to_thread(self.cfg.get_seed, ticker) or 0.0)
                     budget = seed * 0.15
@@ -556,16 +582,41 @@ class CallbackOrderHandler:
                         from queue_ledger import QueueLedger
                         self.queue_ledger = await asyncio.to_thread(QueueLedger)
 
-                    res_bal = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=10.0)
-                    cash = float(res_bal[0]) if isinstance(res_bal, (list, tuple)) and len(res_bal) > 0 else 0.0
+                    cash = 0.0
+                    for attempt in range(3):
+                        try:
+                            await asyncio.to_thread(GlobalThrottle.wait_api_sync)
+                            res_bal = await asyncio.wait_for(asyncio.to_thread(self.broker.get_account_balance), timeout=10.0)
+                            cash = float(str(res_bal[0]).replace(',', '')) if isinstance(res_bal, (list, tuple)) and len(res_bal) > 0 else 0.0
+                            break
+                        except Exception:
+                            if attempt == 2: pass
+                            else: await asyncio.sleep(1.0 * (2 ** attempt))
 
-                    if side == "BUY":
-                        exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_ask_price, ticker), timeout=10.0))
-                    else:
-                        exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_bid_price, ticker), timeout=10.0))
+                    exec_price = 0.0
+                    for attempt in range(3):
+                        try:
+                            await asyncio.to_thread(GlobalThrottle.wait_api_sync)
+                            if side == "BUY":
+                                p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_ask_price, ticker), timeout=10.0)
+                            else:
+                                p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_bid_price, ticker), timeout=10.0)
+                            exec_price = float(str(p_val or 0.0).replace(',', ''))
+                            if exec_price > 0: break
+                        except Exception:
+                            if attempt == 2: pass
+                            else: await asyncio.sleep(1.0 * (2 ** attempt))
 
                     if exec_price <= 0.0:
-                        exec_price = float(await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=10.0))
+                        for attempt in range(3):
+                            try:
+                                await asyncio.to_thread(GlobalThrottle.wait_api_sync)
+                                c_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=10.0)
+                                exec_price = float(str(c_val or 0.0).replace(',', ''))
+                                if exec_price > 0: break
+                            except Exception:
+                                if attempt == 2: pass
+                                else: await asyncio.sleep(1.0 * (2 ** attempt))
 
                     if exec_price <= 0.0:
                         try: await query.edit_message_text("❌ 실시간 호가 스캔 실패. 취소되었습니다.", parse_mode='HTML')
@@ -588,6 +639,7 @@ class CallbackOrderHandler:
                         return
 
                     # 🚨 MODIFIED: [Case 50 최소 임계 구역 락온] 오직 주문 발송 순간에만 국소적으로 락을 점유함
+                    await asyncio.to_thread(GlobalThrottle.wait_api_sync)
                     async with self.tx_lock:
                         res = await asyncio.wait_for(
                             asyncio.to_thread(self.broker.send_order, ticker, side, final_qty, exec_price, "LIMIT"),
