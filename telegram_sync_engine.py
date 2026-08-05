@@ -7,6 +7,7 @@
 # 🚨 MODIFIED: [자전거래/암살자 찌꺼기 맹독성 유입 궁극 방어] 16:05 EST 정산 시 KIS 실원장(target_execs)의 모든 당일 체결 내역을 맹목적으로 무한 편입하던 로직 전면 소각.
 # 🚨 MODIFIED: [통신 장애 핀셋 추적망 결속] process_auto_sync 내부에서 broker API 호출 실패 시 정확한 실패 구간(Endpoint)과 사유를 문자열로 반환하여 상위 라우터가 진단할 수 있도록 팩트 락온.
 # 🚨 NEW: [스냅샷 디커플링 해소 (Nuke & Regenerate) 아키텍처 팩트 결속] 잔고 오차 교정, 수동 조작, 큐 병합 등 장부에 단 1주라도 변동이 감지되면 `snapshot_needs_regen` 트리거를 발동시켜, 16:00 EST 타임락을 강제 개방(Override)하고 오염된 낡은 스냅샷(daily_snapshot)을 물리적으로 영구 소각(Nuke)한 뒤 최신 수량 기반의 팩트 지시서로 즉각 재생성(Regenerate)하도록 100% 시스템 교정 완료.
+# 🚨 MODIFIED: [체결 원장 디커플링 붕괴 수술] 16:05 EST 정산 시 한투(KIS)에서 수신한 체결 원장 데이터(`execs_raw`) 중, 암살자 캐시에 기록된 `history_odnos`에 속하는 주문은 100% 투명 인간(Ghosting) 취급하여 도려냄으로써, 암살자의 타점 오염 및 유령 졸업(Ghost Graduation)을 원천 봉쇄.
 # ==========================================================
 
 import logging
@@ -164,6 +165,18 @@ class TelegramSyncEngine:
                 
                 max_check_qty = max(max_check_qty, a_qty_for_check)
 
+                # 🚨 MODIFIED: [체결 원장 디커플링 붕괴 수술] 암살자 캐시에 기록된 주문번호 추출 (Ghosting 필터 용도)
+                avwap_state_file = f"data/avwap_trade_state_{ticker}.json"
+                history_odnos = []
+                with GlobalThrottle.get_file_lock(avwap_state_file):
+                    try:
+                        with open(avwap_state_file, 'r', encoding='utf-8') as f:
+                            avwap_data = json.load(f)
+                            if isinstance(avwap_data, dict) and avwap_data.get('date') == target_ledger_str:
+                                history_odnos = avwap_data.get('history_odnos', [])
+                    except Exception:
+                        pass
+                        
                 kis_search_start = (now_kst - datetime.timedelta(days=4)).strftime('%Y%m%d')
                 query_end_dt = now_kst.strftime('%Y%m%d')
 
@@ -172,6 +185,12 @@ class TelegramSyncEngine:
                     if not execs_raw: return filtered
                     for ex in execs_raw:
                         if not isinstance(ex, dict): continue
+                        
+                        # 🚨 MODIFIED: [체결 원장 디커플링 붕괴 수술] 암살자 찌꺼기(Ghost) 100% 소각 배제
+                        ex_odno = str(ex.get('odno', ''))
+                        if ex_odno and ex_odno in history_odnos:
+                            continue
+                            
                         ord_dt = ex.get('ord_dt') or ex.get('ord_strt_dt')
                         if not ord_dt: continue
                         ord_tmd = ex.get('ord_tmd')
@@ -215,11 +234,6 @@ class TelegramSyncEngine:
                         return "체결 원장 조회(get_execution_history) 실패 - API 서버 무응답 또는 거절"
                     target_execs = filter_to_est(raw_execs)
 
-                # 🚨 MODIFIED: [단일 지층 팽창 자가 치유 방해 맹독성 Bypass 궁극 수술]
-                # 실체결 단가 소급 업데이트 로직만 if target_execs: 블록 내부에 남기고,
-                # 장부 교차 검증 및 큐 장부 동기화(분할) 로직은 들여쓰기를 전진 배치(Un-indent)하여 
-                # 당일 체결 내역이 0건이더라도 무조건 100% 팩트 연산되도록 격리 및 사수 완료.
-                
                 calibrated_count = 0
                 if target_execs:
                     calibrated_count = await self._retry_api(self.cfg.calibrate_ledger_prices, ticker, target_ledger_str, target_execs, timeout=10.0, default=0)

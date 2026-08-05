@@ -6,6 +6,7 @@
 # 🚨 NEW: [Case 47 자전거래(Wash Trade) 절대 방어망 결속] 암살자 오버나이트 모드 허용 시 기장전된 +1.0% 지정가 익절 덫과 본진(V-REV)의 16:01 애프터장 지연 고가 매수 덫이 충돌하여 KIS 서버에서 리젝(Reject)당하는 맹독성 패러독스를 완벽히 차단하기 위해, 타격 직전 암살자 덫 임시 취소 및 타격 직후 원상 복구(재장전) 파이프라인 100% 팩트 이식 완료.
 # 🚨 MODIFIED: [예수금 0원 매도 컷오프 맹점 수술] 애프터장 예수금 조회 결과 0원(cash=0.0)일 때 루프 자체를 continue로 끊어버리는 코드를 영구 소각하고, 하위 로직에서 매수(BUY) 플랜만 스킵하고 매도(SELL) 플랜은 정상 집행하도록 100% 팩트 교정 완료.
 # 🚨 MODIFIED: [Case 54 상태 파일 스키마 불일치 붕괴 수술] target_price 단일 추출을 폐기하고 o.get('target_price', o.get('price', 0.0)) 듀얼 폴백을 결속하여 0.0달러 무지성 덤핑 패러독스 완벽 방어.
+# 🚨 MODIFIED: [체결 원장 디커플링 붕괴 수술] 애프터장에서 암살자 오버나이트 익절 덫을 재장전할 때 생성되는 새로운 주문번호(odno) 역시 `history_odnos`에 완벽하게 캐싱하여 16:05 정산 시 암살자 찌꺼기가 유입되는 대참사를 원천 차단.
 # ==========================================================
 import logging
 import asyncio
@@ -288,6 +289,13 @@ async def execute_aftermarket_trade(tx_lock, cfg, broker, strategy, queue_ledger
                             new_odno = str(s_res.get('odno', ''))
                             avwap_state_fresh['sell_odno'] = new_odno
                             avwap_state_fresh['suppress_sell'] = False
+                            
+                            # 🚨 MODIFIED: [체결 원장 디커플링 붕괴 수술] 애프터장 재장전 덫 번호도 Ghosting 망에 캐싱하여 타점 오염 영구 차단
+                            if 'history_odnos' not in avwap_state_fresh:
+                                avwap_state_fresh['history_odnos'] = []
+                            if new_odno and new_odno not in avwap_state_fresh['history_odnos']:
+                                avwap_state_fresh['history_odnos'].append(str(new_odno))
+                                
                             await _retry_api(_atomic_write_json_sync, avwap_state_file, avwap_state_fresh, timeout=10.0)
                             
                             if chat_id:
