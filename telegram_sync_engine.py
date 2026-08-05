@@ -6,6 +6,7 @@
 # 🚨 MODIFIED: [Event Loop 마비 궁극 수술] get_exact_prev_close 내부에 잔존하던 맹독성 time.sleep(0.06)을 영구 소각하고 GlobalThrottle.wait_api_sync() 중앙 통제 락온 완료.
 # 🚨 MODIFIED: [자전거래/암살자 찌꺼기 맹독성 유입 궁극 방어] 16:05 EST 정산 시 KIS 실원장(target_execs)의 모든 당일 체결 내역을 맹목적으로 무한 편입하던 로직 전면 소각.
 # 🚨 MODIFIED: [통신 장애 핀셋 추적망 결속] process_auto_sync 내부에서 broker API 호출 실패 시 정확한 실패 구간(Endpoint)과 사유를 문자열로 반환하여 상위 라우터가 진단할 수 있도록 팩트 락온.
+# 🚨 NEW: [스냅샷 디커플링 해소 (Nuke & Regenerate) 아키텍처 팩트 결속] 잔고 오차 교정, 수동 조작, 큐 병합 등 장부에 단 1주라도 변동이 감지되면 `snapshot_needs_regen` 트리거를 발동시켜, 16:00 EST 타임락을 강제 개방(Override)하고 오염된 낡은 스냅샷(daily_snapshot)을 물리적으로 영구 소각(Nuke)한 뒤 최신 수량 기반의 팩트 지시서로 즉각 재생성(Regenerate)하도록 100% 시스템 교정 완료.
 # ==========================================================
 
 import logging
@@ -20,6 +21,7 @@ import traceback
 import math 
 import html 
 import functools
+import glob
 import yfinance as yf
 import pandas as pd 
 import pandas_market_calendars as mcal
@@ -83,10 +85,14 @@ class TelegramSyncEngine:
                 kst = ZoneInfo('Asia/Seoul')
                 now_kst = datetime.datetime.now(kst)
 
+                # 🚨 NEW: 스냅샷 팩트 재생성 트리거 초기화
+                snapshot_needs_regen = False
+
                 last_split_date = await self._retry_api(self.cfg.get_last_split_date, ticker, default="")
                 split_ratio, split_date = await self._retry_api(self.broker.get_recent_stock_split, ticker, last_split_date, default=(0.0, ""))
                 
                 if split_ratio > 0.0 and split_date != "":
+                    snapshot_needs_regen = True # 🚨 트리거 발동
                     await self._retry_api(self.cfg.apply_stock_split, ticker, split_ratio, timeout=10.0)
                     if getattr(self, 'queue_ledger', None):
                         await self._retry_api(self.queue_ledger.apply_stock_split, ticker, split_ratio, timeout=10.0)
@@ -218,6 +224,7 @@ class TelegramSyncEngine:
                 if target_execs:
                     calibrated_count = await self._retry_api(self.cfg.calibrate_ledger_prices, ticker, target_ledger_str, target_execs, timeout=10.0, default=0)
                     if calibrated_count > 0:
+                        snapshot_needs_regen = True # 🚨 트리거 발동
                         logging.info(f"🔧 [{ticker}] LOC/MOC 주문 {calibrated_count}건에 대해 실제 체결 단가 소급 업데이트를 완료했습니다.")
 
                 full_ledger = await self._retry_api(self.cfg.get_ledger, default=[])
@@ -242,9 +249,11 @@ class TelegramSyncEngine:
                 needs_reconstruction = (diff != 0)
 
                 if not needs_reconstruction and price_diff >= 0.01:
+                    snapshot_needs_regen = True # 🚨 트리거 발동
                     await self._retry_api(self.cfg.calibrate_avg_price, ticker, actual_avg, timeout=10.0)
                     await self._safe_send(context, chat_id, f"🔧 <b>[{html.escape(str(ticker))}] 장부 평단가 미세 오차({price_diff:.4f}) 교정 완료!</b>", parse_mode='HTML')
                 elif needs_reconstruction:
+                    snapshot_needs_regen = True # 🚨 트리거 발동
                     temp_recs = [r for r in recs if r.get('date') != target_ledger_str or 'INIT' in str(r.get('exec_id', ''))]
                     
                     temp_res = await self._retry_api(self.cfg.calculate_holdings, ticker, temp_recs, default=(0, 0.0, 0.0, 0.0))
@@ -322,6 +331,7 @@ class TelegramSyncEngine:
                                 if tot_q > 0: actual_clear_price = round(tot_amt / tot_q, 4)
 
                         if tot_q > vrev_ledger_qty:
+                            snapshot_needs_regen = True # 🚨 트리거 발동
                             missing_qty = tot_q - vrev_ledger_qty
                             buy_execs = [ex for ex in (target_execs or []) if ex.get('sll_buy_dvsn_cd') == "02"]
                             temp_invested = sum(self._safe_float(item.get("qty")) * self._safe_float(item.get("price")) for item in q_data_before if isinstance(item, dict))
@@ -491,12 +501,14 @@ class TelegramSyncEngine:
                             )
                          
                         if calibrated:
+                            snapshot_needs_regen = True # 🚨 트리거 발동
                             if gap_qty > 0:
                                 await self._safe_send(context, chat_id, f"🔧 <b>[{html.escape(str(ticker))}] V-REV 큐(Queue) 비파괴 보정 및 리앵커링 완료!</b>\n▫️ 수동 매도 물량(<b>{gap_qty}주</b>)을 LIFO 큐에서 안전하게 차감하고, 수익금만큼 잔여 지층의 평단가를 일괄 차감했습니다.", parse_mode='HTML')
                             else:
                                 await self._safe_send(context, chat_id, f"🔧 <b>[{html.escape(str(ticker))}] V-REV 큐(Queue) 단일 지층 자가 치유 완료!</b>\n▫️ 비정상적으로 팽창된 단일 지층을 1층과 상위층으로 정밀 분할(Split)하여 팩트 복구했습니다.", parse_mode='HTML')
                          
                     elif safe_actual_qty_for_vrev > 0 and safe_actual_qty_for_vrev > vrev_ledger_qty:
+                        snapshot_needs_regen = True # 🚨 트리거 발동
                         gap_qty = safe_actual_qty_for_vrev - vrev_ledger_qty
                         
                         logging.info(f"🛡️ [{ticker}] V-REV 큐 장부 절대주의 가동: KIS 실잔고 초과분({gap_qty}주)을 개인 물량으로 간주하여 편입 차단.")
@@ -545,7 +557,23 @@ class TelegramSyncEngine:
                             await self._retry_api(self.cfg._save_json, self.cfg.FILES["LEDGER"], all_recs, timeout=10.0)
                             await self._safe_send(context, chat_id, f"⚠️ <b>[{html.escape(str(ticker))} 강제 정산 완료]</b>\n잔고가 0주이나 마이너스 수익 상태이므로 명예의 전당 박제 없이 장부를 비우고 새출발 타점을 장전합니다.", parse_mode='HTML')
 
-                if now_est.time() >= datetime.time(16, 0):
+                is_after_market = now_est.time() >= datetime.time(16, 0)
+                
+                # 🚨 MODIFIED: [스냅샷 디커플링 해소 수술] 장부나 큐에 단 1주라도 변동이 생기면 낡은 스냅샷 소각 및 즉시 팩트 재생성 가동
+                if is_after_market or snapshot_needs_regen:
+                    if snapshot_needs_regen:
+                        logging.info(f"🔄 [{ticker}] 장부/큐 오차 교정 감지! 낡은 스냅샷(Snapshot) 및 캐시를 전면 소각(Nuke)하고 재생성(Regenerate)합니다.")
+                        def _nuke_old_files():
+                            for f in glob.glob(f"data/daily_snapshot_*_{ticker}.json"):
+                                with GlobalThrottle.get_file_lock(f):
+                                    try: os.remove(f)
+                                    except OSError: pass
+                            for f in glob.glob(f"data/vwap_state_*_{ticker}.json"):
+                                with GlobalThrottle.get_file_lock(f):
+                                    try: os.remove(f)
+                                    except OSError: pass
+                        await asyncio.wait_for(asyncio.to_thread(_nuke_old_files), timeout=10.0)
+
                     try:
                         curr_p_val = await self._retry_api(self.broker.get_current_price, ticker, timeout=10.0)
                         curr_p = self._safe_float(curr_p_val)
@@ -615,9 +643,13 @@ class TelegramSyncEngine:
                             self.strategy.get_plan, ticker, curr_p, final_avg, final_qty, prev_c, ma_5day=ma_5day,
                             market_type="REG", available_cash=avail_cash, is_simulation=True, is_snapshot_mode=True
                         ), timeout=15.0)
-                        logging.info(f"📸 [{ticker}] 16:05 EST 확정 정산 완료 후 명일(D+1) 대비 스냅샷 박제(Forward-Lock) 성공.")
+                        
+                        if is_after_market:
+                            logging.info(f"📸 [{ticker}] 16:05 EST 확정 정산 완료 후 명일(D+1) 대비 스냅샷 박제(Forward-Lock) 성공.")
+                        else:
+                            logging.info(f"📸 [{ticker}] 장부 교정 감지! 낡은 스냅샷 소각 및 실시간 팩트 지시서 재생성(Regenerate) 성공.")
                     except Exception as e:
-                        logging.error(f"🚨 [{ticker}] 16:05 EST 스냅샷 팩트 박제 실패: {e}")
+                        logging.error(f"🚨 [{ticker}] 스냅샷 팩트 박제 실패: {e}")
 
                 return "SUCCESS"
 
