@@ -8,6 +8,7 @@
 # 🚨 NEW: [State Mismatch 궁극 수술] EDIT_Q(수동 지층 수정) 직후 낡은 스냅샷(daily_snapshot) 및 상태 캐시(vwap_state)를 원자적으로 소각(Nuke)하여, 지시서가 최신 팩트 기반으로 100% 재생성(Regenerate)되도록 아키텍처 수복. 가이드 메시지의 /sync 오기도 /record로 팩트 교정 완료.
 # 🚨 MODIFIED: [이중 타격 방어 팩트 확장] EDIT_Q(수동 지층 수정) 시 Nuke 파이프라인에 `vrev_slice_state` 및 `vrev_aftermarket_state`까지 100% 영구 소각 대상을 전면 확장하여 진행 중인 VWAP 스케줄러의 이중 타격 대참사를 원천 차단.
 # 🚨 RESTORED: [유실 코드 100% 팩트 복구] _handle_callback_reset 및 _handle_callback_confirm 메서드를 원상 복구하고 파일 뮤텍스를 강제 주입하여 무결성 사수.
+# 🚨 MODIFIED: [시간대별 동적 셧다운 락온] _nuke_assassin_data 내부에서 무지성 shutdown=True 주입을 영구 소각하고, 프리장(04:00~09:29 EST)에만 락을 거는 동적 방어망 100% 팩트 교정 완료.
 # ==========================================================
 
 import logging
@@ -495,7 +496,7 @@ class TelegramStates:
             except Exception as e:
                 logging.error(f"🚨 [{ticker}] 암살자 장부 강제 소각 중 에러: {e}")
             
-            # 🚨 MODIFIED: [암살자 부활 패러독스 궁극 방어] 파일 물리 삭제 제거 및 shutdown 상태 원자적 주입
+            # 🚨 MODIFIED: [암살자 부활 패러독스 궁극 방어] 파일 물리 삭제 제거 및 시간대별 동적 셧다운 주입
             state_file = f"data/avwap_trade_state_{ticker}.json"
             # 🚨 MODIFIED: 파일 뮤텍스 결속
             with GlobalThrottle.get_file_lock(state_file):
@@ -509,12 +510,16 @@ class TelegramStates:
                     except Exception:
                         pass
 
+                    # 🚨 MODIFIED: [시간대별 동적 셧다운 락온] 프리장(04:00~09:29)에만 강제 셧다운을 주입하고, 그 외 시간대는 스케줄러가 자율 판별하도록 팩트 교정
+                    curr_time = est_now.time()
+                    is_pre_market = datetime.time(4, 0) <= curr_time < datetime.time(9, 30)
+
                     state_data['date'] = today_str
                     state_data['qty'] = 0
                     state_data['buy_odno'] = ""
                     state_data['sell_odno'] = ""
-                    state_data['shutdown'] = True
-                    state_data['dumped'] = True
+                    state_data['shutdown'] = is_pre_market
+                    state_data['dumped'] = is_pre_market
 
                     dir_name = os.path.dirname(state_file) or '.'
                     try: os.makedirs(dir_name, exist_ok=True)
