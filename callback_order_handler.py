@@ -17,8 +17,7 @@
 # 🚨 MODIFIED: [제1헌법 철저 준수] get_exact_prev_close 및 모든 API 통신 내부 동기 블로킹 time.sleep(0.06)을 영구 소각하고 GlobalThrottle.wait_api_sync()로 100% 위임하여 스레드 마비 원천 차단 완료. 또한 QueueLedger 및 CFG 파일 I/O 전역에 wait_for(timeout=10.0) 족쇄 100% 강제 래핑.
 # 🚨 MODIFIED: [데드락(Deadlock) 궁극 수술] MANUAL_PORTION 실행 직후 호출되는 process_auto_sync 로직을 tx_lock 임계 구역 바깥으로 100% 디커플링하여, 동기화 엔진 내부의 tx_lock 재진입 요구로 인한 스케줄러 연쇄 폭발(Timeout) 대참사를 완벽히 봉쇄 완료.
 # 🚨 MODIFIED: [Case 50 전역 락 병목 원천 봉쇄] EXEC 및 MANUAL_PORTION 내부에 광범위하게 적용되어 있던 `async with self.tx_lock:` 족쇄를 해체. 잔고/호가 스캔 등 API 대기 시간(Network I/O)을 락 외부로 100% 끄집어내고, 오직 `send_order` 주문 발사 찰나의 임계 구역에만 국소적으로 락을 래핑하여 병렬 처리 성능 극대화 팩트 락온.
-# 🚨 NEW: [스냅샷 디커플링 해소 수술] MANUAL_PORTION 및 EMERGENCY_EXEC 체결 직후 낡은 스냅샷(daily_snapshot) 및 상태 캐시(vwap_state) 파일을 원자적으로 색인하여 영구 소각(Nuke)하고 `process_auto_sync`를 기동시켜 최신 장부 수량 기반의 팩트 지시서를 재생성(Regenerate)하도록 하드코딩.
-# 🚨 NEW: [Float 정밀도 붕괴 방어] _safe_float 헬퍼 주입을 통해 NaN, Infinity, 문자열 기반 ValueError 런타임 즉사 버그 전면 차단.
+# 🚨 MODIFIED: [이중 타격(Double Spending) 대참사 원천 봉쇄] 수동 타격(MANUAL_PORTION, EMERGENCY_EXEC) 직후 호출되는 Nuke 파이프라인에 `vrev_slice_state` 및 `vrev_aftermarket_state` 파일 영구 소각 로직을 100% 팩트 주입하여, 진행 중이던 슬라이싱 지시서를 원자적으로 파기(Bypass)함으로써 자전거래 및 이중 타격 패러독스를 완벽히 방어.
 # ==========================================================
 import logging
 import datetime
@@ -134,13 +133,22 @@ class CallbackOrderHandler:
                     if isinstance(res, dict) and str(res.get('rt_cd', '')) == '0':
                         await asyncio.wait_for(asyncio.to_thread(self.queue_ledger.pop_lots, ticker, emergency_qty), timeout=10.0)
                         
-                        # 🚨 MODIFIED: [스냅샷 디커플링 해소] 수동 긴급 수혈 후 낡은 스냅샷 및 상태 캐시 영구 소각
+                        # 🚨 MODIFIED: [이중 타격 방어] 수동 긴급 수혈 후 낡은 스냅샷, 상태 캐시, 슬라이스 지시서까지 완벽 소각
                         def _nuke_snapshot_and_state_emg():
                             for f in glob.glob(f"data/daily_snapshot_*_{ticker}.json"):
                                 with GlobalThrottle.get_file_lock(f):
                                     try: os.remove(f)
                                     except OSError: pass
                             for f in glob.glob(f"data/vwap_state_*_{ticker}.json"):
+                                with GlobalThrottle.get_file_lock(f):
+                                    try: os.remove(f)
+                                    except OSError: pass
+                            # 🚨 NEW: 슬라이싱 및 애프터장 지시서 원자적 소각 결속
+                            for f in glob.glob(f"data/vrev_slice_state_{ticker}.json"):
+                                with GlobalThrottle.get_file_lock(f):
+                                    try: os.remove(f)
+                                    except OSError: pass
+                            for f in glob.glob(f"data/vrev_aftermarket_state_{ticker}.json"):
                                 with GlobalThrottle.get_file_lock(f):
                                     try: os.remove(f)
                                     except OSError: pass
@@ -697,13 +705,22 @@ class CallbackOrderHandler:
 
                             await asyncio.wait_for(asyncio.to_thread(self.cfg.set_lock, ticker, "REG"), timeout=10.0)
 
-                            # 🚨 MODIFIED: [스냅샷 디커플링 해소] 1회분 수동 타격 후 낡은 스냅샷 및 상태 캐시 영구 소각
+                            # 🚨 MODIFIED: [이중 타격 방어] 수동 타격 팩트 격발 후 스냅샷, 상태 캐시, 슬라이싱 및 애프터장 지시서 전면 100% 소각
                             def _nuke_snapshot_and_state_man():
                                 for f in glob.glob(f"data/daily_snapshot_*_{ticker}.json"):
                                     with GlobalThrottle.get_file_lock(f):
                                         try: os.remove(f)
                                         except OSError: pass
                                 for f in glob.glob(f"data/vwap_state_*_{ticker}.json"):
+                                    with GlobalThrottle.get_file_lock(f):
+                                        try: os.remove(f)
+                                        except OSError: pass
+                                # 🚨 NEW: 1분 슬라이스 지시서 및 애프터장 지연 지시서 원자적 영구 소각
+                                for f in glob.glob(f"data/vrev_slice_state_{ticker}.json"):
+                                    with GlobalThrottle.get_file_lock(f):
+                                        try: os.remove(f)
+                                        except OSError: pass
+                                for f in glob.glob(f"data/vrev_aftermarket_state_{ticker}.json"):
                                     with GlobalThrottle.get_file_lock(f):
                                         try: os.remove(f)
                                         except OSError: pass

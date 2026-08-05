@@ -5,7 +5,8 @@
 # 🚨 MODIFIED: [Lost Update 궁극 방어] 파일 물리 삭제 및 덮어쓰기 로직(_hijack_vwap_lock, _process_reset_files, _nuke_assassin_data) 전역에 GlobalThrottle.get_file_lock()을 100% 팩트 래핑 완료.
 # 🚨 MODIFIED: [중복 매도 패러독스 궁극 수술] RESET:LOCK (잠금 해제) 격발 시, 스냅샷 파일뿐만 아니라 봇이 쥐고 있던 '당일 체결 기억(vwap_state)' 캐시 파일까지 와일드카드(Glob)로 100% 영구 소각하여 0주 졸업 및 이중 매도 락온(Ghost Selling Block) 맹점을 원천 봉쇄.
 # 🚨 MODIFIED: [장부 인덱스 뒤집힘 패러독스 영구 소각] EDIT_Q (수동 지층 수정) 직후 하드코딩되어 있던 `process_auto_sync` (자동 동기화) 호출 로직을 시스템 전역에서 100% 영구 소각. 다단계 수동 조작 중 KIS 실잔고 불일치를 오인하여 최신 1지층을 팝(Pop)해버리는 맹독성 엔진 난입을 완벽히 차단함.
-# 🚨 NEW: [State Mismatch 궁극 수술] EDIT_Q(수동 지층 수정) 직후 낡은 스냅샷(daily_snapshot) 및 상태 캐시를 원자적으로 소각(Nuke)하여, 지시서가 최신 팩트 기반으로 100% 재생성(Regenerate)되도록 아키텍처 수복. 가이드 메시지의 /sync 오기도 /record로 팩트 교정 완료.
+# 🚨 NEW: [State Mismatch 궁극 수술] EDIT_Q(수동 지층 수정) 직후 낡은 스냅샷(daily_snapshot) 및 상태 캐시(vwap_state)를 원자적으로 소각(Nuke)하여, 지시서가 최신 팩트 기반으로 100% 재생성(Regenerate)되도록 아키텍처 수복. 가이드 메시지의 /sync 오기도 /record로 팩트 교정 완료.
+# 🚨 MODIFIED: [이중 타격 방어 팩트 확장] EDIT_Q(수동 지층 수정) 시 Nuke 파이프라인에 `vrev_slice_state` 및 `vrev_aftermarket_state`까지 100% 영구 소각 대상을 전면 확장하여 진행 중인 VWAP 스케줄러의 이중 타격 대참사를 원천 차단.
 # 🚨 RESTORED: [유실 코드 100% 팩트 복구] _handle_callback_reset 및 _handle_callback_confirm 메서드를 원상 복구하고 파일 뮤텍스를 강제 주입하여 무결성 사수.
 # ==========================================================
 
@@ -132,13 +133,22 @@ class TelegramStates:
                     try: await asyncio.wait_for(asyncio.to_thread(self.queue_ledger.edit_lot, ticker, target_date, qty, price), timeout=10.0)
                     except Exception as e: logging.error(f"🚨 지층 수정 파일 I/O 에러: {e}")
                 
-                # 🚨 NEW: 낡은 스냅샷(Snapshot) 및 캐시 영구 소각 (State Mismatch 방어)
+                # 🚨 MODIFIED: [이중 타격 방어] 낡은 스냅샷(Snapshot), 캐시, 슬라이스/애프터장 지시서 전면 영구 소각 (State Mismatch 방어)
                 def _nuke_snapshot_and_state_edit():
                     for f in glob.glob(f"data/daily_snapshot_*_{ticker}.json"):
                         with GlobalThrottle.get_file_lock(f):
                             try: os.remove(f)
                             except OSError: pass
                     for f in glob.glob(f"data/vwap_state_*_{ticker}.json"):
+                        with GlobalThrottle.get_file_lock(f):
+                            try: os.remove(f)
+                            except OSError: pass
+                    # 🚨 NEW
+                    for f in glob.glob(f"data/vrev_slice_state_{ticker}.json"):
+                        with GlobalThrottle.get_file_lock(f):
+                            try: os.remove(f)
+                            except OSError: pass
+                    for f in glob.glob(f"data/vrev_aftermarket_state_{ticker}.json"):
                         with GlobalThrottle.get_file_lock(f):
                             try: os.remove(f)
                             except OSError: pass
