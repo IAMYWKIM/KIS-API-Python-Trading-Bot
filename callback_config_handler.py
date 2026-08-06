@@ -10,6 +10,7 @@
 # 🚨 MODIFIED: [제1헌법 철저 준수] 파일 I/O 연산 및 텔레그램 통신 전역에 `asyncio.wait_for` 타임아웃 족쇄 100% 강제 래핑 완료 (Deadlock 원천 차단).
 # 🚨 MODIFIED: [Event Loop 교착 수술] AssassinLedger 및 SystemUpdater 인스턴스화 시 발생하는 __init__ 내부의 동기 I/O(파일 체크/생성) 블로킹을 막기 위해 100% 백그라운드 스레드(to_thread) 샌드박스로 래핑 락온.
 # 🚨 MODIFIED: [스냅샷 유령화 붕괴 궁극 수술] RESET:LOCK 내부 `_hijack_vwap_lock()` 실행 시 V-REV 뿐만 아니라 V14, V14VWAP 스냅샷 파일까지 순회하며 100% 영구 소각하도록 팩트 교정 완료.
+# 🚨 NEW: [암살자 독립 소각망 라우팅 팩트 결속] RESET 하위에 AVWAP 및 AVWAP_CONFIRM 서브 액션을 주입하여 암살자 장부 및 찌꺼기 캐시만을 안전하게 도려내는(Nuke) 팩트 배선 완료.
 # ==========================================================
 import logging
 import datetime
@@ -54,7 +55,7 @@ class CallbackConfigHandler:
 
         needs_custom_toast = False
         if action == "UPDATE" and sub == "CONFIRM": needs_custom_toast = True
-        elif action == "RESET" and sub in ["LOCK", "CONFIRM"]: needs_custom_toast = True
+        elif action == "RESET" and sub in ["LOCK", "CONFIRM", "AVWAP_CONFIRM"]: needs_custom_toast = True
         elif action == "REC" and sub == "SYNC": needs_custom_toast = True
         elif action == "HIST" and sub in ["DEL_EXEC", "IMG"]: needs_custom_toast = True
 
@@ -194,6 +195,89 @@ class CallbackConfigHandler:
                     except telegram.error.BadRequest as e:
                         if "not modified" not in str(e).lower(): logging.warning(f"⚠️ UI 갱신 예외: {e}")
                     except Exception: pass
+            
+            # 🚨 NEW: 암살자 단독 소각 팩트 결속
+            elif sub == "AVWAP":
+                if ticker:
+                    msg, markup = self.view.get_avwap_reset_confirm_menu(ticker)
+                    try: 
+                        await asyncio.wait_for(query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML'), timeout=10.0)
+                    except telegram.error.BadRequest as e:
+                        if "not modified" not in str(e).lower(): logging.warning(f"⚠️ UI 갱신 예외: {e}")
+                    except Exception: pass
+            
+            # 🚨 NEW: 암살자 정보(장부/캐시/주문기록) 단독 초기화 로직 100% 분리 사수
+            elif sub == "AVWAP_CONFIRM":
+                if not ticker: return
+                try: await asyncio.wait_for(query.answer("🔫 암살자 소각 진행 중...", show_alert=False), timeout=5.0)
+                except Exception: pass
+
+                def _nuke_only_assassin():
+                    try:
+                        from assassin_ledger import AssassinLedger
+                        a_ledger = AssassinLedger()
+                        a_ledger.clear_ledger(ticker)
+                    except Exception as e:
+                        logging.error(f"🚨 [{ticker}] 암살자 장부 강제 소각 중 에러: {e}")
+                    
+                    state_file = f"data/avwap_trade_state_{ticker}.json"
+                    with GlobalThrottle.get_file_lock(state_file):
+                        try:
+                            est_now = datetime.datetime.now(ZoneInfo('America/New_York'))
+                            today_str = est_now.strftime('%Y-%m-%d')
+                            state_data = {}
+                            try:
+                                with open(state_file, 'r', encoding='utf-8') as f:
+                                    state_data = json.load(f)
+                            except Exception:
+                                pass
+
+                            curr_time = est_now.time()
+                            is_pre_market = datetime.time(4, 0) <= curr_time < datetime.time(9, 30)
+
+                            state_data['date'] = today_str
+                            state_data['qty'] = 0
+                            state_data['buy_odno'] = ""
+                            state_data['sell_odno'] = ""
+                            state_data['shutdown'] = is_pre_market
+                            state_data['dumped'] = is_pre_market
+                            # 🚨 Ghosting Amnesia 방어: 주문 기록까지 빈 배열로 완벽한 백지 상태 리셋
+                            state_data['history_odnos'] = []
+
+                            dir_name = os.path.dirname(state_file) or '.'
+                            try: os.makedirs(dir_name, exist_ok=True)
+                            except OSError: pass
+
+                            fd = None
+                            tmp_path = None
+                            try:
+                                fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
+                                with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
+                                    fd = None
+                                    json.dump(state_data, f_out, ensure_ascii=False, indent=4)
+                                    f_out.flush()
+                                    os.fsync(f_out.fileno())
+                                os.replace(tmp_path, state_file)
+                                tmp_path = None
+                            except Exception as inner_e:
+                                if fd is not None:
+                                    try: os.close(fd)
+                                    except OSError: pass
+                                if tmp_path:
+                                    try: os.remove(tmp_path)
+                                    except OSError: pass
+                                raise inner_e
+                        except Exception as e:
+                            logging.error(f"🚨 [{ticker}] 암살자 단독 상태 리셋 에러: {e}")
+
+                await asyncio.wait_for(asyncio.to_thread(_nuke_only_assassin), timeout=10.0)
+                
+                try:
+                    await asyncio.wait_for(query.edit_message_text(f"✅ <b>[{html.escape(str(ticker))}] 암살자 찌꺼기 팩트 소각 완료!</b>\n▫️ 암살자 독립 장부 및 상태 캐시가 100% 영구 삭제되었습니다.\n▫️ 본진 장부는 안전하게 보존됩니다.\n▫️ <code>/record</code> 명령어로 갱신된 내역을 확인하십시오.", parse_mode='HTML'), timeout=10.0)
+                except telegram.error.BadRequest as e:
+                    if "not modified" not in str(e).lower(): logging.warning(f"⚠️ UI 갱신 예외: {e}")
+                except Exception: pass
+
             elif sub == "REV":
                 if ticker:
                     msg, markup = self.view.get_reset_confirm_menu(ticker)
@@ -277,7 +361,6 @@ class CallbackConfigHandler:
                             except Exception:
                                 pass
 
-                            # 🚨 MODIFIED: [시간대별 동적 셧다운 락온] 프리장(04:00~09:29)에만 강제 셧다운을 주입하고, 그 외 시간대는 스케줄러가 자율 판별하도록 팩트 교정
                             curr_time = est_now.time()
                             is_pre_market = datetime.time(4, 0) <= curr_time < datetime.time(9, 30)
 
@@ -369,7 +452,7 @@ class CallbackConfigHandler:
                         logging.error(f"🚨 0주 강제 스냅샷 오버라이드 에러: {e}")
 
                 try:
-                    await asyncio.wait_for(query.edit_message_text(f"✅ <b>[{html.escape(str(ticker))}] 삼위일체 소각(Nuke) 및 초기화 완료!</b>\n▫️ 본장부, 백업장부, 큐(Queue) 찌꺼기 데이터가 100% 영구 삭제되었습니다.\n▫️ 매매 잠금 해제 및 디커플링 타점 스냅샷 덮어쓰기가 완벽히 집행되었습니다.", parse_mode='HTML'), timeout=10.0)
+                    await asyncio.wait_for(query.edit_message_text(f"✅ <b>[{html.escape(str(ticker))}] 삼위일체 소각(Nuke) 및 초기화 완료!</b>\n▫️ 본장부, 백업장부, 큐(Queue) 찌꺼기 데이터가 100% 영구 삭제되었습니다.\n▫️ 암살자의 재진입(부활)이 전면 차단되었으며, 매매 잠금 해제 및 디커플링 타점 스냅샷 덮어쓰기가 완벽히 집행되었습니다.", parse_mode='HTML'), timeout=10.0)
                 except telegram.error.BadRequest as e:
                     if "not modified" not in str(e).lower(): logging.warning(f"⚠️ UI 갱신 예외: {e}")
                 except Exception: pass

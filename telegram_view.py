@@ -11,6 +11,7 @@
 # 🚨 MODIFIED: [V14 LOC 전용 수동 제어망 결속] 통합 지시서(create_sync_report) 렌더링 시 V-REV 및 VWAP 모드를 배제하고 오직 V14 LOC 모드에만 수동 전송/취소 버튼이 스위칭 렌더링되도록 팩트 락온.
 # 🚨 NEW: [V-REV 전용 수동 제어망 결속] 통합지시서에 V-REV 모드 전용 '1회분 수동매수/수동매도' 버튼 주입 완료. 오리지널(V14) 모드에서는 철저히 격리(Bypass)됨.
 # 🚨 NEW: [큐 장부 매뉴얼 이식] get_queue_management_menu 화면에 추가/삭제/수정 등 수동 조작을 위한 명령어 가이드 표출 기능 팩트 결속.
+# 🚨 NEW: [암살자 독립 소각망 결속] get_reset_menu에 암살자 전용 소각 버튼 추가 및 get_avwap_reset_confirm_menu 팩트 주입 완료.
 # ==========================================================
 import os
 import math
@@ -124,12 +125,10 @@ class TelegramView:
         return msg, InlineKeyboardMarkup(keyboard)
 
     def get_reset_menu(self, active_tickers):
-        msg = "🔥 <b>[ 삼위일체 소각 (Nuke) 프로토콜 ]</b>\n\n"
-        msg += "⚠️ <b>경고:</b> 이 기능은 해당 종목의 본장부, 백업장부, 에스크로, V-REV 큐(Queue) 데이터를 100% 영구 삭제합니다.\n"
-        msg += "▫️ 실제 계좌의 주식은 매도되지 않습니다.\n"
-        msg += "▫️ HTS/MTS에서 수동으로 물량을 완전히 청산한 뒤, 봇을 0주 새출발 모드로 초기화할 때만 격발하십시오.\n\n"
-        msg += "🔓 <b>[ 당일 매매 잠금(Lock) 해제 ]</b>\n"
-        msg += "▫️ 금일 필수 주문이 완료되어 '잠금'된 상태를 강제로 풀고 추가 격발을 허용합니다.\n"
+        msg = "🔥 <b>[ 비상 초기화 (Reset) 프로토콜 ]</b>\n\n"
+        msg += "⚠️ <b>장부 영구 소각 (삼위일체):</b> 본장부, 백업, V-REV 큐, 암살자 데이터를 100% 영구 삭제합니다. HTS로 100% 수동 청산 후 새출발할 때만 격발하십시오.\n"
+        msg += "⚠️ <b>암살자 장부 초기화:</b> 수동 개입으로 어긋난 암살자 독립 장부 및 찌꺼기만 제거하고 본진은 안전하게 보존합니다.\n"
+        msg += "🔓 <b>잠금 해제:</b> 금일 주문 완료(잠금) 상태를 풀고 추가 격발을 허용합니다.\n"
         
         keyboard = []
         for t in active_tickers:
@@ -137,6 +136,10 @@ class TelegramView:
             keyboard.append([
                  InlineKeyboardButton(f"🔥 {safe_t} 장부 영구 소각", callback_data=f"RESET:REV:{t}"),
                  InlineKeyboardButton(f"🔓 {safe_t} 당일 잠금 해제", callback_data=f"RESET:LOCK:{t}")
+            ])
+            # NEW: 암살자 단독 소각 버튼 락온
+            keyboard.append([
+                 InlineKeyboardButton(f"🔫 {safe_t} 암살자 장부 초기화", callback_data=f"RESET:AVWAP:{t}")
             ])
         keyboard.append([InlineKeyboardButton("❌ 취소 및 닫기", callback_data="RESET:CANCEL")])
         
@@ -149,6 +152,19 @@ class TelegramView:
         msg += "이 작업은 되돌릴 수 없습니다!"
         keyboard = [
             [InlineKeyboardButton("🔥 네, 즉시 영구 소각합니다", callback_data=f"RESET:CONFIRM:{ticker}")],
+            [InlineKeyboardButton("❌ 아니오, 취소합니다", callback_data="RESET:CANCEL")]
+        ]
+        return msg, InlineKeyboardMarkup(keyboard)
+
+    # NEW: 암살자 팩트 소각 승인 메뉴
+    def get_avwap_reset_confirm_menu(self, ticker):
+        safe_t = html.escape(str(ticker))
+        msg = f"🚨 <b>[{safe_t} 암살자 장부 소각 최종 확인]</b>\n\n"
+        msg += f"정말 <b>{safe_t}</b>의 암살자 독립 장부 및 상태 캐시를 영구 삭제하시겠습니까?\n"
+        msg += "▫️ 본진 장부 및 큐(Queue)는 안전하게 보존됩니다.\n"
+        msg += "▫️ 수동으로 암살자 물량을 청산하여 찌꺼기를 지울 때만 사용하십시오."
+        keyboard = [
+            [InlineKeyboardButton("🔥 네, 암살자 정보만 소각합니다", callback_data=f"RESET:AVWAP_CONFIRM:{ticker}")],
             [InlineKeyboardButton("❌ 아니오, 취소합니다", callback_data="RESET:CANCEL")]
         ]
         return msg, InlineKeyboardMarkup(keyboard)
@@ -197,7 +213,6 @@ class TelegramView:
         
         msg += "-"*30 + "</code>\n\n"
 
-        # 🚨 NEW: 큐 장부 명령어 매뉴얼 (단일 지층 추가, 전체 초기화, 부분 조작) 팩트 주입
         msg += "🛠️ <b>[ 큐 장부 매뉴얼 (수동 조작 명령어) ]</b>\n"
         msg += f"▫️ 단일 지층 추가 : <code>/add_q {safe_t} 2026-07-11 55 192.31</code>\n"
         msg += f"▫️ 전체 장부 초기화 : <code>/clear_q {safe_t}</code>\n"
@@ -585,7 +600,6 @@ class TelegramView:
                     else:
                         keyboard.append([InlineKeyboardButton(f"🚀 {t} 수동 강제 전송", callback_data=f"EXEC:{t}")])
                 elif v_mode == "V_REV":
-                    # 🚨 NEW: V-REV 전용 1회분 수동 매수/매도 인라인 버튼 결속 (V14 모드 완벽 격리)
                     keyboard.append([
                         InlineKeyboardButton(f"🟢 {t} 1회분 수동매수", callback_data=f"MANUAL_PORTION:BUY:{t}"),
                         InlineKeyboardButton(f"🔴 {t} 1회분 수동매도", callback_data=f"MANUAL_PORTION:SELL:{t}")
