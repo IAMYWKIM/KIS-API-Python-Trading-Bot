@@ -2,7 +2,7 @@
 # FILE: callback_config_handler.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 46대 엣지 케이스 완벽 결속 교차 검증 완료
-# 🚨 MODIFIED: [암살자 부활 패러독스 궁극 방어] 수동 삼위일체 소각(/reset) 시 암살자의 상태 파일(avwap_trade_state)을 물리적 삭제하는 맹독성 로직을 영구 소각. 대신 `shutdown: True`와 0주 상태를 강제 주입하여 당일 고점 재진입(Limit-Trap) 대참사를 100% 원천 봉쇄.
+# 🚨 MODIFIED: [암살자 부활 패러독스 궁극 방어] 수동 삼위일체 소각(/reset) 시 암살자의 상태 파일(avwap_trade_state)을 물리적 삭제하는 맹독성 로직을 영구 소각. 대신 시간대별 동적 `shutdown` 주입을 통해 프리장에만 락을 걸고 정규장/애프터장은 스케줄러가 자율 판별하도록 100% 원천 봉쇄 및 팩트 교정 완료.
 # 🚨 MODIFIED: [Phase 5 암살자 지정 예산 락온] INPUT 라우팅에 `AVWAP_BUDGET` 액션을 추가하여 사용자 예산 설정을 위한 상태(State) 전이를 완벽 매핑.
 # 🚨 MODIFIED: [Phase 5 오버나이트 락온] CONFIG_AVWAP 라우팅에 `TOGGLE_OVERNIGHT` 스위칭 로직을 결속하여 당일청산(MOC)과 오버나이트 모드를 동적으로 제어.
 # 🚨 MODIFIED: [Case 38 UI 렌더링 높이 붕괴 패러독스 차단] 버튼 클릭 시 1줄짜리 텍스트("업데이트 중...")로 중간 갱신하여 기존 화면을 증발시키는 행위를 전면 금지. 로딩은 query.answer() 팝업으로 대체하고 최종 결과로 단 1회 제자리 갱신(In-place Edit) 락온.
@@ -10,6 +10,7 @@
 # 🚨 MODIFIED: [제1헌법 철저 준수] 파일 I/O 연산 및 텔레그램 통신 전역에 `asyncio.wait_for` 타임아웃 족쇄 100% 강제 래핑 완료 (Deadlock 원천 차단).
 # 🚨 MODIFIED: [Event Loop 교착 수술] AssassinLedger 및 SystemUpdater 인스턴스화 시 발생하는 __init__ 내부의 동기 I/O(파일 체크/생성) 블로킹을 막기 위해 100% 백그라운드 스레드(to_thread) 샌드박스로 래핑 락온.
 # 🚨 MODIFIED: [스냅샷 유령화 붕괴 궁극 수술] RESET:LOCK 내부 `_hijack_vwap_lock()` 실행 시 V-REV 뿐만 아니라 V14, V14VWAP 스냅샷 파일까지 순회하며 100% 영구 소각하도록 팩트 교정 완료.
+# 🚨 NEW: [암살자 독립 소각망 라우팅 팩트 결속] RESET 하위에 AVWAP 및 AVWAP_CONFIRM 서브 액션을 주입하여 암살자 장부 및 찌꺼기 캐시만을 안전하게 도려내는(Nuke) 팩트 배선 완료.
 # ==========================================================
 import logging
 import datetime
@@ -23,6 +24,7 @@ import html
 import telegram.error
 from telegram import Update
 from telegram.ext import ContextTypes
+from global_throttle import GlobalThrottle
 
 class CallbackConfigHandler:
     def __init__(self, config, broker, strategy, queue_ledger, sync_engine, view, tx_lock):
@@ -53,7 +55,7 @@ class CallbackConfigHandler:
 
         needs_custom_toast = False
         if action == "UPDATE" and sub == "CONFIRM": needs_custom_toast = True
-        elif action == "RESET" and sub in ["LOCK", "CONFIRM"]: needs_custom_toast = True
+        elif action == "RESET" and sub in ["LOCK", "CONFIRM", "AVWAP_CONFIRM"]: needs_custom_toast = True
         elif action == "REC" and sub == "SYNC": needs_custom_toast = True
         elif action == "HIST" and sub in ["DEL_EXEC", "IMG"]: needs_custom_toast = True
 
@@ -143,44 +145,46 @@ class CallbackConfigHandler:
                     
                     def _hijack_vwap_lock():
                         slice_file = f"data/vrev_slice_state_{ticker}.json"
-                        try:
-                            with open(slice_file, 'r', encoding='utf-8') as f:
-                                s_state = json.load(f)
-                            s_state['hijacked'] = True
-                            s_state['orders'] = []
-                            
-                            dir_name = os.path.dirname(slice_file) or '.'
-                            try: os.makedirs(dir_name, exist_ok=True)
-                            except OSError: pass
-                            
-                            fd = None
-                            tmp_path = None
+                        with GlobalThrottle.get_file_lock(slice_file):
                             try:
-                                fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
-                                with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
-                                    fd = None
-                                    json.dump(s_state, f_out, ensure_ascii=False, indent=4)
-                                    f_out.flush()
-                                    os.fsync(f_out.fileno())
-                                os.replace(tmp_path, slice_file)
+                                with open(slice_file, 'r', encoding='utf-8') as f:
+                                    s_state = json.load(f)
+                                s_state['hijacked'] = True
+                                s_state['orders'] = []
+                                
+                                dir_name = os.path.dirname(slice_file) or '.'
+                                try: os.makedirs(dir_name, exist_ok=True)
+                                except OSError: pass
+                                
+                                fd = None
                                 tmp_path = None
-                            except Exception:
-                                if fd is not None:
-                                    try: os.close(fd)
-                                    except OSError: pass
-                                if tmp_path:
-                                    try: os.remove(tmp_path)
-                                    except OSError: pass
-                        except (OSError, json.JSONDecodeError): 
-                            pass
+                                try:
+                                    fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
+                                    with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
+                                        fd = None
+                                        json.dump(s_state, f_out, ensure_ascii=False, indent=4)
+                                        f_out.flush()
+                                        os.fsync(f_out.fileno())
+                                    os.replace(tmp_path, slice_file)
+                                    tmp_path = None
+                                except Exception:
+                                    if fd is not None:
+                                        try: os.close(fd)
+                                        except OSError: pass
+                                    if tmp_path:
+                                        try: os.remove(tmp_path)
+                                        except OSError: pass
+                            except (OSError, json.JSONDecodeError): 
+                                pass
                             
                         try:
                             est_now = datetime.datetime.now(ZoneInfo('America/New_York'))
                             today_str = est_now.strftime("%Y-%m-%d")
                             for snap_prefix in ["REV", "V14", "V14VWAP"]:
                                 snap_file = f"data/daily_snapshot_{snap_prefix}_{today_str}_{ticker}.json"
-                                try: os.remove(snap_file)
-                                except OSError: pass
+                                with GlobalThrottle.get_file_lock(snap_file):
+                                    try: os.remove(snap_file)
+                                    except OSError: pass
                         except Exception: 
                             pass
                         
@@ -191,6 +195,89 @@ class CallbackConfigHandler:
                     except telegram.error.BadRequest as e:
                         if "not modified" not in str(e).lower(): logging.warning(f"⚠️ UI 갱신 예외: {e}")
                     except Exception: pass
+            
+            # 🚨 NEW: 암살자 단독 소각 팩트 결속
+            elif sub == "AVWAP":
+                if ticker:
+                    msg, markup = self.view.get_avwap_reset_confirm_menu(ticker)
+                    try: 
+                        await asyncio.wait_for(query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML'), timeout=10.0)
+                    except telegram.error.BadRequest as e:
+                        if "not modified" not in str(e).lower(): logging.warning(f"⚠️ UI 갱신 예외: {e}")
+                    except Exception: pass
+            
+            # 🚨 NEW: 암살자 정보(장부/캐시/주문기록) 단독 초기화 로직 100% 분리 사수
+            elif sub == "AVWAP_CONFIRM":
+                if not ticker: return
+                try: await asyncio.wait_for(query.answer("🔫 암살자 소각 진행 중...", show_alert=False), timeout=5.0)
+                except Exception: pass
+
+                def _nuke_only_assassin():
+                    try:
+                        from assassin_ledger import AssassinLedger
+                        a_ledger = AssassinLedger()
+                        a_ledger.clear_ledger(ticker)
+                    except Exception as e:
+                        logging.error(f"🚨 [{ticker}] 암살자 장부 강제 소각 중 에러: {e}")
+                    
+                    state_file = f"data/avwap_trade_state_{ticker}.json"
+                    with GlobalThrottle.get_file_lock(state_file):
+                        try:
+                            est_now = datetime.datetime.now(ZoneInfo('America/New_York'))
+                            today_str = est_now.strftime('%Y-%m-%d')
+                            state_data = {}
+                            try:
+                                with open(state_file, 'r', encoding='utf-8') as f:
+                                    state_data = json.load(f)
+                            except Exception:
+                                pass
+
+                            curr_time = est_now.time()
+                            is_pre_market = datetime.time(4, 0) <= curr_time < datetime.time(9, 30)
+
+                            state_data['date'] = today_str
+                            state_data['qty'] = 0
+                            state_data['buy_odno'] = ""
+                            state_data['sell_odno'] = ""
+                            state_data['shutdown'] = is_pre_market
+                            state_data['dumped'] = is_pre_market
+                            # 🚨 Ghosting Amnesia 방어: 주문 기록까지 빈 배열로 완벽한 백지 상태 리셋
+                            state_data['history_odnos'] = []
+
+                            dir_name = os.path.dirname(state_file) or '.'
+                            try: os.makedirs(dir_name, exist_ok=True)
+                            except OSError: pass
+
+                            fd = None
+                            tmp_path = None
+                            try:
+                                fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
+                                with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
+                                    fd = None
+                                    json.dump(state_data, f_out, ensure_ascii=False, indent=4)
+                                    f_out.flush()
+                                    os.fsync(f_out.fileno())
+                                os.replace(tmp_path, state_file)
+                                tmp_path = None
+                            except Exception as inner_e:
+                                if fd is not None:
+                                    try: os.close(fd)
+                                    except OSError: pass
+                                if tmp_path:
+                                    try: os.remove(tmp_path)
+                                    except OSError: pass
+                                raise inner_e
+                        except Exception as e:
+                            logging.error(f"🚨 [{ticker}] 암살자 단독 상태 리셋 에러: {e}")
+
+                await asyncio.wait_for(asyncio.to_thread(_nuke_only_assassin), timeout=10.0)
+                
+                try:
+                    await asyncio.wait_for(query.edit_message_text(f"✅ <b>[{html.escape(str(ticker))}] 암살자 찌꺼기 팩트 소각 완료!</b>\n▫️ 암살자 독립 장부 및 상태 캐시가 100% 영구 삭제되었습니다.\n▫️ 본진 장부는 안전하게 보존됩니다.\n▫️ <code>/record</code> 명령어로 갱신된 내역을 확인하십시오.", parse_mode='HTML'), timeout=10.0)
+                except telegram.error.BadRequest as e:
+                    if "not modified" not in str(e).lower(): logging.warning(f"⚠️ UI 갱신 예외: {e}")
+                except Exception: pass
+
             elif sub == "REV":
                 if ticker:
                     msg, markup = self.view.get_reset_confirm_menu(ticker)
@@ -216,36 +303,37 @@ class CallbackConfigHandler:
                 
                 def _process_reset_files():
                     backup_file = self.cfg.FILES["LEDGER"].replace(".json", "_backup.json")
-                    try:
-                        with open(backup_file, 'r', encoding='utf-8') as f:
-                            b_data = json.load(f)
-                        if not isinstance(b_data, list): b_data = []
-                        b_data = [r for r in b_data if isinstance(r, dict) and str(r.get('ticker')) != str(ticker)]
-                        
-                        dir_name = os.path.dirname(backup_file) or '.'
-                        try: os.makedirs(dir_name, exist_ok=True)
-                        except OSError: pass
-                        
-                        fd = None
-                        tmp_path = None
+                    with GlobalThrottle.get_file_lock(backup_file):
                         try:
-                            fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
-                            with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
-                                fd = None
-                                json.dump(b_data, f_out, ensure_ascii=False, indent=4)
-                                f_out.flush()
-                                os.fsync(f_out.fileno())
-                            os.replace(tmp_path, backup_file)
+                            with open(backup_file, 'r', encoding='utf-8') as f:
+                                b_data = json.load(f)
+                            if not isinstance(b_data, list): b_data = []
+                            b_data = [r for r in b_data if isinstance(r, dict) and str(r.get('ticker')) != str(ticker)]
+                            
+                            dir_name = os.path.dirname(backup_file) or '.'
+                            try: os.makedirs(dir_name, exist_ok=True)
+                            except OSError: pass
+                            
+                            fd = None
                             tmp_path = None
-                        except Exception:
-                            if fd is not None:
-                                try: os.close(fd)
-                                except OSError: pass
-                            if tmp_path:
-                                try: os.remove(tmp_path)
-                                except OSError: pass
-                    except OSError: pass
-                    except Exception: pass
+                            try:
+                                fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
+                                with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
+                                    fd = None
+                                    json.dump(b_data, f_out, ensure_ascii=False, indent=4)
+                                    f_out.flush()
+                                    os.fsync(f_out.fileno())
+                                os.replace(tmp_path, backup_file)
+                                tmp_path = None
+                            except Exception:
+                                if fd is not None:
+                                    try: os.close(fd)
+                                    except OSError: pass
+                                if tmp_path:
+                                    try: os.remove(tmp_path)
+                                    except OSError: pass
+                        except OSError: pass
+                        except Exception: pass
                     
                 await asyncio.wait_for(asyncio.to_thread(_process_reset_files), timeout=10.0)
             
@@ -261,50 +349,53 @@ class CallbackConfigHandler:
                     except Exception as e:
                         logging.error(f"🚨 [{ticker}] 암살자 장부 강제 소각 중 에러: {e}")
                     
-                    # 🚨 MODIFIED: [암살자 부활 패러독스 궁극 방어] 파일 물리적 삭제(os.remove)를 영구 소각하고, shutdown: True 팩트를 원자적으로 덮어씌워 당일 재진입 원천 차단
                     state_file = f"data/avwap_trade_state_{ticker}.json"
-                    try:
-                        est_now = datetime.datetime.now(ZoneInfo('America/New_York'))
-                        today_str = est_now.strftime('%Y-%m-%d')
-                        state_data = {}
+                    with GlobalThrottle.get_file_lock(state_file):
                         try:
-                            with open(state_file, 'r', encoding='utf-8') as f:
-                                state_data = json.load(f)
-                        except Exception:
-                            pass
+                            est_now = datetime.datetime.now(ZoneInfo('America/New_York'))
+                            today_str = est_now.strftime('%Y-%m-%d')
+                            state_data = {}
+                            try:
+                                with open(state_file, 'r', encoding='utf-8') as f:
+                                    state_data = json.load(f)
+                            except Exception:
+                                pass
 
-                        state_data['date'] = today_str
-                        state_data['qty'] = 0
-                        state_data['buy_odno'] = ""
-                        state_data['sell_odno'] = ""
-                        state_data['shutdown'] = True
-                        state_data['dumped'] = True
+                            curr_time = est_now.time()
+                            is_pre_market = datetime.time(4, 0) <= curr_time < datetime.time(9, 30)
 
-                        dir_name = os.path.dirname(state_file) or '.'
-                        try: os.makedirs(dir_name, exist_ok=True)
-                        except OSError: pass
+                            state_data['date'] = today_str
+                            state_data['qty'] = 0
+                            state_data['buy_odno'] = ""
+                            state_data['sell_odno'] = ""
+                            state_data['shutdown'] = is_pre_market
+                            state_data['dumped'] = is_pre_market
 
-                        fd = None
-                        tmp_path = None
-                        try:
-                            fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
-                            with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
-                                fd = None
-                                json.dump(state_data, f_out, ensure_ascii=False, indent=4)
-                                f_out.flush()
-                                os.fsync(f_out.fileno())
-                            os.replace(tmp_path, state_file)
+                            dir_name = os.path.dirname(state_file) or '.'
+                            try: os.makedirs(dir_name, exist_ok=True)
+                            except OSError: pass
+
+                            fd = None
                             tmp_path = None
-                        except Exception as inner_e:
-                            if fd is not None:
-                                try: os.close(fd)
-                                except OSError: pass
-                            if tmp_path:
-                                try: os.remove(tmp_path)
-                                except OSError: pass
-                            raise inner_e
-                    except Exception as e:
-                        logging.error(f"🚨 [{ticker}] 암살자 상태 셧다운 주입 에러: {e}")
+                            try:
+                                fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
+                                with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
+                                    fd = None
+                                    json.dump(state_data, f_out, ensure_ascii=False, indent=4)
+                                    f_out.flush()
+                                    os.fsync(f_out.fileno())
+                                os.replace(tmp_path, state_file)
+                                tmp_path = None
+                            except Exception as inner_e:
+                                if fd is not None:
+                                    try: os.close(fd)
+                                    except OSError: pass
+                                if tmp_path:
+                                    try: os.remove(tmp_path)
+                                    except OSError: pass
+                                raise inner_e
+                        except Exception as e:
+                            logging.error(f"🚨 [{ticker}] 암살자 상태 셧다운 주입 에러: {e}")
 
                 await asyncio.wait_for(asyncio.to_thread(_nuke_assassin_data), timeout=10.0)
                 await asyncio.wait_for(asyncio.to_thread(self.cfg.reset_lock_for_ticker, ticker), timeout=10.0)

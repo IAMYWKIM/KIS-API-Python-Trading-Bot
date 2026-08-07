@@ -10,8 +10,9 @@
 # 🚨 VERIFIED: [제4헌법 절대 사수] 메인 장부뿐만 아니라 백업 파일(.bak) 생성 시에도 임시 파일(.bak.tmp)을 거치는 원자적 복사(Atomic Copy)를 강제하여 OS 커널 패닉 시 백업본 오염 원천 차단.
 # 🚨 NEW: [Case 48: 2-Tier Auto-Merge Protocol 락온] 3개 이상의 지층 생성 시 즉각 상위 지층을 통합하여 최대 2개 지층(2-Bucket)만을 유지하도록 `_enforce_two_tier_limit` 헬퍼 메서드 팩트 주입.
 # 🚨 NEW: [지층 단가 역전 방어막 (Price Inversion Shield) 락온] 1회분 초과 지층 분할(Tier Split) 시, 전체 평단가(new_pure_price)가 1층 앵커가 될 정규장 종가(prev_close)보다 낮을 경우 2층의 단가가 1층보다 낮아지는 맹독성 역전 패러독스가 발생함. 이를 원천 차단하기 위해 `new_pure_price > prev_close` 일 때만 분할을 허용하고, 반대의 경우 분할을 포기하고 저점 단일 지층으로 보존하도록 안전장치 100% 결속 완료.
-# 🚨 NEW: [풍선 효과(Balloon Effect) 하드 캡핑 락온] 부분 익절 후 단일 지층 분할(Split) 격발 시, 잔여 투자금이 2층으로 과도하게 쏠려 2층 단가가 '매도 전 총 평단가'를 초과하여 폭등하는 단가 상승 패러독스를 시스템 전역에서 원천 차단하기 위해, 상위층 분할 단가(rem_price)를 이전 총 평단가로 강제 캡핑(Capping)하는 쉴드를 100% 결속 완료.
+# 🚨 MODIFIED: [자본 누수(Capital Leak) 유발 풍선 효과 캡핑 영구 소각] 지층 분할 시 상위층 단가가 총평단가를 넘지 못하게 강제 캡핑(Capping)하던 로직이 투자 원금 총량을 수학적으로 훼손하여 총평단가를 추락($154 -> $150)시키는 대참사(Ghost Profit)를 유발함을 확인. 가중 평균 불변의 법칙 수호를 위해 캡핑 로직을 시스템 전역에서 100% 영구 소각(Amputation) 완료.
 # 🚨 MODIFIED: [리앵커링 타임라인 절대 락온] 단일 지층이 1층과 상위층으로 쪼개질 때(Split), 두 지층 모두 과거의 동일한 물리적 매수 날짜를 상속받아 렌더링에 혼선을 주던 맹점을 원천 소각. 상위층은 과거 날짜를 보존하되, 새롭게 앵커링된 1층은 무조건 '분할 연산이 발생한 당일 현재 타임스탬프'를 강제 주입하도록 타임라인 무결성 팩트 교정 완료.
+# 🚨 MODIFIED: [지층 독립성 절대 락온 (Type Check Enforcement)] `add_lot` 및 `sync_with_broker` 로직에서 동일 날짜(`today_str`)라는 이유만으로 분할 마법 지층(`AUTO_SPLIT_L1`)과 정규 매수 지층(`VREV_VWAP_BUY`)이 무지성으로 병합되어 69주로 팽창해버리던 대참사를 원천 봉쇄. 이제 날짜뿐만 아니라 지층의 기원(`lot_type`)이 100% 일치할 때만 병합되도록 엄격한 필터망을 체결 완료.
 # ==========================================================
 import os
 import json
@@ -164,23 +165,17 @@ class QueueLedger:
                 price = self._safe_float(lot.get("price"))
                 total_invested = qty * price
                 
-                # 🚨 MODIFIED: [지층 단가 역전 패러독스 방어] price(현재 평단가)가 prev_close_f 보다 커야만 분할 진행
                 if total_invested > portion_budget_f * 1.1 and price > prev_close_f:
                     new_l1_qty = math.floor(portion_budget_f / prev_close_f)
                     if 0 < new_l1_qty < qty:
                         new_l1_invested = new_l1_qty * prev_close_f
                         rem_qty = qty - new_l1_qty
                         rem_invested = total_invested - new_l1_invested
-                        rem_price = round(max(0.01, rem_invested / rem_qty), 4)
                         
-                        # 🚨 NEW: 풍선 효과 캡핑 (단독 팽창 시 기존 단가를 상한선으로 방어)
-                        if price > 0 and rem_price > price:
-                            logging.info(f"🎈 [{ticker}] 풍선 효과 감지(단독 팽창): 상위층 단가(${rem_price:.2f})가 기존 평단가(${price:.2f}) 초과 ➔ 캡핑(Capping) 발동")
-                            rem_price = round(price, 4)
+                        rem_price = round(max(0.01, rem_invested / rem_qty), 4)
                         
                         lot_date = lot.get("date", self._get_trading_date_str())
                         
-                        # 🚨 MODIFIED: [리앵커링 타임라인 절대 락온] 1지층은 새로운 닻(Anchor)이므로 현재 타임스탬프 강제 부여
                         now_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
                         
                         new_l2 = {
@@ -248,7 +243,8 @@ class QueueLedger:
             
             today_str = self._get_trading_date_str()
             
-            if q and str(q[-1].get("date", "")).startswith(today_str):
+            # 🚨 MODIFIED: [지층 독립성 절대 락온] 동일 날짜라도 lot_type이 다르면 절대 병합하지 않고 독립 지층으로 분리하여 1회분 정량제 헌법 수호
+            if q and str(q[-1].get("date", "")).startswith(today_str) and str(q[-1].get("type", "")) == str(lot_type):
                 old_qty = int(self._safe_float(q[-1].get("qty")))
                 old_price = self._safe_float(q[-1].get("price"))
                 
@@ -284,10 +280,7 @@ class QueueLedger:
             
             if not q: return 0
             
-            # 🚨 NEW: 매도 전 총 평단가 추출 (풍선 효과 캡핑을 위한 Base Fact 확보)
             vrev_total_invested = sum(int(self._safe_float(item.get('qty'))) * self._safe_float(item.get('price')) for item in q)
-            previous_total_qty = sum(int(self._safe_float(item.get('qty'))) for item in q)
-            previous_total_avg = vrev_total_invested / previous_total_qty if previous_total_qty > 0 else 0.0
             
             popped_total = 0
             realized_cash = 0.0
@@ -321,21 +314,15 @@ class QueueLedger:
                     remaining_invested = vrev_total_invested - net_realized_cash
                     new_pure_price = round(max(0.01, remaining_invested / remaining_qty), 4)
                     
-                    # 🚨 MODIFIED: [지층 단가 역전 패러독스 방어] new_pure_price > prev_close 일 때만 분할
                     if prev_close is not None and portion_budget is not None and remaining_invested > portion_budget * 1.1 and new_pure_price > prev_close:
                         new_l1_qty = math.floor(portion_budget / prev_close)
                         if 0 < new_l1_qty < remaining_qty:
                             new_l1_invested = new_l1_qty * prev_close
                             rem_qty = remaining_qty - new_l1_qty
                             rem_invested = remaining_invested - new_l1_invested
+                            
                             rem_price = round(max(0.01, rem_invested / rem_qty), 4)
                             
-                            # 🚨 NEW: 풍선 효과(Balloon Effect) 캡핑 - 상위층 단가가 매도 전 총 평단가를 초과하지 못하도록 차단
-                            if previous_total_avg > 0 and rem_price > previous_total_avg:
-                                logging.info(f"🎈 [{ticker}] 풍선 효과 감지(pop_lots): 상위층 단가(${rem_price:.2f})가 기존 총 평단가(${previous_total_avg:.2f}) 초과 ➔ 하드 캡핑(Capping) 발동")
-                                rem_price = round(previous_total_avg, 4)
-                            
-                            # 🚨 MODIFIED: [리앵커링 타임라인 절대 락온] 1지층은 새로운 닻이므로 당일 타임스탬프 강제 부여
                             now_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
                             
                             q[0]["qty"] = rem_qty
@@ -371,8 +358,6 @@ class QueueLedger:
             current_q_qty = sum(int(self._safe_float(item.get("qty"))) for item in q)
             actual_qty = int(self._safe_float(actual_qty))
 
-            # 🚨 MODIFIED: [단일 지층 팽창 패러독스 자가 치유 방어막 팩트 보강] 
-            # ZeroDivisionError 원천 방어를 위해 prev_close > 0.0 조건을 명시적으로 결속
             if current_q_qty == actual_qty:
                 if len(q) == 1 and prev_close is not None and portion_budget is not None and prev_close > 0.0:
                     lot = q[0]
@@ -386,14 +371,9 @@ class QueueLedger:
                             new_l1_invested = new_l1_qty * prev_close
                             rem_qty = lot_qty - new_l1_qty
                             rem_invested = total_invested - new_l1_invested
+                            
                             rem_price = round(max(0.01, rem_invested / rem_qty), 4)
 
-                            # 🚨 NEW: 풍선 효과 캡핑 (단독 팽창 자가치유 시에도 적용)
-                            if lot_price > 0 and rem_price > lot_price:
-                                logging.info(f"🎈 [{ticker}] 풍선 효과 감지(자가치유): 상위층 단가(${rem_price:.2f})가 기존 평단가(${lot_price:.2f}) 초과 ➔ 캡핑 발동")
-                                rem_price = round(lot_price, 4)
-
-                            # 🚨 MODIFIED: [리앵커링 타임라인 절대 락온] 1지층은 새로운 닻이므로 당일 타임스탬프 강제 부여
                             now_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
 
                             q[0]["qty"] = rem_qty
@@ -427,7 +407,8 @@ class QueueLedger:
                     self._save_unsafe_no_lock(data)
                     return True
                 
-                if q and str(q[-1].get("date", "")).startswith(today_str):
+                # 🚨 MODIFIED: [지층 독립성 절대 락온] 보정 지층(CALIB_ADD) 추가 시에도 기존 정상 매수 지층과 섞이지 않도록 type 검증 강제
+                if q and str(q[-1].get("date", "")).startswith(today_str) and str(q[-1].get("type", "")) == "CALIB_ADD":
                     old_qty = int(self._safe_float(q[-1].get("qty")))
                     old_price = self._safe_float(q[-1].get("price"))
                     
@@ -449,10 +430,7 @@ class QueueLedger:
                 popped_total = 0
                 realized_cash = 0.0
                 
-                # 🚨 NEW: 매도 전 총 평단가 추출 (풍선 효과 캡핑용)
                 vrev_total_invested = sum(int(self._safe_float(item.get('qty'))) * self._safe_float(item.get('price')) for item in q)
-                previous_total_qty = sum(int(self._safe_float(item.get('qty'))) for item in q)
-                previous_total_avg = vrev_total_invested / previous_total_qty if previous_total_qty > 0 else 0.0
                 
                 while q and diff > 0:
                     last_lot = q[-1]
@@ -482,21 +460,15 @@ class QueueLedger:
                         remaining_invested = vrev_total_invested - net_realized_cash
                         new_pure_price = round(max(0.01, remaining_invested / remaining_qty), 4)
                         
-                        # 🚨 MODIFIED: [지층 단가 역전 패러독스 방어] new_pure_price > prev_close 일 때만 분할
                         if prev_close is not None and portion_budget is not None and remaining_invested > portion_budget * 1.1 and new_pure_price > prev_close:
                             new_l1_qty = math.floor(portion_budget / prev_close)
                             if 0 < new_l1_qty < remaining_qty:
                                 new_l1_invested = new_l1_qty * prev_close
                                 rem_qty = remaining_qty - new_l1_qty
                                 rem_invested = remaining_invested - new_l1_invested
-                                rem_price = round(max(0.01, rem_invested / rem_qty), 4)
                                 
-                                # 🚨 NEW: 풍선 효과 캡핑 (동기화 블록)
-                                if previous_total_avg > 0 and rem_price > previous_total_avg:
-                                    logging.info(f"🎈 [{ticker}] 풍선 효과 감지(동기화): 상위층 단가(${rem_price:.2f})가 이전 총 평단가(${previous_total_avg:.2f}) 초과 ➔ 캡핑 발동")
-                                    rem_price = round(previous_total_avg, 4)
+                                rem_price = round(max(0.01, rem_invested / rem_qty), 4)
                                     
-                                # 🚨 MODIFIED: [리앵커링 타임라인 절대 락온] 1지층은 새로운 닻이므로 당일 타임스탬프 강제 부여
                                 now_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
 
                                 q[0]["qty"] = rem_qty

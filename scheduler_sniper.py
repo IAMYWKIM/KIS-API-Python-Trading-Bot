@@ -11,6 +11,7 @@
 # 🚨 MODIFIED: [암살자 팩트 타전 오염 수술] 15:59 EST 컷오프 시, 이미 전량 익절했거나 진입 실패로 퇴근(Shutdown)한 상태라면 허위 알림을 띄우지 않고 조용히 컷오프(Bypass)하도록 방어망 결속.
 # 🚨 MODIFIED: [State Overwrite Collision 영구 소각] 전량 익절 감지 시 분할되어 있던 상태 업데이트 파이프라인을 단일 트랜잭션으로 통합하여 last_filled_sell_qty 증발을 완벽히 차단.
 # 🚨 MODIFIED: [전역 락 병목 궁극 수술] _do_sniper 전체를 감싸고 있던 async with tx_lock: 족쇄를 영구 소각하여, vwap 스케줄러와 경합하며 55초 타임아웃을 유발하던 최악의 데드락을 100% 팩트 파기 완료.
+# 🚨 MODIFIED: [체결 원장 디커플링 붕괴 수술] 암살자의 모든 매수/매도/덤핑 고유 주문번호(odno)를 상태 파일의 `history_odnos`에 원자적으로 누적(Append)하여, V-REV 정산 시 암살자 내역이 혼입되는 대참사를 원천 차단하는 투명 인간(Ghosting) 방어망 100% 결속.
 # ==========================================================
 import logging
 import datetime
@@ -108,7 +109,7 @@ def _read_state_sync(ticker, now_est):
         data = _read_json_with_bak(file_path)
             
         if not isinstance(data, dict) or data.get('date') != date_str:
-            data = {'date': date_str, 'qty': 0, 'avg_price': 0.0, 'buy_odno': "", 'is_ordering': False, 'sell_odno': "", 'shutdown': False, 'dumped': False, 'cash_warned': False, 'alert_msg_id': 0, 'suppress_sell': False, 'last_filled_sell_qty': 0}
+            data = {'date': date_str, 'qty': 0, 'avg_price': 0.0, 'buy_odno': "", 'is_ordering': False, 'sell_odno': "", 'shutdown': False, 'dumped': False, 'cash_warned': False, 'alert_msg_id': 0, 'suppress_sell': False, 'last_filled_sell_qty': 0, 'history_odnos': []}
             _write_json_atomic(file_path, data)
             
         return data
@@ -121,11 +122,18 @@ def _update_state_sync(ticker, now_est, updates):
         data = _read_json_with_bak(file_path)
             
         if not isinstance(data, dict) or data.get('date') != date_str:
-            data = {'date': date_str, 'qty': 0, 'avg_price': 0.0, 'buy_odno': "", 'is_ordering': False, 'sell_odno': "", 'shutdown': False, 'dumped': False, 'cash_warned': False, 'alert_msg_id': 0, 'suppress_sell': False, 'last_filled_sell_qty': 0}
+            data = {'date': date_str, 'qty': 0, 'avg_price': 0.0, 'buy_odno': "", 'is_ordering': False, 'sell_odno': "", 'shutdown': False, 'dumped': False, 'cash_warned': False, 'alert_msg_id': 0, 'suppress_sell': False, 'last_filled_sell_qty': 0, 'history_odnos': []}
         
+        if 'history_odnos' not in data:
+            data['history_odnos'] = []
+            
         for k, v in updates.items():
             data[k] = v
-            
+            # 🚨 MODIFIED: [체결 원장 디커플링 붕괴 수술] 암살자 주문번호 캐싱 (Ghosting 용도)
+            if k in ['buy_odno', 'sell_odno', 'dump_odno'] and v:
+                if v not in data['history_odnos']:
+                    data['history_odnos'].append(str(v))
+                    
         _write_json_atomic(file_path, data)
         return data
 
@@ -137,7 +145,7 @@ def _try_lock_ordering_sync(ticker, now_est):
         data = _read_json_with_bak(file_path)
         
         if not isinstance(data, dict) or data.get('date') != date_str:
-            data = {'date': date_str, 'qty': 0, 'avg_price': 0.0, 'buy_odno': "", 'is_ordering': False, 'sell_odno': "", 'shutdown': False, 'dumped': False, 'cash_warned': False, 'alert_msg_id': 0, 'suppress_sell': False, 'last_filled_sell_qty': 0}
+            data = {'date': date_str, 'qty': 0, 'avg_price': 0.0, 'buy_odno': "", 'is_ordering': False, 'sell_odno': "", 'shutdown': False, 'dumped': False, 'cash_warned': False, 'alert_msg_id': 0, 'suppress_sell': False, 'last_filled_sell_qty': 0, 'history_odnos': []}
         
         if data.get('is_ordering') or data.get('buy_odno') or data.get('shutdown'):
             return False, data
@@ -319,7 +327,7 @@ async def scheduled_sniper_monitor(context):
                             await asyncio.sleep(1.0)
                             await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {'dumped': True}), timeout=10.0)
                             if chat_id:
-                                await _safe_send(context, chat_id, f"🌙 <b>[{html.escape(t)}] 암살자 오버나이트 전환 (관망)</b>\n▫️ 익절에 실패했으나 오버나이트가 허용되어 강제 덤핑을 건너뛰고 포지션을 안전하게 이관합니다.\n▫️ <b>애프터장 수익 실현을 위해 +1.0% 지정가 덫은 취소하지 않고 계속 감시합니다.</b>", parse_mode='HTML')
+                                await _safe_send(context, chat_id, f"🌙 <b>[{html.escape(t)}] 암살자 오버나이트 전환 (관망)</b>\n▫️ 익절에 실패했으나 오버나이트가 허용되어 강제 덤핑을 건너뛰고 포지션을 안전하게 이관합니다.\n▫️ <b>애프터장 수익 실현을 위해 +1.0% 지정가 덫은 취소하지 단고 계속 감시합니다.</b>", parse_mode='HTML')
                             continue
                         else:
                             logging.info(f"🛑 [{t}] 15:59 EST 컷오프 도달. 암살자 제로-오버나이트 강제 청산 파이프라인 가동.")
@@ -354,15 +362,20 @@ async def scheduled_sniper_monitor(context):
                                 d_res = await _retry_api(broker.send_order, t, "SELL", dump_qty, dump_price, "LIMIT")
                                 
                                 if isinstance(d_res, dict) and d_res.get('rt_cd') == '0':
+                                    dump_odno = str(d_res.get('odno', ''))
                                     logging.info(f"💥 [{t}] 암살자 물량 {dump_qty}주 매수 1호가 지정가(${dump_price:.2f}) 덤핑 완료{fallback_msg}.")
                                     await asyncio.wait_for(asyncio.to_thread(assassin_ledger.clear_ledger, t), timeout=10.0)
                                     
                                     if chat_id:
                                         await _safe_send(context, chat_id, f"💥 <b>[{html.escape(t)}] 15:59 제로-오버나이트 강제 청산</b>\n▫️ 암살자 미체결 익절망을 취소하고 잔여 물량({dump_qty}주)을 매수 1호가 지정가(${dump_price:.2f})로 전량 스윕(Sweep) 덤핑하여 계좌를 100% 현금화했습니다.{fallback_msg}\n▫️ 암살자 독립 장부가 소각되었습니다.", parse_mode='HTML')
+                                    
+                                    # 🚨 MODIFIED: [체결 원장 디커플링 붕괴 수술] 강제 덤핑 주문번호도 Ghosting 망에 주입
+                                    await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {'qty': 0, 'buy_odno': "", 'sell_odno': "", 'shutdown': True, 'dumped': True, 'dump_odno': dump_odno}), timeout=10.0)
                                 else:
                                     logging.error(f"🚨 [{t}] 15:59 강제 덤핑 실패: {d_res}")
-                                  
-                            await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {'qty': 0, 'buy_odno': "", 'sell_odno': "", 'shutdown': True, 'dumped': True}), timeout=10.0)
+                                    await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {'qty': 0, 'buy_odno': "", 'sell_odno': "", 'shutdown': True, 'dumped': True}), timeout=10.0)
+                            else:
+                                await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {'qty': 0, 'buy_odno': "", 'sell_odno': "", 'shutdown': True, 'dumped': True}), timeout=10.0)
                             continue
 
                     if curr_t_obj >= datetime.time(9, 30, 0) and not t_state.get('shutdown') and not t_state.get('dumped'):
@@ -724,7 +737,7 @@ async def scheduled_sniper_monitor(context):
                                     msg = f"🦇 <b>[{html.escape(str(t))}] V14 스나이퍼 상방 기습({action}) 명중!</b>\n▫️ 타겟가: ${limit_p:.2f}\n▫️ 팩트 단가: ${display_price:.2f}\n▫️ 체결수량: {ccld_qty}주 (요청: {qty}주)\n▫️ 사유: {reason}\n▫️ 상방 감시망이 잠깁니다 (하방 독립 유지)."
                                     await _safe_send(context, chat_id, msg, parse_mode='HTML')
                         else:
-                            err_msg = html.escape(str(order_res.get('msg1') or '응답 없음')) if isinstance(order_res, dict) else '통신 장애'
+                            err_msg = html.escape(str(order_res.get('msg1') or '응답 없음')) if isinstance(order_res, dict) else '통 장애'
                             logging.error(f"🚨 [{t}] V14 스나이퍼 상방 기습 서버 거절: {err_msg}")
                             reject_msg = (
                                 f"🚨 <b>[{html.escape(str(t))}] V14 스나이퍼 상방 기습 서버 거절 (Reject)!</b>\n"

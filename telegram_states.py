@@ -5,6 +5,10 @@
 # 🚨 MODIFIED: [Lost Update 궁극 방어] 파일 물리 삭제 및 덮어쓰기 로직(_hijack_vwap_lock, _process_reset_files, _nuke_assassin_data) 전역에 GlobalThrottle.get_file_lock()을 100% 팩트 래핑 완료.
 # 🚨 MODIFIED: [중복 매도 패러독스 궁극 수술] RESET:LOCK (잠금 해제) 격발 시, 스냅샷 파일뿐만 아니라 봇이 쥐고 있던 '당일 체결 기억(vwap_state)' 캐시 파일까지 와일드카드(Glob)로 100% 영구 소각하여 0주 졸업 및 이중 매도 락온(Ghost Selling Block) 맹점을 원천 봉쇄.
 # 🚨 MODIFIED: [장부 인덱스 뒤집힘 패러독스 영구 소각] EDIT_Q (수동 지층 수정) 직후 하드코딩되어 있던 `process_auto_sync` (자동 동기화) 호출 로직을 시스템 전역에서 100% 영구 소각. 다단계 수동 조작 중 KIS 실잔고 불일치를 오인하여 최신 1지층을 팝(Pop)해버리는 맹독성 엔진 난입을 완벽히 차단함.
+# 🚨 NEW: [State Mismatch 궁극 수술] EDIT_Q(수동 지층 수정) 직후 낡은 스냅샷(daily_snapshot) 및 상태 캐시(vwap_state)를 원자적으로 소각(Nuke)하여, 지시서가 최신 팩트 기반으로 100% 재생성(Regenerate)되도록 아키텍처 수복. 가이드 메시지의 /sync 오기도 /record로 팩트 교정 완료.
+# 🚨 MODIFIED: [이중 타격 방어 팩트 확장] EDIT_Q(수동 지층 수정) 시 Nuke 파이프라인에 `vrev_slice_state` 및 `vrev_aftermarket_state`까지 100% 영구 소각 대상을 전면 확장하여 진행 중인 VWAP 스케줄러의 이중 타격 대참사를 원천 차단.
+# 🚨 RESTORED: [유실 코드 100% 팩트 복구] _handle_callback_reset 및 _handle_callback_confirm 메서드를 원상 복구하고 파일 뮤텍스를 강제 주입하여 무결성 사수.
+# 🚨 MODIFIED: [시간대별 동적 셧다운 락온] _nuke_assassin_data 내부에서 무지성 shutdown=True 주입을 영구 소각하고, 프리장(04:00~09:29 EST)에만 락을 거는 동적 방어망 100% 팩트 교정 완료.
 # ==========================================================
 
 import logging
@@ -130,12 +134,35 @@ class TelegramStates:
                     try: await asyncio.wait_for(asyncio.to_thread(self.queue_ledger.edit_lot, ticker, target_date, qty, price), timeout=10.0)
                     except Exception as e: logging.error(f"🚨 지층 수정 파일 I/O 에러: {e}")
                 
+                # 🚨 MODIFIED: [이중 타격 방어] 낡은 스냅샷(Snapshot), 캐시, 슬라이스/애프터장 지시서 전면 영구 소각 (State Mismatch 방어)
+                def _nuke_snapshot_and_state_edit():
+                    for f in glob.glob(f"data/daily_snapshot_*_{ticker}.json"):
+                        with GlobalThrottle.get_file_lock(f):
+                            try: os.remove(f)
+                            except OSError: pass
+                    for f in glob.glob(f"data/vwap_state_*_{ticker}.json"):
+                        with GlobalThrottle.get_file_lock(f):
+                            try: os.remove(f)
+                            except OSError: pass
+                    # 🚨 NEW
+                    for f in glob.glob(f"data/vrev_slice_state_{ticker}.json"):
+                        with GlobalThrottle.get_file_lock(f):
+                            try: os.remove(f)
+                            except OSError: pass
+                    for f in glob.glob(f"data/vrev_aftermarket_state_{ticker}.json"):
+                        with GlobalThrottle.get_file_lock(f):
+                            try: os.remove(f)
+                            except OSError: pass
+                            
+                await asyncio.wait_for(asyncio.to_thread(_nuke_snapshot_and_state_edit), timeout=10.0)
+
                 del controller.user_states[chat_id]
                 short_date = html.escape(str(target_date[:10]))
                 
-                # 🚨 MODIFIED: [장부 인덱스 뒤집힘 패러독스 원천 차단] 
+                # 🚨 MODIFIED: [장부 인덱스 뒤집힘 패러독스 원천 차단 및 가이드 팩트 교정] 
                 # 수동 조작 중 KIS 자동 동기화가 난입해 잔고 오차분만큼 최신 지층을 강제 팝(Pop)해버리는 맹독성 로직 전면 소각
-                try: await asyncio.wait_for(update.effective_message.reply_text(f"✅ <b>[{safe_ticker}] 지층 정밀 수정 완료!</b>\n▫️ {short_date} | {qty}주 | ${price:.2f}\n\n⚠️ <b>[안전 격리 모드]</b>\n수동 다단계 조작 중 시스템 간섭을 막기 위해 <b>자동 동기화가 일시 차단</b>되었습니다.\n삭제 등 남은 수동 작업을 모두 마친 후, 반드시 <code>/sync</code>를 눌러 KIS 실원장과 팩트 동기화하십시오.", parse_mode='HTML'), timeout=10.0)
+                # 가이드 텍스트의 /sync 오기입을 /record 로 100% 교체 락온
+                try: await asyncio.wait_for(update.effective_message.reply_text(f"✅ <b>[{safe_ticker}] 지층 정밀 수정 완료!</b>\n▫️ {short_date} | {qty}주 | ${price:.2f}\n\n⚠️ <b>[안전 격리 모드]</b>\n수동 다단계 조작 중 시스템 간섭을 막기 위해 <b>자동 동기화가 일시 차단</b>되었습니다.\n삭제 등 남은 수동 작업을 모두 마친 후, 반드시 <code>/record</code>를 눌러 KIS 실원장과 팩트 동기화하십시오.", parse_mode='HTML'), timeout=10.0)
                 except Exception: pass
                 
                 return
@@ -183,7 +210,7 @@ class TelegramStates:
                 safe_ticker = html.escape(str(ticker))
                 
                 def _set_split(cfg_obj, t, v):
-                    with cfg_obj._io_lock:
+                    with GlobalThrottle.get_file_lock(cfg_obj.FILES["SPLIT"]):
                         d = cfg_obj._load_json(cfg_obj.FILES["SPLIT"], cfg_obj.DEFAULT_SPLIT)
                         d[t] = v
                         cfg_obj._save_json(cfg_obj.FILES["SPLIT"], d)
@@ -206,7 +233,7 @@ class TelegramStates:
                 safe_ticker = html.escape(str(ticker))
                 
                 def _set_target(cfg_obj, t, v):
-                    with cfg_obj._io_lock:
+                    with GlobalThrottle.get_file_lock(cfg_obj.FILES["PROFIT_CFG"]):
                         d = cfg_obj._load_json(cfg_obj.FILES["PROFIT_CFG"], cfg_obj.DEFAULT_TARGET)
                         d[t] = v
                         cfg_obj._save_json(cfg_obj.FILES["PROFIT_CFG"], d)
@@ -469,7 +496,7 @@ class TelegramStates:
             except Exception as e:
                 logging.error(f"🚨 [{ticker}] 암살자 장부 강제 소각 중 에러: {e}")
             
-            # 🚨 MODIFIED: [암살자 부활 패러독스 궁극 방어] 파일 물리 삭제 제거 및 shutdown 상태 원자적 주입
+            # 🚨 MODIFIED: [암살자 부활 패러독스 궁극 방어] 파일 물리 삭제 제거 및 시간대별 동적 셧다운 주입
             state_file = f"data/avwap_trade_state_{ticker}.json"
             # 🚨 MODIFIED: 파일 뮤텍스 결속
             with GlobalThrottle.get_file_lock(state_file):
@@ -483,12 +510,16 @@ class TelegramStates:
                     except Exception:
                         pass
 
+                    # 🚨 MODIFIED: [시간대별 동적 셧다운 락온] 프리장(04:00~09:29)에만 강제 셧다운을 주입하고, 그 외 시간대는 스케줄러가 자율 판별하도록 팩트 교정
+                    curr_time = est_now.time()
+                    is_pre_market = datetime.time(4, 0) <= curr_time < datetime.time(9, 30)
+
                     state_data['date'] = today_str
                     state_data['qty'] = 0
                     state_data['buy_odno'] = ""
                     state_data['sell_odno'] = ""
-                    state_data['shutdown'] = True
-                    state_data['dumped'] = True
+                    state_data['shutdown'] = is_pre_market
+                    state_data['dumped'] = is_pre_market
 
                     dir_name = os.path.dirname(state_file) or '.'
                     try: os.makedirs(dir_name, exist_ok=True)

@@ -3,8 +3,8 @@
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 48대 엣지 케이스 완벽 결속 교차 검증 완료.
 # 🚨 MODIFIED: [제1헌법 철저 준수] 달력 API(mcal) 스캔 전 파편화된 호출망을 소각하고, GlobalThrottle.wait_api_sync()를 강제 주입하여 썬더링 허드 완벽 차단.
-# 🚨 MODIFIED: [중복 매도 패러독스 궁극 수술] `/add_q` 및 `/clear_q` 수동 조작 시, 스냅샷 파일뿐만 아니라 봇이 쥐고 있던 '당일 체결 기억(vwap_state)' 캐시 파일까지 와일드카드(Glob)로 100% 영구 소각하여 이중 매도 락온(Ghost Selling Block) 현상을 원천 봉쇄.
 # 🚨 MODIFIED: [원인 추적 시스템 락온] /record 명령어 실행 시 KIS 서버 통신 장애의 정확한 원인(Endpoint 및 Timeout 등)을 텔레그램 UI로 직접 표출하도록 에러 파싱 로직 전면 팩트 교정 완료.
+# 🚨 MODIFIED: [이중 타격 방어 팩트 확장] `/add_q` 및 `/clear_q` 수동 조작 시, 스냅샷 파일, vwap_state 캐시 파일뿐만 아니라 `vrev_slice_state`, `vrev_aftermarket_state`까지 와일드카드(Glob)로 100% 영구 소각(Nuke)하여 잔존 지시서에 의한 스케줄러 난입 및 이중 매도 락온(Ghost Selling Block) 현상을 원천 봉쇄.
 # ==========================================================
 import logging
 import datetime
@@ -648,12 +648,22 @@ class TelegramCommands:
  
         await self._retry_api(self.queue_ledger.overwrite_queue, ticker, q_data)
         
+        # 🚨 MODIFIED: [이중 타격 방어] 큐 수동 추가 시에도 로컬 슬라이싱 및 애프터장 지시서 원자적 영구 소각
         def _nuke_snapshot_and_state():
             for f in glob.glob(f"data/daily_snapshot_*_{ticker}.json"):
                 with GlobalThrottle.get_file_lock(f):
                     try: os.remove(f)
                     except OSError: pass
             for f in glob.glob(f"data/vwap_state_*_{ticker}.json"):
+                with GlobalThrottle.get_file_lock(f):
+                    try: os.remove(f)
+                    except OSError: pass
+            # 🚨 NEW
+            for f in glob.glob(f"data/vrev_slice_state_{ticker}.json"):
+                with GlobalThrottle.get_file_lock(f):
+                    try: os.remove(f)
+                    except OSError: pass
+            for f in glob.glob(f"data/vrev_aftermarket_state_{ticker}.json"):
                 with GlobalThrottle.get_file_lock(f):
                     try: os.remove(f)
                     except OSError: pass
@@ -682,12 +692,22 @@ class TelegramCommands:
             
         await self._retry_api(self.queue_ledger.clear_queue, ticker)
         
+        # 🚨 MODIFIED: [이중 타격 방어] 큐 전체 삭제 시 로컬 슬라이싱 및 애프터장 지시서 원자적 영구 소각
         def _nuke_snapshot_and_state():
             for f in glob.glob(f"data/daily_snapshot_*_{ticker}.json"):
                 with GlobalThrottle.get_file_lock(f):
                     try: os.remove(f)
                     except OSError: pass
             for f in glob.glob(f"data/vwap_state_*_{ticker}.json"):
+                with GlobalThrottle.get_file_lock(f):
+                    try: os.remove(f)
+                    except OSError: pass
+            # 🚨 NEW
+            for f in glob.glob(f"data/vrev_slice_state_{ticker}.json"):
+                with GlobalThrottle.get_file_lock(f):
+                    try: os.remove(f)
+                    except OSError: pass
+            for f in glob.glob(f"data/vrev_aftermarket_state_{ticker}.json"):
                 with GlobalThrottle.get_file_lock(f):
                     try: os.remove(f)
                     except OSError: pass

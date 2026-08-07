@@ -10,6 +10,7 @@
 # 🚨 MODIFIED: [정량제(Fixed-Quantity) 팩트 스윕 락온] Gap Hijack 발동 시 잔여 예산을 억지로 100% 소진하던 맹독성 풀-스윕 로직을 영구 소각하고, 스냅샷에 락온된 '당일 잔여 목표 수량(Remaining Target Qty)'만을 100% 스윕 타격하여 하락장 시드 보존력(Runway)을 극대화함.
 # 🚨 NEW: [핑퐁 패러독스(Ping-Pong Paradox) 진공 압축 수술] 매 1분 슬라이싱 틱마다 암살자 덫을 취소하고 재장전하던 O(N) 맹독성 핑퐁 로직을 전면 소각. 첫 타격 시 단 1회만 취소 후 `suppress_sell=True` 팩트 락온으로 억제하여 KIS 서버 I/O 낭비 및 호가 순위 강등을 원천 봉쇄.
 # 🚨 NEW: [하이재킹 타점 오염 방어막 (Price Over-Hijack Shield) 결속] 하방 Gap Hijack이 발동되었을 때, 실시간 현재가가 스냅샷 지시서의 최고 매수 목표가보다 비쌀 경우(Buy Low 원칙 위배), 무지성 스윕 매수를 강제로 차단하여 비싸게 타격되는 대참사 완벽 방어.
+# 🚨 MODIFIED: [이중 타격(Double Spending) 기억 상실 붕괴 궁극 수술] 슬라이싱 중 사용자의 수동 /sync 개입 등으로 API 타임아웃이 발생하여 KIS 서버에서 체결 원장을 조회하지 못했을 때, 메모리에 저장된 주문번호(`last_odno`)를 강제 삭제(Amnesia)해버려 방금 샀던 수량을 다시 사버리는 '오버슈팅(Overbuying)' 패러독스를 완벽히 도려냈습니다. 이제 원장 조회 실패 시 주문 번호를 유지한 채 안전하게 다음 1분으로 검증을 이연(Delay)합니다.
 # ==========================================================
 import logging
 import asyncio
@@ -24,7 +25,7 @@ import pandas as pd
 
 from scheduler_core import get_budget_allocation
 from state_io_manager import _read_json_safe_sync, _atomic_write_json_sync
-from global_throttle import GlobalThrottle # 🚨 NEW: 전역 통제소 결속
+from global_throttle import GlobalThrottle # 🚨 전역 통제소 결속
 
 _MCAL_SCHEDULE_CACHE = {}
 
@@ -480,7 +481,13 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                 kis_search_start_fresh = (now_kst_fresh - datetime.timedelta(days=2)).strftime('%Y%m%d')
                                 query_end_dt_fresh = now_kst_fresh.strftime('%Y%m%d')
                                 
-                                _execs = await _retry_api(broker.get_execution_history, t, kis_search_start_fresh, query_end_dt_fresh, default=[])
+                                _execs = await _retry_api(broker.get_execution_history, t, kis_search_start_fresh, query_end_dt_fresh, default=None)
+                                
+                                # 🚨 MODIFIED: [이중 타격 방어망 결속] KIS 체결 원장 지연 및 API 타임아웃 시, 주문을 잊어버리지 않고 이연(Delay)하여 이중 타격 방어
+                                if _execs is None:
+                                    logging.warning(f"🚨 [{t}] 체결 원장 API 조회 실패(Timeout). 기억 상실(Amnesia) 방어를 위해 다음 분으로 이연합니다.")
+                                    continue
+                                
                                 _safe_execs = _execs if isinstance(_execs, list) else []
                                 _filled_rec = next((ex for ex in _safe_execs if isinstance(ex, dict) and str(ex.get('odno', '')) == last_odno), None)
                                 
@@ -489,12 +496,17 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                     real_exec_price = _safe_float(_filled_rec.get('ft_ccld_unpr3'))
                                     if real_exec_price == 0.0: real_exec_price = target_price
                                 else:
+                                    # 🚨 MODIFIED: 취소 불가 & 미체결 없음 & 원장 조회 안됨 = 명백한 KIS 서버 Lag
+                                    if not cancel_successful:
+                                        logging.warning(f"🚨 [{t}] 미체결에도 없고 원장에도 없음. KIS 랙(Lag) 감지. 이중 타격 방어를 위해 다음 분으로 이연합니다.")
+                                        continue
+                                        
                                     ccld_qty_this_tick = 0
                                     real_exec_price = 0.0
                             except Exception as e:
                                 logging.error(f"🚨 [{t}] 자체 슬라이싱 체결 원장 교차 검증 에러: {e}")
-                                ccld_qty_this_tick = 0
-                                real_exec_price = 0.0
+                                # 🚨 에러 발생 시에도 다음 틱으로 안전하게 이연
+                                continue
                             
                             if ccld_qty_this_tick > 0:
                                 processed_odnos = vwap_cache.setdefault(f"PROCESSED_ODNOS_{t}", set())
