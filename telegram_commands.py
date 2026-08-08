@@ -4,7 +4,7 @@
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 48대 엣지 케이스 완벽 결속 교차 검증 완료.
 # 🚨 MODIFIED: [제1헌법 철저 준수] 달력 API(mcal) 스캔 전 파편화된 호출망을 소각하고, GlobalThrottle.wait_api_sync()를 강제 주입하여 썬더링 허드 완벽 차단.
 # 🚨 MODIFIED: [원인 추적 시스템 락온] /record 명령어 실행 시 KIS 서버 통신 장애의 정확한 원인(Endpoint 및 Timeout 등)을 텔레그램 UI로 직접 표출하도록 에러 파싱 로직 전면 팩트 교정 완료.
-# 🚨 MODIFIED: [이중 타격 방어 팩트 확장] `/add_q` 및 `/clear_q` 수동 조작 시, 스냅샷 파일, vwap_state 캐시 파일뿐만 아니라 `vrev_slice_state`, `vrev_aftermarket_state`까지 와일드카드(Glob)로 100% 영구 소각(Nuke)하여 잔존 지시서에 의한 스케줄러 난입 및 이중 매도 락온(Ghost Selling Block) 현상을 원천 봉쇄.
+# 🚨 MODIFIED: [2차 오인 패러독스(False Alarm) 붕괴 차단] `/add_q` 및 `/clear_q` 수동 조작 시, 진행 중인 슬라이싱 지시서(`vrev_slice_state`, `vrev_aftermarket_state`)를 os.remove()로 물리적 삭제하던 맹독성 로직을 영구 소각. 대신 `hijacked=True`인 빈 지시서를 원자적으로 박제하여 VWAP 스케줄러의 오인 에러 타전을 100% 원천 봉쇄 완료.
 # ==========================================================
 import logging
 import datetime
@@ -16,6 +16,7 @@ import time
 import html
 import functools
 import glob
+import tempfile # 🚨 NEW: 원자적 쓰기용 모듈 결속
 import yfinance as yf
 import pandas_market_calendars as mcal
 from zoneinfo import ZoneInfo
@@ -102,7 +103,6 @@ class TelegramCommands:
         now = datetime.datetime.now(est)
         
         def _fetch_schedule(target_now):
-            # 🚨 MODIFIED: [제1헌법] 달력 API 호출 전 중앙 통제소 락온 강제
             GlobalThrottle.wait_api_sync()
             nyse = mcal.get_calendar('NYSE')
             return nyse.schedule(start_date=target_now.date(), end_date=target_now.date())
@@ -141,7 +141,6 @@ class TelegramCommands:
         async with self.tx_lock:
             cash, holdings = 0.0, {}
             res = await self._retry_api(self.broker.get_account_balance, timeout=15.0)
-            # 🚨 MODIFIED: [원인 추적 시스템 락온] API 실패 시 None이 반환되는 구조를 정밀 타격하여 실패 원인 직접 표출
             if res and (isinstance(res, (list, tuple)) and len(res) > 1 and res[1] is not None):
                 cash = self._safe_float(res[0]) if len(res) > 0 else 0.0
                 holdings = res[1] if len(res) > 1 and isinstance(res[1], dict) else {}
@@ -426,7 +425,6 @@ class TelegramCommands:
                 if status_msg:
                     await self._safe_edit(status_msg, f"🛡️ <b>[{t}] 장부 무결성 검증 진행 중... (최대 1~2분 소요될 수 있습니다)</b>", parse_mode='HTML')
                 
-                # 🚨 MODIFIED: [원인 추적 시스템 락온] 에러 마스킹을 파기하고 하위 로직에서 반환된 '구체적인 통신 실패 원인' 텍스트를 그대로 캡처
                 res = await self.sync_engine.process_auto_sync(t, chat_id, context, silent_ledger=True)
                 if res == "SUCCESS": success_tickers.append(t)
                 elif res == "LOCKED": locked_tickers.append(t)
@@ -454,7 +452,6 @@ class TelegramCommands:
                 await self._safe_send(context, chat_id, f"⚠️ <b>[동기화 지연]</b> {', '.join(locked_tickers)} 종목은 현재 백그라운드 스케줄러가 장부를 점유 중입니다. 잠시 후 다시 시도해주세요.", parse_mode='HTML')
             
             if error_tickers:
-                # 🚨 MODIFIED: [원인 추적 시스템 락온] 정확한 통신 에러 사유를 UI 하단에 명시적으로 렌더링
                 err_details = '\n'.join([f"▫️ {err}" for err in error_tickers])
                 await self._safe_send(context, chat_id, f"❌ <b>[동기화 에러 상세 진단]</b>\n{err_details}\n\n💡 KIS 서버 일시 장애이거나 토큰 문제일 수 있습니다. 상세 통신 로그는 <code>/log</code> 명령어로 확인하세요.", parse_mode='HTML')
                 
@@ -658,15 +655,26 @@ class TelegramCommands:
                 with GlobalThrottle.get_file_lock(f):
                     try: os.remove(f)
                     except OSError: pass
-            # 🚨 NEW
-            for f in glob.glob(f"data/vrev_slice_state_{ticker}.json"):
-                with GlobalThrottle.get_file_lock(f):
-                    try: os.remove(f)
+            
+            # 🚨 MODIFIED: 2차 오인 패러독스 차단 (물리적 삭제 대신 빈 지시서 박제)
+            est_now = datetime.datetime.now(ZoneInfo('America/New_York'))
+            today_str = est_now.strftime('%Y-%m-%d')
+            empty_state = {"date": today_str, "hijacked": True, "orders": []}
+            
+            for f_path in [f"data/vrev_slice_state_{ticker}.json", f"data/vrev_aftermarket_state_{ticker}.json"]:
+                with GlobalThrottle.get_file_lock(f_path):
+                    dir_name = os.path.dirname(f_path) or '.'
+                    try: os.makedirs(dir_name, exist_ok=True)
                     except OSError: pass
-            for f in glob.glob(f"data/vrev_aftermarket_state_{ticker}.json"):
-                with GlobalThrottle.get_file_lock(f):
-                    try: os.remove(f)
-                    except OSError: pass
+                    try:
+                        fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
+                        with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
+                            json.dump(empty_state, f_out, ensure_ascii=False, indent=4)
+                            f_out.flush()
+                            os.fsync(f_out.fileno())
+                        os.replace(tmp_path, f_path)
+                    except Exception: pass
+                    
         await asyncio.to_thread(_nuke_snapshot_and_state)
         
         chat_id = update.effective_chat.id
@@ -702,15 +710,26 @@ class TelegramCommands:
                 with GlobalThrottle.get_file_lock(f):
                     try: os.remove(f)
                     except OSError: pass
-            # 🚨 NEW
-            for f in glob.glob(f"data/vrev_slice_state_{ticker}.json"):
-                with GlobalThrottle.get_file_lock(f):
-                    try: os.remove(f)
+                    
+            # 🚨 MODIFIED: 2차 오인 패러독스 차단 (물리적 삭제 대신 빈 지시서 박제)
+            est_now = datetime.datetime.now(ZoneInfo('America/New_York'))
+            today_str = est_now.strftime('%Y-%m-%d')
+            empty_state = {"date": today_str, "hijacked": True, "orders": []}
+            
+            for f_path in [f"data/vrev_slice_state_{ticker}.json", f"data/vrev_aftermarket_state_{ticker}.json"]:
+                with GlobalThrottle.get_file_lock(f_path):
+                    dir_name = os.path.dirname(f_path) or '.'
+                    try: os.makedirs(dir_name, exist_ok=True)
                     except OSError: pass
-            for f in glob.glob(f"data/vrev_aftermarket_state_{ticker}.json"):
-                with GlobalThrottle.get_file_lock(f):
-                    try: os.remove(f)
-                    except OSError: pass
+                    try:
+                        fd, tmp_path = tempfile.mkstemp(dir=dir_name, text=True)
+                        with os.fdopen(fd, 'w', encoding='utf-8') as f_out:
+                            json.dump(empty_state, f_out, ensure_ascii=False, indent=4)
+                            f_out.flush()
+                            os.fsync(f_out.fileno())
+                        os.replace(tmp_path, f_path)
+                    except Exception: pass
+                    
         await asyncio.to_thread(_nuke_snapshot_and_state)
         
         chat_id = update.effective_chat.id
