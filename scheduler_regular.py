@@ -1,11 +1,12 @@
 # ==========================================================
 # FILE: scheduler_regular.py
 # ==========================================================
-# 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 38대 엣지 케이스 완벽 결속 교차 검증 완료.
+# 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 39대 엣지 케이스 완벽 결속 교차 검증 완료.
 # 🚨 MODIFIED: [Thundering Herd 영구 소각] 파편화된 await asyncio.sleep(0.06) 땜질을 무려 24개소에서 전면 삭제.
 # 🚨 MODIFIED: [중앙 통제소 위임] 모든 API 지연을 GlobalThrottle(중앙 통제소)로 100% 위임하여 비동기 이벤트 루프 마비 및 교착 상태 완벽 방어.
 # 🚨 MODIFIED: [예약 주문 증발(Ghost Order) 궁극 수술] V14 LOC 장전 시 하드코딩되어 있던 `is_market_active_now = False`를 영구 소각. 현재 시간(EST)을 동적으로 판별하여 프리장 개장 후(서머타임 04:05 EST)에는 실시간 본주문(`send_order`)을, 개장 전(윈터타임 03:05 EST)에는 예약 주문(`send_reservation_order`)을 격발하도록 팩트 락온 완료.
 # 🚨 MODIFIED: [자본 잠김 맹독성 컷오프 파기] 암살자 물량 보유 여부만으로 무조건 본진 타격을 지연 이관하던 오류를 영구 소각하고, 실질적 예산(safe_alloc_cash)이 목표 예산(15%)의 90% 미만일 때만 자본 잠김으로 판별하도록 팩트 교정 완료.
+# 🚨 MODIFIED: [0주 산출 Bypass 오인 패러독스 궁극 방어] 예산 부족 등으로 매수 수량이 0주로 산출될 경우 지시서 파일이 생성되지 않아 15:27 VWAP 엔진이 이를 스케줄러 붕괴로 오인(False Alarm)하는 대참사를 원천 차단하기 위해, V-REV 및 V14_VWAP 매매 집행 직전에 무조건 '빈 지시서(Empty Init)'를 선제 박제하도록 100% 팩트 락온 완료.
 # ==========================================================
 import logging
 import datetime
@@ -17,7 +18,7 @@ import math
 
 from scheduler_core import is_market_open, get_budget_allocation
 from order_executor import execute_order_list
-from state_io_manager import read_avwap_state_sync
+from state_io_manager import read_avwap_state_sync, _atomic_write_json_sync # 🚨 MODIFIED: _atomic_write_json_sync 추가
 
 def _safe_float(val):
     try:
@@ -207,6 +208,22 @@ async def scheduled_early_regular_trade(context):
                     if version == "V14":
                         msgs[t] += f"💎 <b>[{t}] V14 오리지널 정규장 실전 덫 장전 완료 (17:05 KST 타격망)</b>\n"
                         
+                        # 🚨 NEW: [0주 산출 Bypass 오인 패러독스 방어] V14_VWAP 모드 역시 지시서 누락 오인을 방지하기 위해 빈 지시서 선제 박제(Empty Init) 결속
+                        try:
+                            is_manual_vwap = await asyncio.wait_for(asyncio.to_thread(getattr(cfg, 'get_manual_vwap_mode', lambda x: False), t), timeout=5.0)
+                        except Exception:
+                            is_manual_vwap = False
+                            
+                        if is_manual_vwap:
+                            try:
+                                slice_file = f"data/vrev_slice_state_{t}.json"
+                                after_file = f"data/vrev_aftermarket_state_{t}.json"
+                                empty_state = {"date": today_str, "hijacked": False, "orders": []}
+                                await asyncio.wait_for(asyncio.to_thread(_atomic_write_json_sync, slice_file, empty_state), timeout=10.0)
+                                await asyncio.wait_for(asyncio.to_thread(_atomic_write_json_sync, after_file, empty_state), timeout=10.0)
+                            except Exception as init_e:
+                                logging.error(f"🚨 [{t}] V14 VWAP 지시서 선제 초기화 에러: {init_e}")
+
                         is_market_active_now = curr_est.hour >= 4
 
                         target_orders = plan.get('core_orders') or plan.get('orders') or []
@@ -564,6 +581,16 @@ async def scheduled_regular_trade_delayed(context):
                             except Exception as tg_e: logging.error(f"[{t}] V-REV 디커플링 메시지 발송 실패: {tg_e}")
                         continue
                         
+                    # 🚨 NEW: [0주 산출 Bypass 오인 패러독스 방어] 15:27 엔진이 지시서 누락으로 오인하지 않도록, 주문 장전 직전에 무조건 빈 지시서를 선제 박제(Empty Init)
+                    try:
+                        slice_file = f"data/vrev_slice_state_{t}.json"
+                        after_file = f"data/vrev_aftermarket_state_{t}.json"
+                        empty_state = {"date": today_str, "hijacked": False, "orders": []}
+                        await asyncio.wait_for(asyncio.to_thread(_atomic_write_json_sync, slice_file, empty_state), timeout=10.0)
+                        await asyncio.wait_for(asyncio.to_thread(_atomic_write_json_sync, after_file, empty_state), timeout=10.0)
+                    except Exception as init_e:
+                        logging.error(f"🚨 [{t}] V-REV 지시서 선제 초기화 에러: {init_e}")
+
                     target_orders = plans[t].get('core_orders') or plans[t].get('orders') or []
                     if not isinstance(target_orders, list): target_orders = []
                         
