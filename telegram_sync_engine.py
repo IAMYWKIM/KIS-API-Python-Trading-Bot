@@ -9,6 +9,7 @@
 # 🚨 NEW: [스냅샷 디커플링 해소 (Nuke & Regenerate) 아키텍처 팩트 결속] 잔고 오차 교정, 수동 조작, 큐 병합 등 장부에 단 1주라도 변동이 감지되면 `snapshot_needs_regen` 트리거를 발동시켜, 16:00 EST 타임락을 강제 개방(Override)하고 오염된 낡은 스냅샷(daily_snapshot)을 물리적으로 영구 소각(Nuke)한 뒤 최신 수량 기반의 팩트 지시서로 즉각 재생성(Regenerate)하도록 100% 시스템 교정 완료.
 # 🚨 MODIFIED: [체결 원장 디커플링 붕괴 수술] 16:05 EST 정산 시 한투(KIS)에서 수신한 체결 원장 데이터(`execs_raw`) 중, 암살자 캐시에 기록된 `history_odnos`에 속하는 주문은 100% 투명 인간(Ghosting) 취급하여 도려냄으로써, 암살자의 타점 오염 및 유령 졸업(Ghost Graduation)을 원천 봉쇄.
 # 🚨 NEW: [유령 졸업(Ghost Graduation) 패러독스 궁극 수술] 주말(토, 일)이나 휴일에 16:05 확정 정산 또는 자정 루프가 가동될 때, 과거 금요일의 체결 내역을 당일 실적으로 오인하여 0주 잔고 상태에서 매일 무한정 졸업 카드를 복제 발행하던 맹독성 버그를 원천 차단하기 위해, 체결 내역 필터링 및 졸업 트리거 검증 시 '실제 영업일(Today) 당일 팩트'인지 검증하는 `is_today_trading_day` 타임라인 방어막을 100% 팩트 결속 완료.
+# 🚨 MODIFIED: [SyntaxError 즉사 버그 소각] 이전 버전에서 오타로 주입된 괄호 불일치(r.get('ticker']) 등 15개 맹독성 코드를 r.get('ticker')로 100% 원상 복구 완료.
 # ==========================================================
 
 import logging
@@ -141,8 +142,9 @@ class TelegramSyncEngine:
                 actual_qty = int(self._safe_float(safe_ticker_info.get('qty')))
                 actual_avg = self._safe_float(safe_ticker_info.get('avg'))
 
+                # 🚨 MODIFIED: r.get('ticker'] -> r.get('ticker')
                 full_ledger = await self._retry_api(self.cfg.get_ledger, default=[])
-                recs_for_check = [r for r in (full_ledger or []) if isinstance(r, dict) and r.get('ticker'] == ticker]
+                recs_for_check = [r for r in (full_ledger or []) if isinstance(r, dict) and r.get('ticker') == ticker]
                 hold_res = await self._retry_api(self.cfg.calculate_holdings, ticker, recs_for_check, default=(0, 0.0, 0.0, 0.0))
                 ledger_qty_for_check = hold_res[0] if isinstance(hold_res, tuple) and len(hold_res) > 0 else 0
                 
@@ -177,7 +179,7 @@ class TelegramSyncEngine:
                     try:
                         with open(avwap_state_file, 'r', encoding='utf-8') as f:
                             avwap_data = json.load(f)
-                            if isinstance(avwap_data, dict) and avwap_data.get('date'] == target_ledger_str:
+                            if isinstance(avwap_data, dict) and avwap_data.get('date') == target_ledger_str:
                                 history_odnos = avwap_data.get('history_odnos', [])
                     except Exception:
                         pass
@@ -220,7 +222,8 @@ class TelegramSyncEngine:
                         if raw_execs is None:
                             return "체결 원장 조회(get_execution_history) 실패 - API 서버 무응답 또는 거절"
                         target_execs = filter_to_est(raw_execs)
-                        sold_today = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in target_execs if ex.get('sll_buy_dvsn_cd'] == "01")
+                        # 🚨 MODIFIED: ex.get('sll_buy_dvsn_cd'] -> ex.get('sll_buy_dvsn_cd')
+                        sold_today = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01")
                         
                         if sold_today >= max_check_qty:
                             if sold_today == prev_sold_today:
@@ -246,8 +249,9 @@ class TelegramSyncEngine:
                         snapshot_needs_regen = True # 🚨 트리거 발동
                         logging.info(f"🔧 [{ticker}] LOC/MOC 주문 {calibrated_count}건에 대해 실제 체결 단가 소급 업데이트를 완료했습니다.")
 
+                # 🚨 MODIFIED: r.get('ticker'] -> r.get('ticker')
                 full_ledger = await self._retry_api(self.cfg.get_ledger, default=[])
-                recs = [r for r in (full_ledger or []) if isinstance(r, dict) and r.get('ticker'] == ticker]
+                recs = [r for r in (full_ledger or []) if isinstance(r, dict) and r.get('ticker') == ticker]
                 
                 hold_res2 = await self._retry_api(self.cfg.calculate_holdings, ticker, recs, default=(0, 0.0, 0.0, 0.0))
                 ledger_qty = hold_res2[0] if isinstance(hold_res2, tuple) and len(hold_res2) > 0 else 0
@@ -263,7 +267,8 @@ class TelegramSyncEngine:
                 diff = safe_actual_qty_for_vrev - ledger_qty
                 price_diff = abs(actual_avg - avg_price)
 
-                today_recs = [r for r in recs if r.get('date'] == target_ledger_str and 'INIT' not in str(r.get('exec_id', '')) and 'CALIB' not in str(r.get('exec_id', ''))]
+                # 🚨 MODIFIED: r.get('date'] -> r.get('date')
+                today_recs = [r for r in recs if r.get('date') == target_ledger_str and 'INIT' not in str(r.get('exec_id', '')) and 'CALIB' not in str(r.get('exec_id', ''))]
                 
                 needs_reconstruction = (diff != 0)
 
@@ -273,7 +278,8 @@ class TelegramSyncEngine:
                     await self._safe_send(context, chat_id, f"🔧 <b>[{html.escape(str(ticker))}] 장부 평단가 미세 오차({price_diff:.4f}) 교정 완료!</b>", parse_mode='HTML')
                 elif needs_reconstruction:
                     snapshot_needs_regen = True # 🚨 트리거 발동
-                    temp_recs = [r for r in recs if r.get('date'] != target_ledger_str or 'INIT' in str(r.get('exec_id', ''))]
+                    # 🚨 MODIFIED: r.get('date'] -> r.get('date')
+                    temp_recs = [r for r in recs if r.get('date') != target_ledger_str or 'INIT' in str(r.get('exec_id', ''))]
                     
                     temp_res = await self._retry_api(self.cfg.calculate_holdings, ticker, temp_recs, default=(0, 0.0, 0.0, 0.0))
                     temp_sim_qty = temp_res[0] if isinstance(temp_res, tuple) and len(temp_res) > 0 else 0
@@ -281,10 +287,12 @@ class TelegramSyncEngine:
                     
                     new_target_records = []
                     
-                    today_valid_recs = [r for r in recs if r.get('date'] == target_ledger_str and 'INIT' not in str(r.get('exec_id', '')) and 'CALIB' not in str(r.get('exec_id', ''))]
+                    # 🚨 MODIFIED: r.get('date'] -> r.get('date')
+                    today_valid_recs = [r for r in recs if r.get('date') == target_ledger_str and 'INIT' not in str(r.get('exec_id', '')) and 'CALIB' not in str(r.get('exec_id', ''))]
                     new_target_records.extend(today_valid_recs)
                     
-                    current_ledger_qty = temp_sim_qty + sum(r.get('qty', 0) if r.get('side'] == 'BUY' else -r.get('qty', 0) for r in today_valid_recs)
+                    # 🚨 MODIFIED: r.get('side'] -> r.get('side')
+                    current_ledger_qty = temp_sim_qty + sum(r.get('qty', 0) if r.get('side') == 'BUY' else -r.get('qty', 0) for r in today_valid_recs)
                     
                     gap_qty = safe_actual_qty_for_vrev - current_ledger_qty
                     
@@ -293,8 +301,9 @@ class TelegramSyncEngine:
                         calib_price = actual_avg
                         
                         actual_clear_price_calib = 0.0
-                        if target_execs:
-                            sell_execs_calib = [ex for ex in target_execs if ex.get('sll_buy_dvsn_cd'] == "01"]
+                        if target_execs and is_today_trading_day:
+                            # 🚨 MODIFIED: ex.get('sll_buy_dvsn_cd'] -> ex.get('sll_buy_dvsn_cd')
+                            sell_execs_calib = [ex for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01"]
                             if sell_execs_calib:
                                 tot_amt_calib = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) * self._safe_float(ex.get('ft_ccld_unpr3')) for ex in sell_execs_calib)
                                 tot_q_calib = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in sell_execs_calib)
@@ -331,7 +340,7 @@ class TelegramSyncEngine:
                     vrev_ledger_qty = sum(int(self._safe_float(item.get("qty"))) for item in q_data_before if isinstance(item, dict))
                     
                     # 🚨 NEW: [유령 졸업 방어 결속] KIS 체결 내역 중 매도 건을 필터링하되, 반드시 '오늘이 실제 영업일'일 때만 유효한 당일 실적으로 인정
-                    sold_today_vrev = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in target_execs if ex.get('sll_buy_dvsn_cd'] == "01") if (target_execs and is_today_trading_day) else 0
+                    sold_today_vrev = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01") if (target_execs and is_today_trading_day) else 0
                     
                     if safe_actual_qty_for_vrev == 0 and (vrev_ledger_qty > 0 or sold_today_vrev > 0):
                         if sold_today_vrev == 0 and vrev_ledger_qty > 0:
@@ -345,7 +354,8 @@ class TelegramSyncEngine:
                         tot_q = 0
             
                         if target_execs and is_today_trading_day:
-                            sell_execs = [ex for ex in target_execs if ex.get('sll_buy_dvsn_cd'] == "01"]
+                            # 🚨 MODIFIED: ex.get('sll_buy_dvsn_cd'] -> ex.get('sll_buy_dvsn_cd')
+                            sell_execs = [ex for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01"]
                             if sell_execs:
                                 tot_amt = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) * self._safe_float(ex.get('ft_ccld_unpr3')) for ex in sell_execs)
                                 tot_q = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in sell_execs)
@@ -354,7 +364,8 @@ class TelegramSyncEngine:
                         if tot_q > vrev_ledger_qty:
                             snapshot_needs_regen = True # 🚨 트리거 발동
                             missing_qty = tot_q - vrev_ledger_qty
-                            buy_execs = [ex for ex in (target_execs or []) if ex.get('sll_buy_dvsn_cd'] == "02"]
+                            # 🚨 MODIFIED: ex.get('sll_buy_dvsn_cd'] -> ex.get('sll_buy_dvsn_cd')
+                            buy_execs = [ex for ex in (target_execs or []) if ex.get('sll_buy_dvsn_cd') == "02"]
                             temp_invested = sum(self._safe_float(item.get("qty")) * self._safe_float(item.get("price")) for item in q_data_before if isinstance(item, dict))
                             temp_avg = temp_invested / vrev_ledger_qty if vrev_ledger_qty > 0 else 0.0
                             missing_price = temp_avg
@@ -419,6 +430,11 @@ class TelegramSyncEngine:
                                 
                         if getattr(self, 'queue_ledger', None):
                             await self._retry_api(self.queue_ledger.sync_with_broker, ticker, 0, timeout=10.0)
+                            
+                        # 🚨 NEW: [V-REV 유령 졸업 방어] 큐 장부 소각과 동시에 메인 장부도 100% 소각하여 주말 무한 검증 루프 원천 차단
+                        full_ledger_clear = await self._retry_api(self.cfg.get_ledger, default=[])
+                        all_recs_clear = [r for r in full_ledger_clear if isinstance(r, dict) and r.get('ticker') != ticker]
+                        await self._retry_api(self.cfg._save_json, self.cfg.FILES["LEDGER"], all_recs_clear, timeout=10.0)
                     
                         if _vrev_snap_ok:
                             msg = f"🎉 <b>[{html.escape(str(ticker))}] V-REV 잭팟 스윕(전량 익절) 감지!]</b>\n▫️ 잔고가 0주가 되어 LIFO 큐 지층을 100% 소각(초기화)했습니다."
@@ -487,7 +503,8 @@ class TelegramSyncEngine:
 
                         actual_clear_price_for_sync = 0.0
                         if target_execs and is_today_trading_day:
-                            sell_execs_sync = [ex for ex in target_execs if ex.get('sll_buy_dvsn_cd'] == "01"]
+                            # 🚨 MODIFIED: ex.get('sll_buy_dvsn_cd'] -> ex.get('sll_buy_dvsn_cd')
+                            sell_execs_sync = [ex for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01"]
                             if sell_execs_sync:
                                 t_amt = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) * self._safe_float(ex.get('ft_ccld_unpr3')) for ex in sell_execs_sync)
                                 t_q = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in sell_execs_sync)
@@ -537,7 +554,8 @@ class TelegramSyncEngine:
 
                 if not is_rev:
                     # 🚨 NEW: [유령 졸업 방어 결속] KIS 체결 내역 중 매도 건을 필터링하되, 반드시 '오늘이 실제 영업일'일 때만 유효한 당일 실적으로 인정
-                    sold_today_v14 = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in target_execs if ex.get('sll_buy_dvsn_cd'] == "01") if (target_execs and is_today_trading_day) else 0
+                    # 🚨 MODIFIED: ex.get('sll_buy_dvsn_cd'] -> ex.get('sll_buy_dvsn_cd')
+                    sold_today_v14 = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01") if (target_execs and is_today_trading_day) else 0
                     
                     if actual_qty == 0 and (ledger_qty > 0 or sold_today_v14 > 0):
                         if sold_today_v14 == 0 and ledger_qty > 0:
@@ -575,7 +593,8 @@ class TelegramSyncEngine:
                                 except OSError: pass
                         else:
                             full_ledger2 = await self._retry_api(self.cfg.get_ledger, default=[])
-                            all_recs = [r for r in full_ledger2 if isinstance(r, dict) and r.get('ticker'] != ticker]
+                            # 🚨 MODIFIED: r.get('ticker'] -> r.get('ticker')
+                            all_recs = [r for r in full_ledger2 if isinstance(r, dict) and r.get('ticker') != ticker]
                             await self._retry_api(self.cfg._save_json, self.cfg.FILES["LEDGER"], all_recs, timeout=10.0)
                             await self._safe_send(context, chat_id, f"⚠️ <b>[{html.escape(str(ticker))} 강제 정산 완료]</b>\n잔고가 0주이나 마이너스 수익 상태이므로 명예의 전당 박제 없이 장부를 비우고 새출발 타점을 장전합니다.", parse_mode='HTML')
 
@@ -652,7 +671,8 @@ class TelegramSyncEngine:
                         avail_cash = self._safe_float((alloc_cash_dict or {}).get(ticker, 0.0))
              
                         full_ledger_final = await self._retry_api(self.cfg.get_ledger, timeout=10.0)
-                        recs_final = [r for r in (full_ledger_final or []) if isinstance(r, dict) and r.get('ticker'] == ticker]
+                        # 🚨 MODIFIED: r.get('ticker'] -> r.get('ticker')
+                        recs_final = [r for r in (full_ledger_final or []) if isinstance(r, dict) and r.get('ticker') == ticker]
                         hold_res_final = await self._retry_api(self.cfg.calculate_holdings, ticker, recs_final, timeout=10.0)
                   
                         final_qty = hold_res_final[0] if isinstance(hold_res_final, tuple) and len(hold_res_final) > 0 else 0
@@ -677,7 +697,7 @@ class TelegramSyncEngine:
 
     async def _display_ledger(self, ticker, chat_id, context, query=None, message_obj=None, pre_fetched_holdings=None):
         full_ledger = await self._retry_api(self.cfg.get_ledger, default=[])
-        recs = [r for r in full_ledger if isinstance(r, dict) and r.get('ticker'] == ticker]
+        recs = [r for r in full_ledger if isinstance(r, dict) and r.get('ticker') == ticker]
         
         report = ""
         
