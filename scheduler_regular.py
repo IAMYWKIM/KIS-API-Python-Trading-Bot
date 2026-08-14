@@ -7,6 +7,8 @@
 # 🚨 MODIFIED: [예약 주문 증발(Ghost Order) 궁극 수술] V14 LOC 장전 시 하드코딩되어 있던 `is_market_active_now = False`를 영구 소각. 현재 시간(EST)을 동적으로 판별하여 프리장 개장 후(서머타임 04:05 EST)에는 실시간 본주문(`send_order`)을, 개장 전(윈터타임 03:05 EST)에는 예약 주문(`send_reservation_order`)을 격발하도록 팩트 락온 완료.
 # 🚨 MODIFIED: [자본 잠김 맹독성 컷오프 파기] 암살자 물량 보유 여부만으로 무조건 본진 타격을 지연 이관하던 오류를 영구 소각하고, 실질적 예산(safe_alloc_cash)이 목표 예산(15%)의 90% 미만일 때만 자본 잠김으로 판별하도록 팩트 교정 완료.
 # 🚨 MODIFIED: [0주 산출 Bypass 오인 패러독스 궁극 방어] 예산 부족 등으로 매수 수량이 0주로 산출될 경우 지시서 파일이 생성되지 않아 15:27 VWAP 엔진이 이를 스케줄러 붕괴로 오인(False Alarm)하는 대참사를 원천 차단하기 위해, V-REV 및 V14_VWAP 매매 집행 직전에 무조건 '빈 지시서(Empty Init)'를 선제 박제하도록 100% 팩트 락온 완료.
+# 🚨 MODIFIED: [스케줄러 타임아웃 연쇄 폭발 궁극 수술] 3단 지수 백오프 대기 시간 누적으로 인해 300초 전역 타임아웃을 돌파해버리는 대참사를 막기 위해 600초로 타임아웃 상한(Capping)을 확장 결속 완료.
+# 🚨 MODIFIED: [TimeoutError 침묵 패러독스 수술] 파이썬 내장 TimeoutError 발생 시 str(e)가 빈 문자열("")을 반환하여 텔레그램 타전망에 사유가 누락되는 현상을 100% 원천 봉쇄(type(e).__name__ 폴백 결속).
 # ==========================================================
 import logging
 import datetime
@@ -18,7 +20,7 @@ import math
 
 from scheduler_core import is_market_open, get_budget_allocation
 from order_executor import execute_order_list
-from state_io_manager import read_avwap_state_sync, _atomic_write_json_sync # 🚨 MODIFIED: _atomic_write_json_sync 추가
+from state_io_manager import read_avwap_state_sync, _atomic_write_json_sync
 
 def _safe_float(val):
     try:
@@ -208,7 +210,6 @@ async def scheduled_early_regular_trade(context):
                     if version == "V14":
                         msgs[t] += f"💎 <b>[{t}] V14 오리지널 정규장 실전 덫 장전 완료 (17:05 KST 타격망)</b>\n"
                         
-                        # 🚨 NEW: [0주 산출 Bypass 오인 패러독스 방어] V14_VWAP 모드 역시 지시서 누락 오인을 방지하기 위해 빈 지시서 선제 박제(Empty Init) 결속
                         try:
                             is_manual_vwap = await asyncio.wait_for(asyncio.to_thread(getattr(cfg, 'get_manual_vwap_mode', lambda x: False), t), timeout=5.0)
                         except Exception:
@@ -306,17 +307,30 @@ async def scheduled_early_regular_trade(context):
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            success, fail_reason = await asyncio.wait_for(_do_early_trade(), timeout=300.0)
+            success, fail_reason = await asyncio.wait_for(_do_early_trade(), timeout=600.0)
             if success:
                 if attempt > 1 and chat_id: 
                     try:
                         await asyncio.wait_for(context.bot.send_message(chat_id=chat_id, text=f"✅ <b>[통신 복구] {attempt}번째 재시도 끝에 장전을 완수했습니다!</b>", parse_mode='HTML'), timeout=15.0)
                     except Exception: pass
                 return 
+        except asyncio.TimeoutError:
+            logging.error(f"17:05 덫 장전 에러 ({attempt}/{MAX_RETRIES}): 600초 전역 타임아웃 초과 (API 응답 지연 누적)", exc_info=True)
+            if attempt == 1 and chat_id:
+                try:
+                    await asyncio.wait_for(
+                        context.bot.send_message(
+                            chat_id=chat_id, 
+                            text=f"⚠️ <b>[API 통신 지연 감지]</b>\n한투 서버 불안정. 10초 뒤 장전을 재시도합니다! 🛡️\n<code>사유: 600초 전역 타임아웃 초과 (API 지연 누적)</code>", 
+                            parse_mode='HTML'
+                        ),
+                        timeout=15.0
+                    )
+                except Exception: pass
         except Exception as e:
             logging.error(f"17:05 덫 장전 에러 ({attempt}/{MAX_RETRIES}): {e}", exc_info=True)
             if attempt == 1 and chat_id:
-                safe_err = html.escape(str(e))
+                safe_err = html.escape(str(e)) if str(e) else type(e).__name__
                 try:
                     await asyncio.wait_for(
                         context.bot.send_message(
@@ -330,7 +344,7 @@ async def scheduled_early_regular_trade(context):
         else:
             logging.warning(f"장전 조건 미충족 ({attempt}/{MAX_RETRIES}): {fail_reason}")
             if attempt == 1 and chat_id:
-                 safe_fail = html.escape(str(fail_reason))
+                 safe_fail = html.escape(str(fail_reason)) if str(fail_reason) else "알 수 없는 실패"
                  try:
                      await asyncio.wait_for(
                          context.bot.send_message(
@@ -486,7 +500,6 @@ async def scheduled_regular_trade_delayed(context):
 
                     safe_alloc_cash = _safe_float(allocated_cash.get(t, 0.0))
                     
-                    # 🚨 MODIFIED: [자본 잠김 판별 맹독성 버그 수술] 암살자 보유 여부와 무관하게, 주문가능금액 기반 할당 예산(safe_alloc_cash)이 목표 투입 예산(15%)의 90% 미만일 때만 자본 잠김으로 판단하도록 100% 팩트 교정 완료
                     is_capital_locked = False
                     if version == "V_REV":
                         required_budget = 0.0
@@ -581,7 +594,6 @@ async def scheduled_regular_trade_delayed(context):
                             except Exception as tg_e: logging.error(f"[{t}] V-REV 디커플링 메시지 발송 실패: {tg_e}")
                         continue
                         
-                    # 🚨 NEW: [0주 산출 Bypass 오인 패러독스 방어] 15:27 엔진이 지시서 누락으로 오인하지 않도록, 주문 장전 직전에 무조건 빈 지시서를 선제 박제(Empty Init)
                     try:
                         slice_file = f"data/vrev_slice_state_{t}.json"
                         after_file = f"data/vrev_aftermarket_state_{t}.json"
@@ -656,17 +668,30 @@ async def scheduled_regular_trade_delayed(context):
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            success, fail_reason = await asyncio.wait_for(_do_delayed_trade(), timeout=300.0)
+            success, fail_reason = await asyncio.wait_for(_do_delayed_trade(), timeout=600.0)
             if success:
                 if attempt > 1 and chat_id: 
                     try:
                         await asyncio.wait_for(context.bot.send_message(chat_id=chat_id, text=f"✅ <b>[통신 복구] {attempt}번째 재시도 끝에 장전/이관을 완수했습니다!</b>", parse_mode='HTML'), timeout=15.0)
                     except Exception: pass
                 return 
+        except asyncio.TimeoutError:
+            logging.error(f"정규장 덫 실전 전송 에러 ({attempt}/{MAX_RETRIES}): 600초 전역 타임아웃 초과 (API 응답 지연 누적)", exc_info=True)
+            if attempt == 1 and chat_id:
+                try:
+                    await asyncio.wait_for(
+                        context.bot.send_message(
+                            chat_id=chat_id, 
+                            text=f"⚠️ <b>[API 통신 지연 감지]</b>\n한투 서버 불안정. 1분 뒤 실전 장전을 재시도합니다! 🛡️\n<code>사유: 600초 전역 타임아웃 초과 (API 지연 누적)</code>", 
+                            parse_mode='HTML'
+                        ),
+                        timeout=15.0
+                    )
+                except Exception: pass
         except Exception as e:
             logging.error(f"정규장 덫 실전 전송 에러 ({attempt}/{MAX_RETRIES}): {e}", exc_info=True)
             if attempt == 1 and chat_id:
-                safe_err = html.escape(str(e))
+                safe_err = html.escape(str(e)) if str(e) else type(e).__name__
                 try:
                     await asyncio.wait_for(
                         context.bot.send_message(
@@ -679,7 +704,7 @@ async def scheduled_regular_trade_delayed(context):
                 except Exception: pass
         else:
              if attempt == 1 and chat_id:
-                 safe_fail = html.escape(str(fail_reason))
+                 safe_fail = html.escape(str(fail_reason)) if str(fail_reason) else "알 수 없는 실패"
                  try:
                      await asyncio.wait_for(
                          context.bot.send_message(
