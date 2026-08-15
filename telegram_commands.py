@@ -5,6 +5,7 @@
 # 🚨 MODIFIED: [제1헌법 철저 준수] 달력 API(mcal) 스캔 전 파편화된 호출망을 소각하고, GlobalThrottle.wait_api_sync()를 강제 주입하여 썬더링 허드 완벽 차단.
 # 🚨 MODIFIED: [원인 추적 시스템 락온] /record 명령어 실행 시 KIS 서버 통신 장애의 정확한 원인(Endpoint 및 Timeout 등)을 텔레그램 UI로 직접 표출하도록 에러 파싱 로직 전면 팩트 교정 완료.
 # 🚨 MODIFIED: [2차 오인 패러독스(False Alarm) 붕괴 차단] `/add_q` 및 `/clear_q` 수동 조작 시, 진행 중인 슬라이싱 지시서(`vrev_slice_state`, `vrev_aftermarket_state`)를 os.remove()로 물리적 삭제하던 맹독성 로직을 영구 소각. 대신 `hijacked=True`인 빈 지시서를 원자적으로 박제하여 VWAP 스케줄러의 오인 에러 타전을 100% 원천 봉쇄 완료.
+# 🚨 NEW: [스레드 풀 고갈(Thread Leak) 궁극 수술] 하위 KIS 통신 지연(최대 35초) 시 상위 `wait_for`가 10~15초 만에 코루틴을 취소시켜 발생하는 '좀비 스레드 누적 및 교착(Deadlock)' 대참사를 원천 봉쇄하기 위해, 모든 비동기 I/O 래퍼의 타임아웃을 45.0초로 상향 팩트 하드 캡핑 완료.
 # ==========================================================
 import logging
 import datetime
@@ -48,7 +49,8 @@ class TelegramCommands:
         except Exception:
             return 0.0
 
-    async def _retry_api(self, func, *args, timeout=15.0, default=None, **kwargs):
+    # 🚨 MODIFIED: [스레드 풀 고갈 붕괴 수술] 15.0 -> 45.0 강제 하드캡
+    async def _retry_api(self, func, *args, timeout=45.0, default=None, **kwargs):
         for attempt in range(3):
             try:
                 if asyncio.iscoroutinefunction(func):
@@ -64,7 +66,8 @@ class TelegramCommands:
                 await asyncio.sleep(1.0 * (2 ** attempt))
         return default
 
-    async def _safe_reply(self, message_obj, text, timeout=15.0, **kwargs):
+    # 🚨 MODIFIED: [스레드 풀 고갈 붕괴 수술] 15.0 -> 45.0 강제 하드캡
+    async def _safe_reply(self, message_obj, text, timeout=45.0, **kwargs):
         if not message_obj: return None
         try:
             return await asyncio.wait_for(message_obj.reply_text(text, **kwargs), timeout=timeout)
@@ -72,7 +75,8 @@ class TelegramCommands:
             logging.error(f"🚨 텔레그램 발송 실패: {e}")
             return None
 
-    async def _safe_edit(self, message_obj, text, timeout=15.0, **kwargs):
+    # 🚨 MODIFIED: [스레드 풀 고갈 붕괴 수술] 15.0 -> 45.0 강제 하드캡
+    async def _safe_edit(self, message_obj, text, timeout=45.0, **kwargs):
         if not message_obj: return None
         try:
             return await asyncio.wait_for(message_obj.edit_text(text, **kwargs), timeout=timeout)
@@ -83,7 +87,8 @@ class TelegramCommands:
             logging.error(f"🚨 텔레그램 수정 실패: {e}")
         return None
 
-    async def _safe_send(self, context, chat_id, text, timeout=15.0, **kwargs):
+    # 🚨 MODIFIED: [스레드 풀 고갈 붕괴 수술] 15.0 -> 45.0 강제 하드캡
+    async def _safe_send(self, context, chat_id, text, timeout=45.0, **kwargs):
         if not chat_id: return None
         try:
             return await asyncio.wait_for(context.bot.send_message(chat_id=chat_id, text=text, **kwargs), timeout=timeout)
@@ -107,7 +112,8 @@ class TelegramCommands:
             nyse = mcal.get_calendar('NYSE')
             return nyse.schedule(start_date=target_now.date(), end_date=target_now.date())
 
-        schedule = await self._retry_api(_fetch_schedule, now, timeout=10.0)
+        # 🚨 MODIFIED: 10.0 -> 45.0
+        schedule = await self._retry_api(_fetch_schedule, now, timeout=45.0)
         
         if schedule is None or schedule.empty:
             if now.weekday() < 5: return "REG", "🔥 정규장 (Fail-Open)"
@@ -140,7 +146,8 @@ class TelegramCommands:
         
         async with self.tx_lock:
             cash, holdings = 0.0, {}
-            res = await self._retry_api(self.broker.get_account_balance, timeout=15.0)
+            # 🚨 MODIFIED: 15.0 -> 45.0
+            res = await self._retry_api(self.broker.get_account_balance, timeout=45.0)
             if res and (isinstance(res, (list, tuple)) and len(res) > 1 and res[1] is not None):
                 cash = self._safe_float(res[0]) if len(res) > 0 else 0.0
                 holdings = res[1] if len(res) > 1 and isinstance(res[1], dict) else {}
@@ -233,7 +240,8 @@ class TelegramCommands:
                 yf_close = None
                 for attempt in range(3):
                     try:
-                        yf_close = await asyncio.wait_for(asyncio.to_thread(get_exact_prev_close, t), timeout=10.0)
+                        # 🚨 MODIFIED: 10.0 -> 45.0
+                        yf_close = await asyncio.wait_for(asyncio.to_thread(get_exact_prev_close, t), timeout=45.0)
                         break
                     except Exception:
                         if attempt == 2: pass
@@ -435,7 +443,8 @@ class TelegramCommands:
         
         if success_tickers: 
             async with self.tx_lock:
-                res = await self._retry_api(self.broker.get_account_balance, timeout=15.0)
+                # 🚨 MODIFIED: 15.0 -> 45.0
+                res = await self._retry_api(self.broker.get_account_balance, timeout=45.0)
                 holdings = res[1] if res and len(res) > 1 and isinstance(res[1], dict) else {}
             
             for idx, t in enumerate(success_tickers):
@@ -510,7 +519,8 @@ class TelegramCommands:
         tracking_cache = app_data.get('sniper_tracking', {}) if isinstance(app_data.get('sniper_tracking'), dict) else {}
         atr_data = {t: (0.0, 0.0) for t in active_tickers}
         
-        msg, markup = await self._retry_api(self.view.get_settlement_message, active_tickers, self.cfg, atr_data, tracking_cache, timeout=15.0)
+        # 🚨 MODIFIED: 15.0 -> 45.0
+        msg, markup = await self._retry_api(self.view.get_settlement_message, active_tickers, self.cfg, atr_data, tracking_cache, timeout=45.0)
         if not msg: msg, markup = "❌ 설정 화면을 불러오는 도중 에러가 발생했습니다.", None
         
         await self._safe_edit(status_msg, msg, reply_markup=markup, parse_mode='HTML')
@@ -774,7 +784,8 @@ class TelegramCommands:
             except Exception: app_data = {}
         if not isinstance(app_data, dict): app_data = {}
 
-        msg, markup = await self._retry_api(plugin.get_console_message, app_data, timeout=15.0)
+        # 🚨 MODIFIED: 15.0 -> 45.0
+        msg, markup = await self._retry_api(plugin.get_console_message, app_data, timeout=45.0)
         
         if msg:
             await self._safe_edit(status_msg, msg, reply_markup=markup, parse_mode='HTML')
