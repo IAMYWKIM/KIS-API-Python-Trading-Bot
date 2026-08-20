@@ -7,6 +7,7 @@
 # 🚨 MODIFIED: [예수금 0원 매도 컷오프 맹점 수술] 애프터장 예수금 조회 결과 0원(cash=0.0)일 때 루프 자체를 continue로 끊어버리는 코드를 영구 소각하고, 하위 로직에서 매수(BUY) 플랜만 스킵하고 매도(SELL) 플랜은 정상 집행하도록 100% 팩트 교정 완료.
 # 🚨 MODIFIED: [Case 54 상태 파일 스키마 불일치 붕괴 수술] target_price 단일 추출을 폐기하고 o.get('target_price', o.get('price', 0.0)) 듀얼 폴백을 결속하여 0.0달러 무지성 덤핑 패러독스 완벽 방어.
 # 🚨 MODIFIED: [체결 원장 디커플링 붕괴 수술] 애프터장에서 암살자 오버나이트 익절 덫을 재장전할 때 생성되는 새로운 주문번호(odno) 역시 `history_odnos`에 완벽하게 캐싱하여 16:05 정산 시 암살자 찌꺼기가 유입되는 대참사를 원천 차단.
+# 🚨 MODIFIED: [지층 독립성 팽창 패러독스 자가 치유 수술] 애프터장 매수 체결 후 장부에 팩트를 주입할 때 사용되던 "VREV_AFTERMARKET_BUY" 식별자를 "VREV_VWAP_BUY"로 100% 교정하여, 지층이 쪼개지지 않고 1층에 멱등하게 가중 평균 병합되도록 락온.
 # ==========================================================
 import logging
 import asyncio
@@ -65,7 +66,8 @@ def _sync_aftermarket_ledger_atomic(tkr, sde, c_qty, r_price, q_ledger, strat, v
     if ver == "V_REV":
         if q_ledger:
             if sde == "BUY":
-                q_ledger.add_lot(tkr, c_qty, r_price, "VREV_AFTERMARKET_BUY")
+                # 🚨 MODIFIED: [지층 팽창 붕괴 자가 치유] 애프터장 지연 매수 기원을 VREV_VWAP_BUY로 일원화 락온
+                q_ledger.add_lot(tkr, c_qty, r_price, "VREV_VWAP_BUY")
             else:
                 q_ledger.pop_lots(tkr, c_qty, r_price)
         if hasattr(strat, 'v_rev_plugin'):

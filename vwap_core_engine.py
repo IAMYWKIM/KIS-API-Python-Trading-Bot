@@ -11,6 +11,7 @@
 # 🚨 NEW: [핑퐁 패러독스(Ping-Pong Paradox) 진공 압축 수술] 매 1분 슬라이싱 틱마다 암살자 덫을 취소하고 재장전하던 O(N) 맹독성 핑퐁 로직을 전면 소각. 첫 타격 시 단 1회만 취소 후 `suppress_sell=True` 팩트 락온으로 억제하여 KIS 서버 I/O 낭비 및 호가 순위 강등을 원천 봉쇄.
 # 🚨 NEW: [하이재킹 타점 오염 방어막 (Price Over-Hijack Shield) 결속] 하방 Gap Hijack이 발동되었을 때, 실시간 현재가가 스냅샷 지시서의 최고 매수 목표가보다 비쌀 경우(Buy Low 원칙 위배), 무지성 스윕 매수를 강제로 차단하여 비싸게 타격되는 대참사 완벽 방어.
 # 🚨 MODIFIED: [이중 타격(Double Spending) 기억 상실 붕괴 궁극 수술] 슬라이싱 중 사용자의 수동 /sync 개입 등으로 API 타임아웃이 발생하여 KIS 서버에서 체결 원장을 조회하지 못했을 때, 메모리에 저장된 주문번호(`last_odno`)를 강제 삭제(Amnesia)해버려 방금 샀던 수량을 다시 사버리는 '오버슈팅(Overbuying)' 패러독스를 완벽히 도려냈습니다. 이제 원장 조회 실패 시 주문 번호를 유지한 채 안전하게 다음 1분으로 검증을 이연(Delay)합니다.
+# 🚨 MODIFIED: [지층 독립성 팽창 패러독스 자가 치유 수술] 하방 하이재킹(Gap Hijack) 매수 시 주입되던 "GAP_HIJACK_BUY" 기원 식별자를 "VREV_VWAP_BUY"로 100% 팩트 교정하여, 당일 수동/슬라이싱 타격분과 100% 단일 지층으로 원자적 병합(Auto-Merge)되도록 Case 58 헌법을 완벽히 사수함.
 # ==========================================================
 import logging
 import asyncio
@@ -385,7 +386,8 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                                 if hasattr(strategy, 'v_rev_plugin'):
                                                     await _retry_api(strategy.v_rev_plugin.record_execution, t, "BUY", buy_qty, exec_price)
                                                 if queue_ledger:
-                                                    await _retry_api(queue_ledger.add_lot, t, buy_qty, exec_price, "GAP_HIJACK_BUY")
+                                                    # 🚨 MODIFIED: [지층 팽창 붕괴 자가 치유] 하이재킹 기원을 VREV_VWAP_BUY로 일원화 락온
+                                                    await _retry_api(queue_ledger.add_lot, t, buy_qty, exec_price, "VREV_VWAP_BUY")
                                             else:
                                                 if hasattr(strategy, 'v14_vwap_plugin'):
                                                     await _retry_api(strategy.v14_vwap_plugin.record_execution, t, "BUY", buy_qty, exec_price)
