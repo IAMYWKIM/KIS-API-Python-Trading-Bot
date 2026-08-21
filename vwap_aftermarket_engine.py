@@ -8,6 +8,7 @@
 # 🚨 MODIFIED: [Case 54 상태 파일 스키마 불일치 붕괴 수술] target_price 단일 추출을 폐기하고 o.get('target_price', o.get('price', 0.0)) 듀얼 폴백을 결속하여 0.0달러 무지성 덤핑 패러독스 완벽 방어.
 # 🚨 MODIFIED: [체결 원장 디커플링 붕괴 수술] 애프터장에서 암살자 오버나이트 익절 덫을 재장전할 때 생성되는 새로운 주문번호(odno) 역시 `history_odnos`에 완벽하게 캐싱하여 16:05 정산 시 암살자 찌꺼기가 유입되는 대참사를 원천 차단.
 # 🚨 MODIFIED: [지층 독립성 팽창 패러독스 자가 치유 수술] 애프터장 매수 체결 후 장부에 팩트를 주입할 때 사용되던 "VREV_AFTERMARKET_BUY" 식별자를 "VREV_VWAP_BUY"로 100% 교정하여, 지층이 쪼개지지 않고 1층에 멱등하게 가중 평균 병합되도록 락온.
+# 🚨 NEW: [단일 지층 팽창 패러독스 궁극 수술 (Parameter Amnesia)] 애프터장 매도 체결 시 `pop_lots`에 분할을 위한 필수 파라미터(`prev_close`, `portion_budget`)가 누락되어 팽창된 지층이 쪼개지지 않는 맹점을 도려내고, 타격 루프 전단에서 실시간 팩트를 추출하여 100% 주입 완료.
 # ==========================================================
 import logging
 import asyncio
@@ -18,6 +19,7 @@ import html
 import functools
 
 from state_io_manager import _read_json_safe_sync, _atomic_write_json_sync
+from global_throttle import GlobalThrottle
 
 def _safe_float(val):
     try:
@@ -62,14 +64,16 @@ async def _safe_send(context, chat_id, text, timeout=15.0, **kwargs):
         logging.error(f"🚨 텔레그램 전송 실패: {e}")
         return None
 
-def _sync_aftermarket_ledger_atomic(tkr, sde, c_qty, r_price, q_ledger, strat, ver):
+# 🚨 MODIFIED: [Parameter Amnesia 팩트 교정] 단일 지층 팽창 자가 치유를 위해 prev_c, portion_b 파라미터 시그니처 결속
+def _sync_aftermarket_ledger_atomic(tkr, sde, c_qty, r_price, q_ledger, strat, ver, prev_c=None, portion_b=None):
     if ver == "V_REV":
         if q_ledger:
             if sde == "BUY":
                 # 🚨 MODIFIED: [지층 팽창 붕괴 자가 치유] 애프터장 지연 매수 기원을 VREV_VWAP_BUY로 일원화 락온
                 q_ledger.add_lot(tkr, c_qty, r_price, "VREV_VWAP_BUY")
             else:
-                q_ledger.pop_lots(tkr, c_qty, r_price)
+                # 🚨 MODIFIED: [팽창 붕괴 수술] pop_lots로 분할용 파라미터 무결성 주입
+                q_ledger.pop_lots(tkr, c_qty, r_price, prev_close=prev_c, portion_budget=portion_b)
         if hasattr(strat, 'v_rev_plugin'):
             strat.v_rev_plugin.record_execution(tkr, sde, c_qty, r_price)
     else:
@@ -104,6 +108,22 @@ async def execute_aftermarket_trade(tx_lock, cfg, broker, strategy, queue_ledger
                 
                 if version != "V_REV" and not (version == "V14" and is_manual_vwap): continue
                 
+                # 🚨 NEW: [단일 지층 팽창 자가 치유용 팩트 파이프라인 결속]
+                # 실시간 매도 체결 시 1회분 초과 지층을 정밀 분할(Split)하기 위해 prev_close와 예산을 선제 추출
+                safe_prev_c = 0.0
+                for attempt in range(3):
+                    try:
+                        await asyncio.to_thread(GlobalThrottle.wait_api_sync)
+                        p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_previous_close, t), timeout=45.0)
+                        safe_prev_c = _safe_float(p_val)
+                        if safe_prev_c > 0: break
+                    except Exception:
+                        if attempt == 2: pass
+                        else: await asyncio.sleep(1.0 * (2 ** attempt))
+                
+                safe_seed = await _retry_api(cfg.get_seed, t, default=0.0)
+                portion_budget = safe_seed * 0.15
+
                 state_file = f"data/vrev_aftermarket_state_{t}.json"
                 try:
                     after_state = await _retry_api(_read_json_safe_sync, state_file, today_hyphen, default={})
@@ -257,7 +277,8 @@ async def execute_aftermarket_trade(tx_lock, cfg, broker, strategy, queue_ledger
                         msgs += f"🎯 {desc}: {total_qty}주 @ ${target_price:.2f} ➔ 일괄 타격 완료 (LIMIT)\n"
                         
                         try:
-                            p_sync = functools.partial(_sync_aftermarket_ledger_atomic, t, side, total_qty, target_price, queue_ledger, strategy, version)
+                            # 🚨 MODIFIED: 실시간 추출 팩트를 partial 바인딩으로 전면 결속
+                            p_sync = functools.partial(_sync_aftermarket_ledger_atomic, t, side, total_qty, target_price, queue_ledger, strategy, version, prev_c=safe_prev_c, portion_b=portion_budget)
                             await asyncio.wait_for(asyncio.to_thread(p_sync), timeout=10.0)
                             logging.info(f"💾 [{t}] 애프터장 체결 장부 원자적 동기화 완료: {side} {total_qty}주 @ ${target_price:.2f}")
                         except Exception as e:

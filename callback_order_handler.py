@@ -4,6 +4,7 @@
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 48대 엣지 케이스 완벽 결속 교차 검증 완료
 # 🚨 MODIFIED: [2차 오인 패러독스 붕괴 원천 차단] EMERGENCY_EXEC, MANUAL_PORTION 등 수동 매매 격발 시에도 진행 중인 슬라이싱 지시서를 os.remove()로 물리적 삭제하던 맹독성 로직을 영구 소각. 대신 `hijacked=True`인 빈 지시서를 원자적으로 박제하여 VWAP 스케줄러의 오인 에러 타전을 100% 원천 봉쇄 완료.
 # 🚨 MODIFIED: [지층 독립성 팽창 패러독스 자가 치유 수술] MANUAL_PORTION(수동 1회분 매수) 시 주입되던 "MANUAL_PORTION_BUY" 기원 식별자를 "VREV_VWAP_BUY"로 100% 팩트 교정하여, 당일 수동/슬라이싱 타격분과 100% 단일 지층으로 원자적 병합(Auto-Merge)되도록 Case 58 헌법을 완벽히 사수함.
+# 🚨 NEW: [단일 지층 팽창 패러독스 궁극 수술 (Parameter Amnesia)] EMERGENCY_EXEC 및 MANUAL_PORTION 수동 매도 체결 후 큐 장부를 차감(`pop_lots`)할 때, 분할 연산에 반드시 필요한 `prev_close`와 `portion_budget` 파라미터가 유실되어 팽창된 지층이 쪼개지지 않던 맹독성 버그를 원천 소각. 타격 직전 팩트를 추출하여 100% 무결성으로 파라미터 주입 완료.
 # ==========================================================
 import logging
 import datetime
@@ -14,7 +15,7 @@ import asyncio
 import yfinance as yf
 import html
 import glob
-import tempfile # 🚨 NEW: 원자적 쓰기용 모듈 결속
+import tempfile
 import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -106,6 +107,22 @@ class CallbackOrderHandler:
             
             if emergency_qty > 0:
                 await asyncio.to_thread(GlobalThrottle.wait_api_sync)
+                
+                # 🚨 NEW: [Parameter Amnesia 팩트 교정] 단일 지층 팽창을 자가 치유하기 위해 전일 종가 및 예산을 선제 추출
+                safe_prev_c = 0.0
+                for attempt in range(3):
+                    try:
+                        await asyncio.to_thread(GlobalThrottle.wait_api_sync)
+                        p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_previous_close, ticker), timeout=10.0)
+                        safe_prev_c = self._safe_float(p_val)
+                        if safe_prev_c > 0: break
+                    except Exception:
+                        if attempt == 2: pass
+                        else: await asyncio.sleep(1.0 * (2 ** attempt))
+
+                safe_seed = self._safe_float(await asyncio.wait_for(asyncio.to_thread(self.cfg.get_seed, ticker), timeout=10.0))
+                portion_budget = safe_seed * 0.15
+                
                 async with self.tx_lock:
                     try:
                         res = await asyncio.wait_for(
@@ -117,7 +134,11 @@ class CallbackOrderHandler:
                         res = None
                     
                     if isinstance(res, dict) and str(res.get('rt_cd', '')) == '0':
-                        await asyncio.wait_for(asyncio.to_thread(self.queue_ledger.pop_lots, ticker, emergency_qty), timeout=10.0)
+                        # 🚨 MODIFIED: [단일 지층 팽창 붕괴 수술] 파라미터 무결성 주입 완료
+                        await asyncio.wait_for(
+                            asyncio.to_thread(self.queue_ledger.pop_lots, ticker, emergency_qty, 0.0, prev_close=safe_prev_c, portion_budget=portion_budget),
+                            timeout=10.0
+                        )
                         
                         # 🚨 MODIFIED: [이중 타격 방어] 수동 긴급 수혈 후 낡은 스냅샷, 상태 캐시, 슬라이스 지시서까지 완벽 소각
                         def _nuke_snapshot_and_state_emg():
@@ -680,6 +701,18 @@ class CallbackOrderHandler:
                         except Exception: pass
                         return
 
+                    # 🚨 NEW: [Parameter Amnesia 팩트 교정] 단일 지층 팽창을 자가 치유하기 위해 전일 종가를 선제 추출
+                    safe_prev_c = 0.0
+                    for attempt in range(3):
+                        try:
+                            await asyncio.to_thread(GlobalThrottle.wait_api_sync)
+                            p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_previous_close, ticker), timeout=10.0)
+                            safe_prev_c = self._safe_float(p_val)
+                            if safe_prev_c > 0: break
+                        except Exception:
+                            if attempt == 2: pass
+                            else: await asyncio.sleep(1.0 * (2 ** attempt))
+
                     await asyncio.to_thread(GlobalThrottle.wait_api_sync)
                     async with self.tx_lock:
                         res = await asyncio.wait_for(
@@ -692,7 +725,11 @@ class CallbackOrderHandler:
                                 # 🚨 MODIFIED: [지층 팽창 붕괴 자가 치유] 수동 1회분 기원을 VREV_VWAP_BUY로 일원화 락온
                                 await asyncio.wait_for(asyncio.to_thread(self.queue_ledger.add_lot, ticker, final_qty, exec_price, "VREV_VWAP_BUY"), timeout=10.0)
                             else:
-                                await asyncio.wait_for(asyncio.to_thread(self.queue_ledger.pop_lots, ticker, final_qty, exec_price), timeout=10.0)
+                                # 🚨 MODIFIED: [단일 지층 팽창 붕괴 수술] 파라미터 무결성 주입 완료
+                                await asyncio.wait_for(
+                                    asyncio.to_thread(self.queue_ledger.pop_lots, ticker, final_qty, exec_price, prev_close=safe_prev_c, portion_budget=budget),
+                                    timeout=10.0
+                                )
 
                             await asyncio.wait_for(asyncio.to_thread(self.cfg.set_lock, ticker, "REG"), timeout=10.0)
 
