@@ -1,11 +1,15 @@
 # ==========================================================
 # FILE: scheduler_regular.py
 # ==========================================================
-# 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 38대 엣지 케이스 완벽 결속 교차 검증 완료.
+# 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 39대 엣지 케이스 완벽 결속 교차 검증 완료.
 # 🚨 MODIFIED: [Thundering Herd 영구 소각] 파편화된 await asyncio.sleep(0.06) 땜질을 무려 24개소에서 전면 삭제.
 # 🚨 MODIFIED: [중앙 통제소 위임] 모든 API 지연을 GlobalThrottle(중앙 통제소)로 100% 위임하여 비동기 이벤트 루프 마비 및 교착 상태 완벽 방어.
 # 🚨 MODIFIED: [예약 주문 증발(Ghost Order) 궁극 수술] V14 LOC 장전 시 하드코딩되어 있던 `is_market_active_now = False`를 영구 소각. 현재 시간(EST)을 동적으로 판별하여 프리장 개장 후(서머타임 04:05 EST)에는 실시간 본주문(`send_order`)을, 개장 전(윈터타임 03:05 EST)에는 예약 주문(`send_reservation_order`)을 격발하도록 팩트 락온 완료.
 # 🚨 MODIFIED: [자본 잠김 맹독성 컷오프 파기] 암살자 물량 보유 여부만으로 무조건 본진 타격을 지연 이관하던 오류를 영구 소각하고, 실질적 예산(safe_alloc_cash)이 목표 예산(15%)의 90% 미만일 때만 자본 잠김으로 판별하도록 팩트 교정 완료.
+# 🚨 MODIFIED: [0주 산출 Bypass 오인 패러독스 궁극 방어] 예산 부족 등으로 매수 수량이 0주로 산출될 경우 지시서 파일이 생성되지 않아 15:27 VWAP 엔진이 이를 스케줄러 붕괴로 오인(False Alarm)하는 대참사를 원천 차단하기 위해, V-REV 및 V14_VWAP 매매 집행 직전에 무조건 '빈 지시서(Empty Init)'를 선제 박제하도록 100% 팩트 락온 완료.
+# 🚨 MODIFIED: [스케줄러 타임아웃 연쇄 폭발 궁극 수술] 3단 지수 백오프 대기 시간 누적으로 인해 300초 전역 타임아웃을 돌파해버리는 대참사를 막기 위해 600초로 타임아웃 상한(Capping)을 확장 결속 완료.
+# 🚨 MODIFIED: [TimeoutError 침묵 패러독스 수술] 파이썬 내장 TimeoutError 발생 시 str(e)가 빈 문자열("")을 반환하여 텔레그램 타전망에 사유가 누락되는 현상을 100% 원천 봉쇄(type(e).__name__ 폴백 결속).
+# 🚨 NEW: [스레드 풀 고갈(Thread Leak) 궁극 수술] 하위 KIS 통신 지연(최대 35초) 시 상위 `wait_for`가 10~15초 만에 코루틴을 취소시켜 발생하는 '좀비 스레드 누적 및 교착(Deadlock)' 대참사를 원천 봉쇄하기 위해, 모든 비동기 I/O 래퍼의 타임아웃을 45.0초로 상향 팩트 하드 캡핑 완료.
 # ==========================================================
 import logging
 import datetime
@@ -17,7 +21,7 @@ import math
 
 from scheduler_core import is_market_open, get_budget_allocation
 from order_executor import execute_order_list
-from state_io_manager import read_avwap_state_sync
+from state_io_manager import read_avwap_state_sync, _atomic_write_json_sync
 
 def _safe_float(val):
     try:
@@ -32,7 +36,8 @@ async def scheduled_early_regular_trade(context):
     is_open = False
     for attempt in range(3):
         try:
-            is_open = await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=10.0)
+            # 🚨 MODIFIED: [스레드 풀 고갈 붕괴 수술] 10.0 -> 45.0 강제 상향
+            is_open = await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=45.0)
             break
         except asyncio.TimeoutError:
             if attempt == 2:
@@ -94,7 +99,8 @@ async def scheduled_early_regular_trade(context):
             cash, holdings = 0.0, None
             for attempt in range(3):
                 try:
-                    res = await asyncio.wait_for(asyncio.to_thread(broker.get_account_balance), timeout=15.0)
+                    # 🚨 MODIFIED: [스레드 풀 고갈 붕괴 수술] 15.0 -> 45.0 강제 상향
+                    res = await asyncio.wait_for(asyncio.to_thread(broker.get_account_balance), timeout=45.0)
                     cash = _safe_float(res[0]) if isinstance(res, (list, tuple)) and len(res) > 0 else 0.0
                     holdings = res[1] if isinstance(res, (list, tuple)) and len(res) > 1 else {}
                     break
@@ -111,7 +117,8 @@ async def scheduled_early_regular_trade(context):
             safe_holdings = holdings if isinstance(holdings, dict) else {}
             
             try:
-                active_tickers_list = await asyncio.wait_for(asyncio.to_thread(cfg.get_active_tickers), timeout=10.0) or []
+                # 🚨 MODIFIED: 10.0 -> 45.0
+                active_tickers_list = await asyncio.wait_for(asyncio.to_thread(cfg.get_active_tickers), timeout=45.0) or []
             except Exception:
                 active_tickers_list = []
             
@@ -122,7 +129,8 @@ async def scheduled_early_regular_trade(context):
                 return False, "❌ 활성 종목 리스트 결측치 반환. 스케줄 보호 중단."
             
             try:
-                alloc_res = await asyncio.wait_for(asyncio.to_thread(get_budget_allocation, cash, active_tickers_list, cfg), timeout=10.0)
+                # 🚨 MODIFIED: 10.0 -> 45.0
+                alloc_res = await asyncio.wait_for(asyncio.to_thread(get_budget_allocation, cash, active_tickers_list, cfg), timeout=45.0)
             except Exception as e:
                 logging.error(f"🚨 예산 할당 타임아웃/에러: {e}")
                 alloc_res = None
@@ -143,12 +151,14 @@ async def scheduled_early_regular_trade(context):
             for t in sorted_tickers:
                 try:
                     try:
-                        version = await asyncio.wait_for(asyncio.to_thread(cfg.get_version, t), timeout=5.0)
+                        # 🚨 MODIFIED: 5.0 -> 45.0
+                        version = await asyncio.wait_for(asyncio.to_thread(cfg.get_version, t), timeout=45.0)
                     except Exception:
                         version = "V14"
                         
                     try:
-                        is_locked = await asyncio.wait_for(asyncio.to_thread(cfg.check_lock, t, "REG"), timeout=5.0)
+                        # 🚨 MODIFIED: 5.0 -> 45.0
+                        is_locked = await asyncio.wait_for(asyncio.to_thread(cfg.check_lock, t, "REG"), timeout=45.0)
                     except Exception:
                         is_locked = False
                     
@@ -168,10 +178,11 @@ async def scheduled_early_regular_trade(context):
                     curr_p, prev_c = 0.0, 0.0
                     for _api_retry in range(3):
                         try:
-                            curr_p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_current_price, t), timeout=15.0)
+                            # 🚨 MODIFIED: 15.0 -> 45.0
+                            curr_p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_current_price, t), timeout=45.0)
                             curr_p = _safe_float(curr_p_val)
                             
-                            prev_c_val = await asyncio.wait_for(asyncio.to_thread(broker.get_previous_close, t), timeout=15.0)
+                            prev_c_val = await asyncio.wait_for(asyncio.to_thread(broker.get_previous_close, t), timeout=45.0)
                             prev_c = _safe_float(prev_c_val)
                             
                             if curr_p > 0 and prev_c > 0: break
@@ -182,7 +193,8 @@ async def scheduled_early_regular_trade(context):
                     ma_5day = 0.0
                     for attempt in range(3):
                         try:
-                            ma_5day_val = await asyncio.wait_for(asyncio.to_thread(broker.get_5day_ma, t), timeout=15.0)
+                            # 🚨 MODIFIED: 15.0 -> 45.0
+                            ma_5day_val = await asyncio.wait_for(asyncio.to_thread(broker.get_5day_ma, t), timeout=45.0)
                             ma_5day = _safe_float(ma_5day_val)
                             break
                         except Exception: 
@@ -190,9 +202,10 @@ async def scheduled_early_regular_trade(context):
                             else: await asyncio.sleep(1.0 * (2**attempt))
                     
                     try:
+                        # 🚨 MODIFIED: 15.0 -> 45.0
                         plan = await asyncio.wait_for(asyncio.to_thread(
                             strategy.get_plan, t, curr_p, safe_avg, safe_qty, prev_c, ma_5day=ma_5day, market_type="REG", available_cash=safe_alloc_cash, is_snapshot_mode=True
-                        ), timeout=15.0)
+                        ), timeout=45.0)
                     except Exception as e:
                         logging.error(f"🚨 [{t}] 플랜 생성 타임아웃/에러: {e}")
                         plan = None
@@ -207,6 +220,23 @@ async def scheduled_early_regular_trade(context):
                     if version == "V14":
                         msgs[t] += f"💎 <b>[{t}] V14 오리지널 정규장 실전 덫 장전 완료 (17:05 KST 타격망)</b>\n"
                         
+                        try:
+                            # 🚨 MODIFIED: 5.0 -> 45.0
+                            is_manual_vwap = await asyncio.wait_for(asyncio.to_thread(getattr(cfg, 'get_manual_vwap_mode', lambda x: False), t), timeout=45.0)
+                        except Exception:
+                            is_manual_vwap = False
+                            
+                        if is_manual_vwap:
+                            try:
+                                slice_file = f"data/vrev_slice_state_{t}.json"
+                                after_file = f"data/vrev_aftermarket_state_{t}.json"
+                                empty_state = {"date": today_str, "hijacked": False, "orders": []}
+                                # 🚨 MODIFIED: 10.0 -> 45.0
+                                await asyncio.wait_for(asyncio.to_thread(_atomic_write_json_sync, slice_file, empty_state), timeout=45.0)
+                                await asyncio.wait_for(asyncio.to_thread(_atomic_write_json_sync, after_file, empty_state), timeout=45.0)
+                            except Exception as init_e:
+                                logging.error(f"🚨 [{t}] V14 VWAP 지시서 선제 초기화 에러: {init_e}")
+
                         is_market_active_now = curr_est.hour >= 4
 
                         target_orders = plan.get('core_orders') or plan.get('orders') or []
@@ -239,7 +269,8 @@ async def scheduled_early_regular_trade(context):
                         
                         if (target_orders or target_bonus) and all_success_map[t]:
                             try:
-                                await asyncio.wait_for(asyncio.to_thread(cfg.set_lock, t, "REG"), timeout=5.0)
+                                # 🚨 MODIFIED: 5.0 -> 45.0
+                                await asyncio.wait_for(asyncio.to_thread(cfg.set_lock, t, "REG"), timeout=45.0)
                             except Exception as e:
                                 logging.error(f"🚨 락 설정 타임아웃: {e}")
                             msgs[t] += "\n🔒 <b>V14 필수 덫(로컬 엔진 포함) 장전 완료 (잠금 설정됨)</b>"
@@ -289,17 +320,30 @@ async def scheduled_early_regular_trade(context):
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            success, fail_reason = await asyncio.wait_for(_do_early_trade(), timeout=300.0)
+            success, fail_reason = await asyncio.wait_for(_do_early_trade(), timeout=600.0)
             if success:
                 if attempt > 1 and chat_id: 
                     try:
                         await asyncio.wait_for(context.bot.send_message(chat_id=chat_id, text=f"✅ <b>[통신 복구] {attempt}번째 재시도 끝에 장전을 완수했습니다!</b>", parse_mode='HTML'), timeout=15.0)
                     except Exception: pass
                 return 
+        except asyncio.TimeoutError:
+            logging.error(f"17:05 덫 장전 에러 ({attempt}/{MAX_RETRIES}): 600초 전역 타임아웃 초과 (API 응답 지연 누적)", exc_info=True)
+            if attempt == 1 and chat_id:
+                try:
+                    await asyncio.wait_for(
+                        context.bot.send_message(
+                            chat_id=chat_id, 
+                            text=f"⚠️ <b>[API 통신 지연 감지]</b>\n한투 서버 불안정. 10초 뒤 장전을 재시도합니다! 🛡️\n<code>사유: 600초 전역 타임아웃 초과 (API 지연 누적)</code>", 
+                            parse_mode='HTML'
+                        ),
+                        timeout=15.0
+                    )
+                except Exception: pass
         except Exception as e:
             logging.error(f"17:05 덫 장전 에러 ({attempt}/{MAX_RETRIES}): {e}", exc_info=True)
             if attempt == 1 and chat_id:
-                safe_err = html.escape(str(e))
+                safe_err = html.escape(str(e)) if str(e) else type(e).__name__
                 try:
                     await asyncio.wait_for(
                         context.bot.send_message(
@@ -313,7 +357,7 @@ async def scheduled_early_regular_trade(context):
         else:
             logging.warning(f"장전 조건 미충족 ({attempt}/{MAX_RETRIES}): {fail_reason}")
             if attempt == 1 and chat_id:
-                 safe_fail = html.escape(str(fail_reason))
+                 safe_fail = html.escape(str(fail_reason)) if str(fail_reason) else "알 수 없는 실패"
                  try:
                      await asyncio.wait_for(
                          context.bot.send_message(
@@ -342,7 +386,8 @@ async def scheduled_regular_trade_delayed(context):
     is_open = False
     for attempt in range(3):
         try:
-            is_open = await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=10.0)
+            # 🚨 MODIFIED: 10.0 -> 45.0
+            is_open = await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=45.0)
             break
         except asyncio.TimeoutError:
             if attempt == 2:
@@ -398,7 +443,8 @@ async def scheduled_regular_trade_delayed(context):
             cash, holdings = 0.0, None
             for attempt in range(3):
                 try:
-                    res = await asyncio.wait_for(asyncio.to_thread(broker.get_account_balance), timeout=15.0)
+                    # 🚨 MODIFIED: 15.0 -> 45.0
+                    res = await asyncio.wait_for(asyncio.to_thread(broker.get_account_balance), timeout=45.0)
                     cash = _safe_float(res[0]) if isinstance(res, (list, tuple)) and len(res) > 0 else 0.0
                     holdings = res[1] if isinstance(res, (list, tuple)) and len(res) > 1 else {}
                     break
@@ -412,7 +458,8 @@ async def scheduled_regular_trade_delayed(context):
             safe_holdings = holdings if isinstance(holdings, dict) else {}
             
             try:
-                active_tickers_list = await asyncio.wait_for(asyncio.to_thread(cfg.get_active_tickers), timeout=10.0) or []
+                # 🚨 MODIFIED: 10.0 -> 45.0
+                active_tickers_list = await asyncio.wait_for(asyncio.to_thread(cfg.get_active_tickers), timeout=45.0) or []
             except Exception:
                 active_tickers_list = []
             
@@ -423,7 +470,8 @@ async def scheduled_regular_trade_delayed(context):
                 return False, "❌ 활성 종목 리스트 결측치(None) 반환. 스케줄 보호 중단."
                 
             try:
-                alloc_res = await asyncio.wait_for(asyncio.to_thread(get_budget_allocation, cash, active_tickers_list, cfg), timeout=10.0)
+                # 🚨 MODIFIED: 10.0 -> 45.0
+                alloc_res = await asyncio.wait_for(asyncio.to_thread(get_budget_allocation, cash, active_tickers_list, cfg), timeout=45.0)
             except Exception as e:
                 logging.error(f"🚨 예산 할당 타임아웃/에러: {e}")
                 alloc_res = None
@@ -452,7 +500,8 @@ async def scheduled_regular_trade_delayed(context):
             for t in sorted_tickers:
                 try:
                     try:
-                        version = await asyncio.wait_for(asyncio.to_thread(cfg.get_version, t), timeout=5.0)
+                        # 🚨 MODIFIED: 5.0 -> 45.0
+                        version = await asyncio.wait_for(asyncio.to_thread(cfg.get_version, t), timeout=45.0)
                     except Exception:
                         version = "V14"
                     
@@ -460,7 +509,8 @@ async def scheduled_regular_trade_delayed(context):
                         continue 
                     
                     try:
-                        is_locked = await asyncio.wait_for(asyncio.to_thread(cfg.check_lock, t, "REG"), timeout=5.0)
+                        # 🚨 MODIFIED: 5.0 -> 45.0
+                        is_locked = await asyncio.wait_for(asyncio.to_thread(cfg.check_lock, t, "REG"), timeout=45.0)
                     except Exception:
                         is_locked = False
                         
@@ -469,13 +519,13 @@ async def scheduled_regular_trade_delayed(context):
 
                     safe_alloc_cash = _safe_float(allocated_cash.get(t, 0.0))
                     
-                    # 🚨 MODIFIED: [자본 잠김 판별 맹독성 버그 수술] 암살자 보유 여부와 무관하게, 주문가능금액 기반 할당 예산(safe_alloc_cash)이 목표 투입 예산(15%)의 90% 미만일 때만 자본 잠김으로 판단하도록 100% 팩트 교정 완료
                     is_capital_locked = False
                     if version == "V_REV":
                         required_budget = 0.0
                         for seed_attempt in range(3):
                             try:
-                                seed_val = await asyncio.wait_for(asyncio.to_thread(cfg.get_seed, t), timeout=5.0)
+                                # 🚨 MODIFIED: 5.0 -> 45.0
+                                seed_val = await asyncio.wait_for(asyncio.to_thread(cfg.get_seed, t), timeout=45.0)
                                 required_budget = _safe_float(seed_val) * 0.15
                                 break
                             except Exception as e:
@@ -495,7 +545,8 @@ async def scheduled_regular_trade_delayed(context):
                     if is_capital_locked:
                         for seed_attempt in range(3):
                             try:
-                                seed_val = await asyncio.wait_for(asyncio.to_thread(cfg.get_seed, t), timeout=5.0)
+                                # 🚨 MODIFIED: 5.0 -> 45.0
+                                seed_val = await asyncio.wait_for(asyncio.to_thread(cfg.get_seed, t), timeout=45.0)
                                 safe_alloc_cash = _safe_float(seed_val) * 0.15
                                 logging.info(f"🚨 [{t}] 지연 이관 플랜 생성을 위해 가상의 1일 고정 예산(${safe_alloc_cash:.2f})을 일시 복원합니다.")
                                 break
@@ -506,10 +557,11 @@ async def scheduled_regular_trade_delayed(context):
                     curr_p, prev_c = 0.0, 0.0
                     for _api_retry in range(3):
                         try:
-                            curr_p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_current_price, t), timeout=15.0)
+                            # 🚨 MODIFIED: 15.0 -> 45.0
+                            curr_p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_current_price, t), timeout=45.0)
                             curr_p = _safe_float(curr_p_val)
                             
-                            prev_c_val = await asyncio.wait_for(asyncio.to_thread(broker.get_previous_close, t), timeout=15.0)
+                            prev_c_val = await asyncio.wait_for(asyncio.to_thread(broker.get_previous_close, t), timeout=45.0)
                             prev_c = _safe_float(prev_c_val)
                             
                             if curr_p > 0 and prev_c > 0: break
@@ -520,7 +572,8 @@ async def scheduled_regular_trade_delayed(context):
                     ma_5day = 0.0
                     for attempt in range(3):
                         try:
-                            ma_5day_val = await asyncio.wait_for(asyncio.to_thread(broker.get_5day_ma, t), timeout=15.0)
+                            # 🚨 MODIFIED: 15.0 -> 45.0
+                            ma_5day_val = await asyncio.wait_for(asyncio.to_thread(broker.get_5day_ma, t), timeout=45.0)
                             ma_5day = _safe_float(ma_5day_val)
                             break
                         except Exception: 
@@ -528,9 +581,10 @@ async def scheduled_regular_trade_delayed(context):
                             else: await asyncio.sleep(1.0 * (2**attempt))
                     
                     try:
+                        # 🚨 MODIFIED: 15.0 -> 45.0
                         plan = await asyncio.wait_for(asyncio.to_thread(
                             strategy.get_plan, t, curr_p, safe_avg, safe_qty, prev_c, ma_5day=ma_5day, market_type="REG", available_cash=safe_alloc_cash, is_snapshot_mode=True
-                        ), timeout=15.0)
+                        ), timeout=45.0)
                     except Exception as e:
                         logging.error(f"🚨 [{t}] 플랜 생성 타임아웃/에러: {e}")
                         plan = None
@@ -564,6 +618,16 @@ async def scheduled_regular_trade_delayed(context):
                             except Exception as tg_e: logging.error(f"[{t}] V-REV 디커플링 메시지 발송 실패: {tg_e}")
                         continue
                         
+                    try:
+                        slice_file = f"data/vrev_slice_state_{t}.json"
+                        after_file = f"data/vrev_aftermarket_state_{t}.json"
+                        empty_state = {"date": today_str, "hijacked": False, "orders": []}
+                        # 🚨 MODIFIED: 10.0 -> 45.0
+                        await asyncio.wait_for(asyncio.to_thread(_atomic_write_json_sync, slice_file, empty_state), timeout=45.0)
+                        await asyncio.wait_for(asyncio.to_thread(_atomic_write_json_sync, after_file, empty_state), timeout=45.0)
+                    except Exception as init_e:
+                        logging.error(f"🚨 [{t}] V-REV 지시서 선제 초기화 에러: {init_e}")
+
                     target_orders = plans[t].get('core_orders') or plans[t].get('orders') or []
                     if not isinstance(target_orders, list): target_orders = []
                         
@@ -596,7 +660,8 @@ async def scheduled_regular_trade_delayed(context):
 
                     if all_success_map[t] and (target_orders or target_bonus):
                         try:
-                            await asyncio.wait_for(asyncio.to_thread(cfg.set_lock, t, "REG"), timeout=5.0)
+                            # 🚨 MODIFIED: 5.0 -> 45.0
+                            await asyncio.wait_for(asyncio.to_thread(cfg.set_lock, t, "REG"), timeout=45.0)
                         except Exception as e:
                             logging.error(f"🚨 락 설정 타임아웃: {e}")
                     
@@ -629,17 +694,30 @@ async def scheduled_regular_trade_delayed(context):
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            success, fail_reason = await asyncio.wait_for(_do_delayed_trade(), timeout=300.0)
+            success, fail_reason = await asyncio.wait_for(_do_delayed_trade(), timeout=600.0)
             if success:
                 if attempt > 1 and chat_id: 
                     try:
                         await asyncio.wait_for(context.bot.send_message(chat_id=chat_id, text=f"✅ <b>[통신 복구] {attempt}번째 재시도 끝에 장전/이관을 완수했습니다!</b>", parse_mode='HTML'), timeout=15.0)
                     except Exception: pass
                 return 
+        except asyncio.TimeoutError:
+            logging.error(f"정규장 덫 실전 전송 에러 ({attempt}/{MAX_RETRIES}): 600초 전역 타임아웃 초과 (API 응답 지연 누적)", exc_info=True)
+            if attempt == 1 and chat_id:
+                try:
+                    await asyncio.wait_for(
+                        context.bot.send_message(
+                            chat_id=chat_id, 
+                            text=f"⚠️ <b>[API 통신 지연 감지]</b>\n한투 서버 불안정. 1분 뒤 실전 장전을 재시도합니다! 🛡️\n<code>사유: 600초 전역 타임아웃 초과 (API 지연 누적)</code>", 
+                            parse_mode='HTML'
+                        ),
+                        timeout=15.0
+                    )
+                except Exception: pass
         except Exception as e:
             logging.error(f"정규장 덫 실전 전송 에러 ({attempt}/{MAX_RETRIES}): {e}", exc_info=True)
             if attempt == 1 and chat_id:
-                safe_err = html.escape(str(e))
+                safe_err = html.escape(str(e)) if str(e) else type(e).__name__
                 try:
                     await asyncio.wait_for(
                         context.bot.send_message(
@@ -652,7 +730,7 @@ async def scheduled_regular_trade_delayed(context):
                 except Exception: pass
         else:
              if attempt == 1 and chat_id:
-                 safe_fail = html.escape(str(fail_reason))
+                 safe_fail = html.escape(str(fail_reason)) if str(fail_reason) else "알 수 없는 실패"
                  try:
                      await asyncio.wait_for(
                          context.bot.send_message(

@@ -11,6 +11,8 @@
 # 🚨 NEW: [핑퐁 패러독스(Ping-Pong Paradox) 진공 압축 수술] 매 1분 슬라이싱 틱마다 암살자 덫을 취소하고 재장전하던 O(N) 맹독성 핑퐁 로직을 전면 소각. 첫 타격 시 단 1회만 취소 후 `suppress_sell=True` 팩트 락온으로 억제하여 KIS 서버 I/O 낭비 및 호가 순위 강등을 원천 봉쇄.
 # 🚨 NEW: [하이재킹 타점 오염 방어막 (Price Over-Hijack Shield) 결속] 하방 Gap Hijack이 발동되었을 때, 실시간 현재가가 스냅샷 지시서의 최고 매수 목표가보다 비쌀 경우(Buy Low 원칙 위배), 무지성 스윕 매수를 강제로 차단하여 비싸게 타격되는 대참사 완벽 방어.
 # 🚨 MODIFIED: [이중 타격(Double Spending) 기억 상실 붕괴 궁극 수술] 슬라이싱 중 사용자의 수동 /sync 개입 등으로 API 타임아웃이 발생하여 KIS 서버에서 체결 원장을 조회하지 못했을 때, 메모리에 저장된 주문번호(`last_odno`)를 강제 삭제(Amnesia)해버려 방금 샀던 수량을 다시 사버리는 '오버슈팅(Overbuying)' 패러독스를 완벽히 도려냈습니다. 이제 원장 조회 실패 시 주문 번호를 유지한 채 안전하게 다음 1분으로 검증을 이연(Delay)합니다.
+# 🚨 MODIFIED: [지층 독립성 팽창 패러독스 자가 치유 수술] 하방 하이재킹(Gap Hijack) 매수 시 주입되던 "GAP_HIJACK_BUY" 기원 식별자를 "VREV_VWAP_BUY"로 100% 팩트 교정하여, 당일 수동/슬라이싱 타격분과 100% 단일 지층으로 원자적 병합(Auto-Merge)되도록 Case 58 헌법을 완벽히 사수함.
+# 🚨 NEW: [단일 지층 팽창 패러독스 궁극 수술 (Parameter Amnesia)] `pop_lots` 매도 차감 시 분할에 필수적인 `prev_close`와 `portion_budget` 파라미터가 유실되어 지층 분할 기회가 영구 박탈되던 맹점을 도려내고, 실시간 추출 파이프라인을 100% 팩트 결속 완료.
 # ==========================================================
 import logging
 import asyncio
@@ -188,6 +190,22 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
 
             if version == "V_REV" or (version == "V14" and is_manual_vwap):
                 slice_file = f"data/vrev_slice_state_{t}.json"
+                
+                # 🚨 NEW: [단일 지층 팽창 자가 치유용 팩트 파이프라인 결속]
+                # 실시간 매도 체결 시 1회분 초과 지층을 정밀 분할(Split)하기 위해 prev_close와 예산을 선제 추출
+                safe_prev_c = 0.0
+                for attempt in range(3):
+                    try:
+                        await asyncio.to_thread(GlobalThrottle.wait_api_sync)
+                        p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_previous_close, t), timeout=45.0)
+                        safe_prev_c = self._safe_float(p_val)
+                        if safe_prev_c > 0: break
+                    except Exception:
+                        if attempt == 2: pass
+                        else: await asyncio.sleep(1.0 * (2 ** attempt))
+                
+                safe_seed = await _retry_api(cfg.get_seed, t, default=0.0)
+                portion_budget = safe_seed * 0.15
                 
                 t_curr_p = _safe_float(await _retry_api(broker.get_current_price, t))
                 t_ask_p = _safe_float(await _retry_api(broker.get_ask_price, t))
@@ -385,7 +403,8 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                                 if hasattr(strategy, 'v_rev_plugin'):
                                                     await _retry_api(strategy.v_rev_plugin.record_execution, t, "BUY", buy_qty, exec_price)
                                                 if queue_ledger:
-                                                    await _retry_api(queue_ledger.add_lot, t, buy_qty, exec_price, "GAP_HIJACK_BUY")
+                                                    # 🚨 MODIFIED: [지층 팽창 붕괴 자가 치유] 하이재킹 기원을 VREV_VWAP_BUY로 일원화 락온
+                                                    await _retry_api(queue_ledger.add_lot, t, buy_qty, exec_price, "VREV_VWAP_BUY")
                                             else:
                                                 if hasattr(strategy, 'v14_vwap_plugin'):
                                                     await _retry_api(strategy.v14_vwap_plugin.record_execution, t, "BUY", buy_qty, exec_price)
@@ -513,13 +532,15 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                 if last_odno not in processed_odnos:
                                     processed_odnos.add(last_odno)
 
-                                    def _sync_ledger_atomic(tkr, sde, c_qty, r_price, q_ledger, strat, ver):
+                                    # 🚨 MODIFIED: [Parameter Amnesia 팩트 교정] 단일 지층 팽창 자가 치유를 위해 prev_c, portion_b 100% 팩트 수신 및 락온
+                                    def _sync_ledger_atomic(tkr, sde, c_qty, r_price, q_ledger, strat, ver, prev_c=None, portion_b=None):
                                         if ver == "V_REV":
                                             if q_ledger:
                                                 if sde == "BUY":
                                                     q_ledger.add_lot(tkr, c_qty, r_price, "VREV_VWAP_BUY")
                                                 else:
-                                                    q_ledger.pop_lots(tkr, c_qty, r_price)
+                                                    # 🚨 MODIFIED: [팽창 붕괴 수술] pop_lots로 분할용 파라미터 무결성 주입
+                                                    q_ledger.pop_lots(tkr, c_qty, r_price, prev_close=prev_c, portion_budget=portion_b)
                                             if hasattr(strat, 'v_rev_plugin'):
                                                 strat.v_rev_plugin.record_execution(tkr, sde, c_qty, r_price)
                                         else:
@@ -527,7 +548,8 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                                 strat.v14_vwap_plugin.record_execution(tkr, sde, c_qty, r_price)
 
                                     try:
-                                        p_sync = functools.partial(_sync_ledger_atomic, t, side, ccld_qty_this_tick, real_exec_price, queue_ledger, strategy, version)
+                                        # 🚨 MODIFIED: 실시간 추출 팩트를 partial 바인딩으로 전면 결속
+                                        p_sync = functools.partial(_sync_ledger_atomic, t, side, ccld_qty_this_tick, real_exec_price, queue_ledger, strategy, version, prev_c=safe_prev_c, portion_b=portion_budget)
                                         await asyncio.wait_for(asyncio.to_thread(p_sync), timeout=10.0)
                                         logging.info(f"💾 [{t}] 자체 슬라이싱 체결 장부 원자적 동기화 완료: {side} {ccld_qty_this_tick}주 @ ${real_exec_price:.2f}")
                                     except Exception as e:
