@@ -14,6 +14,7 @@
 # 🚨 MODIFIED: [지층 독립성 팽창 패러독스 자가 치유 수술] 하방 하이재킹(Gap Hijack) 매수 시 주입되던 "GAP_HIJACK_BUY" 기원 식별자를 "VREV_VWAP_BUY"로 100% 팩트 교정하여, 당일 수동/슬라이싱 타격분과 100% 단일 지층으로 원자적 병합(Auto-Merge)되도록 Case 58 헌법을 완벽히 사수함.
 # 🚨 NEW: [단일 지층 팽창 패러독스 궁극 수술 (Parameter Amnesia)] `pop_lots` 매도 차감 시 분할에 필수적인 `prev_close`와 `portion_budget` 파라미터가 유실되어 지층 분할 기회가 영구 박탈되던 맹점을 도려내고, 실시간 추출 파이프라인을 100% 팩트 결속 완료.
 # 🚨 MODIFIED: [Time Gate Amnesia 붕괴 수술] 15:58 검증 누락 방어를 위해 엔진 가동 시간을 15:59:59까지 연장 (Clean-up Phase 팩트 보장).
+# 🚨 MODIFIED: [NameError 즉사 버그 궁극 수술] 모듈 스코프 내 잘못 주입된 self._safe_float 호출을 _safe_float로 100% 팩트 교정하여 런타임 붕괴 원천 봉쇄.
 # ==========================================================
 import logging
 import asyncio
@@ -199,7 +200,7 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                     try:
                         await asyncio.to_thread(GlobalThrottle.wait_api_sync)
                         p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_previous_close, t), timeout=45.0)
-                        safe_prev_c = self._safe_float(p_val)
+                        safe_prev_c = _safe_float(p_val)
                         if safe_prev_c > 0: break
                     except Exception:
                         if attempt == 2: pass
@@ -264,7 +265,7 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                             
                             gap_pct = ((t_curr_p - t_vwap) / t_vwap * 100.0) if t_vwap > 0 else 0.0
                             
-                            gap_thresh = self._safe_float(await _retry_api(getattr(cfg, 'get_vrev_gap_threshold', lambda x: -2.0), t, default=-2.0))
+                            gap_thresh = _safe_float(await _retry_api(getattr(cfg, 'get_vrev_gap_threshold', lambda x: -2.0), t, default=-2.0))
                             if gap_thresh == -0.67: gap_thresh = -2.0
                             
                             if gap_pct <= gap_thresh:
@@ -274,7 +275,7 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                 sell_orders = [o for o in slice_state_check.get('orders', []) if str(o.get('side')) == 'SELL']
                                 is_sell_condition = False
                                 for o in sell_orders:
-                                    tp_val = self._safe_float(o.get('target_price', o.get('price', 0.0)))
+                                    tp_val = _safe_float(o.get('target_price', o.get('price', 0.0)))
                                     if tp_val > 0.0 and t_curr_p >= tp_val:
                                         is_sell_condition = True
                                         break
@@ -283,7 +284,7 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                 buy_orders = [o for o in slice_state_check.get('orders', []) if str(o.get('side')) == 'BUY']
                                 max_buy_target = 0.0
                                 if buy_orders:
-                                    max_buy_target = max(self._safe_float(o.get('target_price', o.get('price', 0.0))) for o in buy_orders)
+                                    max_buy_target = max(_safe_float(o.get('target_price', o.get('price', 0.0))) for o in buy_orders)
 
                                 if not has_buy_plan:
                                     if not vwap_cache.get(f"REV_{t}_gap_hijack_blocked_log", False):
@@ -363,8 +364,8 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                     buy_qty = 0
                                     for ox in slice_state_disk.get('orders', []):
                                         if str(ox.get('side')) == 'BUY':
-                                            _tot = int(self._safe_float(ox.get('total_qty', 0)))
-                                            _fil = int(self._safe_float(ox.get('filled_qty', 0)))
+                                            _tot = int(_safe_float(ox.get('total_qty', 0)))
+                                            _fil = int(_safe_float(ox.get('filled_qty', 0)))
                                             if _tot - _fil > 0:
                                                 buy_qty += (_tot - _fil)
 
@@ -451,7 +452,7 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                         if not isinstance(vwap_profile, dict): vwap_profile = {}
                     except Exception: vwap_profile = {}
                     
-                    cum_weight = self._safe_float(vwap_profile.get(curr_hm, 0.0))
+                    cum_weight = _safe_float(vwap_profile.get(curr_hm, 0.0))
                     
                     if is_cleanup_phase:
                         cum_weight = 1.0
@@ -466,9 +467,9 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                     for o in orders:
                         if not isinstance(o, dict): continue
                         
-                        total_qty = int(self._safe_float(o.get('total_qty')))
-                        filled_qty = int(self._safe_float(o.get('filled_qty')))
-                        target_price = self._safe_float(o.get('target_price', o.get('price', 0.0)))
+                        total_qty = int(_safe_float(o.get('total_qty')))
+                        filled_qty = int(_safe_float(o.get('filled_qty')))
+                        target_price = _safe_float(o.get('target_price', o.get('price', 0.0)))
                         side = str(o.get('side', 'BUY'))
                         last_odno = str(o.get('last_odno', ''))
                         
@@ -513,8 +514,8 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                 _filled_rec = next((ex for ex in _safe_execs if isinstance(ex, dict) and str(ex.get('odno', '')) == last_odno), None)
                                 
                                 if _filled_rec:
-                                    ccld_qty_this_tick = int(self._safe_float(_filled_rec.get('ft_ccld_qty')))
-                                    real_exec_price = self._safe_float(_filled_rec.get('ft_ccld_unpr3'))
+                                    ccld_qty_this_tick = int(_safe_float(_filled_rec.get('ft_ccld_qty')))
+                                    real_exec_price = _safe_float(_filled_rec.get('ft_ccld_unpr3'))
                                     if real_exec_price == 0.0: real_exec_price = target_price
                                 else:
                                     # 🚨 MODIFIED: 취소 불가 & 미체결 없음 & 원장 조회 안됨 = 명백한 KIS 서버 Lag
