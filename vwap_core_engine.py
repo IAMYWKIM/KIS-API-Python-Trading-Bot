@@ -1,8 +1,8 @@
 # ==========================================================
 # FILE: vwap_core_engine.py
 # ==========================================================
-# 🚨 RESTORED: [상태 파일 스키마 팩트 교정 및 무지성 스윕 궁극 방어] 로컬 슬라이스 상태 파일(`vrev_slice_state.json`)의 단가 키값은 `price`가 아닌 `target_price`입니다. 이를 오인하여 타점을 $0.0으로 인식, 목표가를 무시하고 시간만 되면 매수와 매도를 동시에 격발하던 치명적 대참사를 원천 봉쇄했습니다. `_safe_float(o.get('target_price', o.get('price', 0.0)))` 듀얼 폴백 맵핑을 통해 100% 타점 요격망을 수복 완료했습니다.
-# 🚨 MODIFIED: [자전거래 방어막 기억 상실(Wash Trade Amnesia) 궁극 수술] 오버나이트 모드로 이관된 암살자의 매도 덫이 존재함에도 불구하고, 상태 파일 읽기(`_read_state_safe`)의 엄격한 당일 날짜(`date_str`) 필터링으로 인해 방어막이 암살자를 인식하지 못해(빈 딕셔너리 반환) 본진 매수 시 자전거래 충돌(Reject)이 발생하던 대참사를 원천 봉쇄. `_read_json_ignore_date_sync` 헬퍼를 신규 주입하여 날짜와 무관하게 미체결 덫이 존재하면 100% 무조건 회수하도록 팩트 락온.
+# 🚨 RESTORED: [상태 파일 스키마 팩트 교정 및 무지성 스윕 궁극 방어] 로컬 슬라이스 상태 파일(`vrev_slice_state.json`)의 단가 키값은 `price`가 아닌 `target_price`입니다. 이를 오인하여 타점이 $0.0으로 인식, 목표가를 무시하고 시간만 되면 매수와 매도를 동시에 격발하던 치명적 대참사를 원천 봉쇄했습니다. `_safe_float(o.get('target_price', o.get('price', 0.0)))` 듀얼 폴백 맵핑을 통해 100% 타점 요격망을 수복 완료했습니다.
+# 🚨 MODIFIED: [자전거래 방어막 기억 상실(Wash Trade Amnesia) 궁극 수술] 오버나이트 모드로 이관된 암살자의 매도 덫이 존재함에도 불구하고, 상태 파일 읽기(`_read_state_safe`)의 엄격한 당일 날짜(`date_str`) 필터링으로 인해 방어막이 암살자를 인식하지 못해 본진 매수 시 자전거래 충돌(Reject)이 발생하던 대참사를 원천 봉쇄. `_read_json_ignore_date_sync` 헬퍼를 신규 주입하여 날짜와 무관하게 미체결 덫이 존재하면 100% 무조건 회수하도록 팩트 락온.
 # 🚨 MODIFIED: [동기/비동기 스레드 데드락(Deadlock) 궁극 수술] `_read_state_safe` 및 `_write_state_safe` 내부에서 메인 스레드가 `GlobalThrottle.get_file_lock`을 쥔 채 백그라운드 스레드(`_retry_api`)를 호출하고, 백그라운드 스레드 역시 동일한 락을 요구하여 발생하던 '55초 타임아웃 연쇄 폭발'의 주범(교착 상태)을 완벽히 도려냈습니다. I/O 모듈 내부에 이미 락이 결속되어 있으므로 래퍼(Wrapper) 층의 락을 전면 소각했습니다.
 # 🚨 MODIFIED: [O(N) API 중복 호출 맹점 궁극 수술] 덫(주문) 루프 내부에 기생하며 TimeoutError를 유발하던 `get_ask_price` 및 `get_bid_price` 중복 호출을 영구 소각. 호가 스캔을 루프 바깥(최상단)으로 전진 배치하여 종목당 단 1회의 호출만으로 모든 덫 타점을 연산하도록 O(1) 진공 압축 팩트 락온 완료.
 # 🚨 MODIFIED: [전역 락(tx_lock) 데드락 붕괴 수술 (Case 50 헌법 사수)] `execute_vwap_trade` 함수 전체를 감싸 이벤트 루프를 통째로 마비시키던 `async with tx_lock:` 족쇄를 전면 소각. 오직 주문/취소(`send_order`, `cancel_order`) 및 잔고 스캔 임계 구역(Critical Section)에만 국소적으로 락을 래핑하여 병렬 처리(Parallel Execution) 성능 극대화 완료.
@@ -13,6 +13,8 @@
 # 🚨 MODIFIED: [이중 타격(Double Spending) 기억 상실 붕괴 궁극 수술] 슬라이싱 중 사용자의 수동 /sync 개입 등으로 API 타임아웃이 발생하여 KIS 서버에서 체결 원장을 조회하지 못했을 때, 메모리에 저장된 주문번호(`last_odno`)를 강제 삭제(Amnesia)해버려 방금 샀던 수량을 다시 사버리는 '오버슈팅(Overbuying)' 패러독스를 완벽히 도려냈습니다. 이제 원장 조회 실패 시 주문 번호를 유지한 채 안전하게 다음 1분으로 검증을 이연(Delay)합니다.
 # 🚨 MODIFIED: [지층 독립성 팽창 패러독스 자가 치유 수술] 하방 하이재킹(Gap Hijack) 매수 시 주입되던 "GAP_HIJACK_BUY" 기원 식별자를 "VREV_VWAP_BUY"로 100% 팩트 교정하여, 당일 수동/슬라이싱 타격분과 100% 단일 지층으로 원자적 병합(Auto-Merge)되도록 Case 58 헌법을 완벽히 사수함.
 # 🚨 NEW: [단일 지층 팽창 패러독스 궁극 수술 (Parameter Amnesia)] `pop_lots` 매도 차감 시 분할에 필수적인 `prev_close`와 `portion_budget` 파라미터가 유실되어 지층 분할 기회가 영구 박탈되던 맹점을 도려내고, 실시간 추출 파이프라인을 100% 팩트 결속 완료.
+# 🚨 MODIFIED: [Time Gate Amnesia 붕괴 수술] 15:58 검증 누락 방어를 위해 엔진 가동 시간을 15:59:59까지 연장 (Clean-up Phase 팩트 보장).
+# 🚨 MODIFIED: [NameError 즉사 버그 궁극 수술] 모듈 스코프 내 잘못 주입된 self._safe_float 호출을 _safe_float로 100% 팩트 교정하여 런타임 붕괴 원천 봉쇄.
 # ==========================================================
 import logging
 import asyncio
@@ -198,7 +200,7 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                     try:
                         await asyncio.to_thread(GlobalThrottle.wait_api_sync)
                         p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_previous_close, t), timeout=45.0)
-                        safe_prev_c = self._safe_float(p_val)
+                        safe_prev_c = _safe_float(p_val)
                         if safe_prev_c > 0: break
                     except Exception:
                         if attempt == 2: pass
@@ -427,7 +429,8 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                 # ======================================================
                 curr_time_obj = now_est.time()
                 time_start = datetime.time(15, 27)
-                time_end = datetime.time(15, 57, 59)
+                # 🚨 MODIFIED: [Time Gate Amnesia 붕괴 수술] 15:58 검증 누락 방어를 위해 엔진 가동 시간을 15:59:59까지 연장 (Clean-up Phase 팩트 보장)
+                time_end = datetime.time(15, 59, 59)
                 
                 if time_start <= curr_time_obj <= time_end:
                     slice_state = await _read_state_safe(slice_file, today_hyphen, {})
