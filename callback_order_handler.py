@@ -1,10 +1,8 @@
 # ==========================================================
 # FILE: callback_order_handler.py
 # ==========================================================
-# 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 48대 엣지 케이스 완벽 결속 교차 검증 완료
-# 🚨 MODIFIED: [2차 오인 패러독스 붕괴 원천 차단] EMERGENCY_EXEC, MANUAL_PORTION 등 수동 매매 격발 시에도 진행 중인 슬라이싱 지시서를 os.remove()로 물리적 삭제하던 맹독성 로직을 영구 소각. 대신 `hijacked=True`인 빈 지시서를 원자적으로 박제하여 VWAP 스케줄러의 오인 에러 타전을 100% 원천 봉쇄 완료.
-# 🚨 MODIFIED: [지층 독립성 팽창 패러독스 자가 치유 수술] MANUAL_PORTION(수동 1회분 매수) 시 주입되던 "MANUAL_PORTION_BUY" 기원 식별자를 "VREV_VWAP_BUY"로 100% 팩트 교정하여, 당일 수동/슬라이싱 타격분과 100% 단일 지층으로 원자적 병합(Auto-Merge)되도록 Case 58 헌법을 완벽히 사수함.
-# 🚨 NEW: [단일 지층 팽창 패러독스 궁극 수술 (Parameter Amnesia)] EMERGENCY_EXEC 및 MANUAL_PORTION 수동 매도 체결 후 큐 장부를 차감(`pop_lots`)할 때, 분할 연산에 반드시 필요한 `prev_close`와 `portion_budget` 파라미터가 유실되어 팽창된 지층이 쪼개지지 않던 맹독성 버그를 원천 소각. 타격 직전 팩트를 추출하여 100% 무결성으로 파라미터 주입 완료.
+# 🚨 MODIFIED: [단일 지층 팽창 패러독스 궁극 수술 (Parameter Amnesia)] 1회분 수동 매수/매도(MANUAL_PORTION) 타격 시 로컬 큐 장부를 원자적으로 업데이트(`add_lot`, `pop_lots`)할 때, 지층 분할(Split)에 필수적인 `prev_close`와 `portion_budget`을 타격 직전 실시간으로 연산하여 100% 무결성으로 주입 완료.
+# 🚨 MODIFIED: [지층 독립성 팽창 패러독스 자가 치유 수술] MANUAL_PORTION(수동 1회분 매수) 기원을 "VREV_VWAP_BUY"로 일원화(통합)하여 1층 지층 팽창(2회분 중복 저장)을 완벽히 방어함.
 # ==========================================================
 import logging
 import datetime
@@ -108,7 +106,7 @@ class CallbackOrderHandler:
             if emergency_qty > 0:
                 await asyncio.to_thread(GlobalThrottle.wait_api_sync)
                 
-                # 🚨 NEW: [Parameter Amnesia 팩트 교정] 단일 지층 팽창을 자가 치유하기 위해 전일 종가 및 예산을 선제 추출
+                # 🚨 MODIFIED: [단일 지층 팽창 자가 치유를 위해 파라미터 무결성 주입 결속]
                 safe_prev_c = 0.0
                 for attempt in range(3):
                     try:
@@ -134,13 +132,11 @@ class CallbackOrderHandler:
                         res = None
                     
                     if isinstance(res, dict) and str(res.get('rt_cd', '')) == '0':
-                        # 🚨 MODIFIED: [단일 지층 팽창 붕괴 수술] 파라미터 무결성 주입 완료
                         await asyncio.wait_for(
                             asyncio.to_thread(self.queue_ledger.pop_lots, ticker, emergency_qty, 0.0, prev_close=safe_prev_c, portion_budget=portion_budget),
                             timeout=10.0
                         )
                         
-                        # 🚨 MODIFIED: [이중 타격 방어] 수동 긴급 수혈 후 낡은 스냅샷, 상태 캐시, 슬라이스 지시서까지 완벽 소각
                         def _nuke_snapshot_and_state_emg():
                             for f in glob.glob(f"data/daily_snapshot_*_{ticker}.json"):
                                 with GlobalThrottle.get_file_lock(f):
@@ -151,7 +147,6 @@ class CallbackOrderHandler:
                                     try: os.remove(f)
                                     except OSError: pass
                                     
-                            # 🚨 MODIFIED: 2차 오인 패러독스 차단 (물리적 삭제 대신 빈 지시서 박제)
                             est_now = datetime.datetime.now(ZoneInfo('America/New_York'))
                             today_str = est_now.strftime('%Y-%m-%d')
                             empty_state = {"date": today_str, "hijacked": True, "orders": []}
@@ -701,7 +696,7 @@ class CallbackOrderHandler:
                         except Exception: pass
                         return
 
-                    # 🚨 NEW: [Parameter Amnesia 팩트 교정] 단일 지층 팽창을 자가 치유하기 위해 전일 종가를 선제 추출
+                    # 🚨 MODIFIED: [단일 지층 팽창 자가 치유를 위해 파라미터 무결성 주입 결속]
                     safe_prev_c = 0.0
                     for attempt in range(3):
                         try:
@@ -723,9 +718,8 @@ class CallbackOrderHandler:
                         if isinstance(res, dict) and str(res.get('rt_cd', '')) == '0':
                             if side == "BUY":
                                 # 🚨 MODIFIED: [지층 팽창 붕괴 자가 치유] 수동 1회분 기원을 VREV_VWAP_BUY로 일원화 락온
-                                await asyncio.wait_for(asyncio.to_thread(self.queue_ledger.add_lot, ticker, final_qty, exec_price, "VREV_VWAP_BUY"), timeout=10.0)
+                                await asyncio.wait_for(asyncio.to_thread(self.queue_ledger.add_lot, ticker, final_qty, exec_price, "VREV_VWAP_BUY", prev_close=safe_prev_c, portion_budget=budget), timeout=10.0)
                             else:
-                                # 🚨 MODIFIED: [단일 지층 팽창 붕괴 수술] 파라미터 무결성 주입 완료
                                 await asyncio.wait_for(
                                     asyncio.to_thread(self.queue_ledger.pop_lots, ticker, final_qty, exec_price, prev_close=safe_prev_c, portion_budget=budget),
                                     timeout=10.0
@@ -733,7 +727,6 @@ class CallbackOrderHandler:
 
                             await asyncio.wait_for(asyncio.to_thread(self.cfg.set_lock, ticker, "REG"), timeout=10.0)
 
-                            # 🚨 MODIFIED: [이중 타격 방어] 수동 타격 팩트 격발 후 스냅샷, 상태 캐시, 슬라이싱 및 애프터장 지시서 전면 100% 소각
                             def _nuke_snapshot_and_state_man():
                                 for f in glob.glob(f"data/daily_snapshot_*_{ticker}.json"):
                                     with GlobalThrottle.get_file_lock(f):
@@ -744,7 +737,6 @@ class CallbackOrderHandler:
                                         try: os.remove(f)
                                         except OSError: pass
                                 
-                                # 🚨 MODIFIED: 2차 오인 패러독스 차단 (물리적 삭제 대신 빈 지시서 박제)
                                 est_now = datetime.datetime.now(ZoneInfo('America/New_York'))
                                 today_str = est_now.strftime('%Y-%m-%d')
                                 empty_state = {"date": today_str, "hijacked": True, "orders": []}

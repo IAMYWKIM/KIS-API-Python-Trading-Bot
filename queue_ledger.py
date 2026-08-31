@@ -2,17 +2,11 @@
 # FILE: queue_ledger.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 48대 엣지 케이스 완벽 결속 교차 검증 완료.
-# 🚨 MODIFIED: [단일 지층 팽창 패러독스 자가 치유 방어막 팩트 보강] KIS 잔고와 큐 잔고가 동일하여 `sync_with_broker`가 조기 종료(Bypass)될 때 발생하는 '영구적 단일 지층 팽창' 현상을 원천 차단하기 위해 주입된 분할(Tier Split) 로직에, 전일 종가(prev_close)가 통신 장애 등으로 0.0이 들어올 경우 ZeroDivisionError가 발생하여 전체 동기화가 마비되는 현상을 완벽 방어하기 위해 `prev_close > 0.0` 제약 조건을 100% 팩트 결속 완료.
+# 🚨 MODIFIED: [1층 정량제 절대 사수 (L1 Fixed-Quantity Pegging)] 1층의 수량이 1회분 정량(Fixed-Quantity)에 미달(Micro Layer)하거나 초과 팽창할 경우, 상위층(2층)과의 하향식 흡수 병합(Bottom-Up Absorption) 또는 상향식 이관(Top-Down Push)을 통해 1층을 무조건 1회분 정량으로 완벽하게 캡핑(Capping) 및 자가 치유(Self-Healing)하는 `_enforce_l1_pegging` 팩트 엔진을 결속 완료.
+# 🚨 MODIFIED: [가중 평균 무결성 수호] 지층 간 물량이 이동(Absorption/Push)할 때마다 100% 가중 평균(Weighted Average)을 연산하여 전체 총 투자금(Total Invested)의 훼손이 단 1달러도 발생하지 않도록 수학적 무결성을 사수함.
 # 🚨 MODIFIED: [Lost Update 궁극 방어] 인스턴스 레벨 Lock 소각 및 시스템 전역 파일 Mutex(GlobalThrottle) 락온 (Case 47)
 # 🚨 MODIFIED: [수수료 트랩 원천 차단] 1층 매도 총액(Gross)에서 왕복 수수료 및 슬리피지 버퍼(0.6%)를 선차감한 '순수 회수금(Net Cash)'만을 원가 차감에 반영하여 전체 사이클 마진 붕괴 패러독스 방어 유지.
-# 🚨 MODIFIED: [Insight 14] 콤마(,) 및 NaN/Inf 맹독성 유입 시 ValueError 즉사 방어를 위한 `_safe_float` 쉴드 전면 내재화.
-# 🚨 VERIFIED: [Case 16] 원자적 쓰기(Atomic Write) 실패 시 임시 파일 스코프 고아화 방어 100% 사수 완료.
-# 🚨 VERIFIED: [제4헌법 절대 사수] 메인 장부뿐만 아니라 백업 파일(.bak) 생성 시에도 임시 파일(.bak.tmp)을 거치는 원자적 복사(Atomic Copy)를 강제하여 OS 커널 패닉 시 백업본 오염 원천 차단.
-# 🚨 NEW: [Case 48: 2-Tier Auto-Merge Protocol 락온] 3개 이상의 지층 생성 시 즉각 상위 지층을 통합하여 최대 2개 지층(2-Bucket)만을 유지하도록 `_enforce_two_tier_limit` 헬퍼 메서드 팩트 주입.
-# 🚨 NEW: [지층 단가 역전 방어막 (Price Inversion Shield) 락온] 1회분 초과 지층 분할(Tier Split) 시, 전체 평단가(new_pure_price)가 1층 앵커가 될 정규장 종가(prev_close)보다 낮을 경우 2층의 단가가 1층보다 낮아지는 맹독성 역전 패러독스가 발생함. 이를 원천 차단하기 위해 `new_pure_price > prev_close` 일 때만 분할을 허용하고, 반대의 경우 분할을 포기하고 저점 단일 지층으로 보존하도록 안전장치 100% 결속 완료.
-# 🚨 MODIFIED: [자본 누수(Capital Leak) 유발 풍선 효과 캡핑 영구 소각] 지층 분할 시 상위층 단가가 총평단가를 넘지 못하게 강제 캡핑(Capping)하던 로직이 투자 원금 총량을 수학적으로 훼손하여 총평단가를 추락($154 -> $150)시키는 대참사(Ghost Profit)를 유발함을 확인. 가중 평균 불변의 법칙 수호를 위해 캡핑 로직을 시스템 전역에서 100% 영구 소각(Amputation) 완료.
-# 🚨 MODIFIED: [리앵커링 타임라인 절대 락온] 단일 지층이 1층과 상위층으로 쪼개질 때(Split), 두 지층 모두 과거의 동일한 물리적 매수 날짜를 상속받아 렌더링에 혼선을 주던 맹점을 원천 소각. 상위층은 과거 날짜를 보존하되, 새롭게 앵커링된 1층은 무조건 '분할 연산이 발생한 당일 현재 타임스탬프'를 강제 주입하도록 타임라인 무결성 팩트 교정 완료.
-# 🚨 MODIFIED: [지층 독립성 절대 락온 (Type Check Enforcement)] `add_lot` 및 `sync_with_broker` 로직에서 동일 날짜(`today_str`)라는 이유만으로 분할 마법 지층(`AUTO_SPLIT_L1`)과 정규 매수 지층(`VREV_VWAP_BUY`)이 무지성으로 병합되어 69주로 팽창해버리던 대참사를 원천 봉쇄. 이제 날짜뿐만 아니라 지층의 기원(`lot_type`)이 100% 일치할 때만 병합되도록 엄격한 필터망을 체결 완료.
+# 🚨 MODIFIED: [Case 16] 원자적 쓰기(Atomic Write) 실패 시 임시 파일 스코프 고아화 방어 100% 사수 완료.
 # ==========================================================
 import os
 import json
@@ -146,6 +140,95 @@ class QueueLedger:
             return [merged_layer, q[-1]]
         return q
 
+    # 🚨 NEW: [1층 정량제 절대 사수 (L1 Fixed-Quantity Pegging) 파이프라인 결속]
+    def _enforce_l1_pegging(self, q, prev_close, portion_budget, ticker):
+        if not q or prev_close is None or portion_budget is None or prev_close <= 0.0 or portion_budget <= 0.0:
+            return self._enforce_two_tier_limit(q)
+            
+        target_l1_qty = math.floor(portion_budget / prev_close)
+        if target_l1_qty <= 0:
+            return self._enforce_two_tier_limit(q)
+            
+        # 🚨 사전 2-Tier 병합 강제
+        q = self._enforce_two_tier_limit(q)
+        
+        # 1. 단일 지층 팽창 자가 치유 (Single Layer Split)
+        if len(q) == 1:
+            lot = q[0]
+            lot_qty = int(self._safe_float(lot.get("qty")))
+            lot_price = self._safe_float(lot.get("price"))
+            total_invested = lot_qty * lot_price
+            
+            # 10% 버퍼 팽창 및 단가 역전 방어망(Price Inversion Shield) 동시 충족 시 분할
+            if total_invested > portion_budget * 1.1 and lot_price > prev_close:
+                if 0 < target_l1_qty < lot_qty:
+                    new_l1_invested = target_l1_qty * prev_close
+                    rem_qty = lot_qty - target_l1_qty
+                    rem_invested = total_invested - new_l1_invested
+                    
+                    rem_price = round(max(0.01, rem_invested / rem_qty), 4)
+                    now_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    q[0] = {
+                        "qty": rem_qty, "price": rem_price, "date": lot.get("date"), "type": "AUTO_SPLIT_UPPER"
+                    }
+                    q.append({
+                        "qty": target_l1_qty, "price": round(prev_close, 4), "date": now_str, "type": "AUTO_SPLIT_L1"
+                    })
+                    logging.info(f"⚖️ [{ticker}] 단일 지층 팽창 분할(Split) 완료: 1층({target_l1_qty}주 @ ${prev_close:.2f}), 상위층({rem_qty}주 @ ${rem_price:.2f})")
+            return q
+            
+        # 2. 다중 지층 정량제 절대 사수 (Bottom-Up Absorption & Top-Down Push)
+        if len(q) >= 2:
+            l2 = q[0]
+            l1 = q[1]
+            
+            l1_qty = int(self._safe_float(l1.get("qty")))
+            l1_price = self._safe_float(l1.get("price"))
+            
+            l2_qty = int(self._safe_float(l2.get("qty")))
+            l2_price = self._safe_float(l2.get("price"))
+            
+            if l1_qty < target_l1_qty:
+                # 🚨 하향식 흡수 병합 (Bottom-Up Absorption)
+                shortage = target_l1_qty - l1_qty
+                transfer_qty = min(shortage, l2_qty)
+                
+                if transfer_qty > 0:
+                    new_l1_qty = l1_qty + transfer_qty
+                    new_l1_invested = (l1_qty * l1_price) + (transfer_qty * l2_price)
+                    new_l1_price = round(new_l1_invested / new_l1_qty, 4)
+                    
+                    l1["qty"] = new_l1_qty
+                    l1["price"] = new_l1_price
+                    
+                    l2["qty"] = l2_qty - transfer_qty
+                    
+                    logging.info(f"🧲 [{ticker}] 1층 정량제 절대 사수 (하향식 흡수 병합): 상위층에서 {transfer_qty}주를 1층으로 흡수하여 정량({target_l1_qty}주) 복구 완료.")
+                    
+                    if l2["qty"] <= 0:
+                        q.pop(0) # 2층 완전 흡수 시 소각
+                        
+            elif l1_qty > target_l1_qty:
+                # 🚨 상향식 이관 (Top-Down Push)
+                excess = l1_qty - target_l1_qty
+                
+                if excess > 0:
+                    new_l2_qty = l2_qty + excess
+                    new_l2_invested = (l2_qty * l2_price) + (excess * l1_price)
+                    new_l2_price = round(new_l2_invested / new_l2_qty, 4)
+                    
+                    l2["qty"] = new_l2_qty
+                    l2["price"] = new_l2_price
+                    
+                    l1["qty"] = target_l1_qty
+                    # 1층 평단가는 훼손 없이 보존됨
+                    
+                    logging.info(f"📤 [{ticker}] 1층 정량제 절대 사수 (상향식 이관): 1층의 초과분 {excess}주를 상위층으로 이관하여 정량({target_l1_qty}주) 캡핑 완료.")
+        
+        return q
+
+    # 🚨 MODIFIED: [단일 지층 분할 통합망 결속] _enforce_l1_pegging 엔진으로 100% 위임
     def split_single_layer_if_needed(self, ticker, prev_close, portion_budget):
         prev_close_f = self._safe_float(prev_close)
         portion_budget_f = self._safe_float(portion_budget)
@@ -159,43 +242,13 @@ class QueueLedger:
             q = data.get(ticker, [])
             q = [lot for lot in q if int(self._safe_float(lot.get("qty"))) > 0]
             
-            if len(q) == 1:
-                lot = q[0]
-                qty = int(self._safe_float(lot.get("qty")))
-                price = self._safe_float(lot.get("price"))
-                total_invested = qty * price
-                
-                if total_invested > portion_budget_f * 1.1 and price > prev_close_f:
-                    new_l1_qty = math.floor(portion_budget_f / prev_close_f)
-                    if 0 < new_l1_qty < qty:
-                        new_l1_invested = new_l1_qty * prev_close_f
-                        rem_qty = qty - new_l1_qty
-                        rem_invested = total_invested - new_l1_invested
-                        
-                        rem_price = round(max(0.01, rem_invested / rem_qty), 4)
-                        
-                        lot_date = lot.get("date", self._get_trading_date_str())
-                        
-                        now_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
-                        
-                        new_l2 = {
-                            "qty": rem_qty,
-                            "price": rem_price,
-                            "date": lot_date,
-                            "type": "AUTO_SPLIT_UPPER"
-                        }
-                        
-                        new_l1 = {
-                            "qty": new_l1_qty,
-                            "price": round(prev_close_f, 4),
-                            "date": now_str,
-                            "type": "AUTO_SPLIT_L1"
-                        }
-                        
-                        data[ticker] = [new_l2, new_l1]
-                        self._save_unsafe_no_lock(data)
-                        logging.info(f"🔪 [{ticker}] 큐 장부 단일 지층 수동 분할 완료: 1층({new_l1_qty}주 @ ${prev_close_f:.2f}), 상위층({rem_qty}주 @ ${rem_price:.2f})")
-                        return True
+            old_q_str = json.dumps(q)
+            q = self._enforce_l1_pegging(q, prev_close_f, portion_budget_f, ticker)
+            
+            if json.dumps(q) != old_q_str:
+                data[ticker] = q
+                self._save_unsafe_no_lock(data)
+                return True
         return False
 
     def apply_stock_split(self, ticker, ratio):
@@ -226,7 +279,8 @@ class QueueLedger:
             q = data.get(ticker, [])
             return [lot for lot in q if int(self._safe_float(lot.get("qty"))) > 0]
 
-    def add_lot(self, ticker, qty, price, lot_type="NORMAL"):
+    # 🚨 MODIFIED: [정량제 팩트 주입] add_lot 시에도 즉각적인 정량제 캡핑(Pegging) 사수
+    def add_lot(self, ticker, qty, price, lot_type="NORMAL", prev_close=None, portion_budget=None):
         qty = int(self._safe_float(qty))
         if qty <= 0: return
         
@@ -243,7 +297,6 @@ class QueueLedger:
             
             today_str = self._get_trading_date_str()
             
-            # 🚨 MODIFIED: [지층 독립성 절대 락온] 동일 날짜라도 lot_type이 다르면 절대 병합하지 않고 독립 지층으로 분리하여 1회분 정량제 헌법 수호
             if q and str(q[-1].get("date", "")).startswith(today_str) and str(q[-1].get("type", "")) == str(lot_type):
                 old_qty = int(self._safe_float(q[-1].get("qty")))
                 old_price = self._safe_float(q[-1].get("price"))
@@ -262,7 +315,8 @@ class QueueLedger:
                     "type": lot_type
                 })
             
-            q = self._enforce_two_tier_limit(q)
+            # 🚨 NEW: 추가 후 즉시 정량제 캡핑 결속
+            q = self._enforce_l1_pegging(q, prev_close, portion_budget, ticker)
             
             data[ticker] = q
             self._save_unsafe_no_lock(data)
@@ -313,33 +367,10 @@ class QueueLedger:
                     net_realized_cash = realized_cash * 0.994  
                     remaining_invested = vrev_total_invested - net_realized_cash
                     new_pure_price = round(max(0.01, remaining_invested / remaining_qty), 4)
-                    
-                    if prev_close is not None and portion_budget is not None and remaining_invested > portion_budget * 1.1 and new_pure_price > prev_close:
-                        new_l1_qty = math.floor(portion_budget / prev_close)
-                        if 0 < new_l1_qty < remaining_qty:
-                            new_l1_invested = new_l1_qty * prev_close
-                            rem_qty = remaining_qty - new_l1_qty
-                            rem_invested = remaining_invested - new_l1_invested
-                            
-                            rem_price = round(max(0.01, rem_invested / rem_qty), 4)
-                            
-                            now_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
-                            
-                            q[0]["qty"] = rem_qty
-                            q[0]["price"] = rem_price
-                            q[0]["type"] = "AUTO_SPLIT_UPPER"
-                            
-                            q.append({
-                                "qty": new_l1_qty,
-                                "price": round(prev_close, 4),
-                                "date": now_str,
-                                "type": "AUTO_SPLIT_L1"
-                            })
-                            logging.info(f"🔪 [{ticker}] 단일 지층 마법 및 초과분 분할(Split) 완료 (1층: {new_l1_qty}주 @ ${prev_close:.2f} / 상위층: {rem_qty}주 @ ${rem_price:.2f})")
-                        else:
-                            q[0]["price"] = new_pure_price
-                    else:
-                        q[0]["price"] = new_pure_price
+                    q[0]["price"] = new_pure_price
+
+            # 🚨 MODIFIED: 파편화된 분할 로직을 _enforce_l1_pegging으로 100% 통합
+            q = self._enforce_l1_pegging(q, prev_close, portion_budget, ticker)
 
             if popped_total < original_target:
                 logging.error(f"🚨 [QueueLedger] pop_lots 미달: {ticker} — 요청 {original_target}주 중 {popped_total}주만 차감. 즉시 sync_with_broker 실행 권고.")
@@ -359,37 +390,13 @@ class QueueLedger:
             actual_qty = int(self._safe_float(actual_qty))
 
             if current_q_qty == actual_qty:
-                if len(q) == 1 and prev_close is not None and portion_budget is not None and prev_close > 0.0:
-                    lot = q[0]
-                    lot_qty = int(self._safe_float(lot.get("qty")))
-                    lot_price = self._safe_float(lot.get("price"))
-                    total_invested = lot_qty * lot_price
-
-                    if total_invested > portion_budget * 1.1 and lot_price > prev_close:
-                        new_l1_qty = math.floor(portion_budget / prev_close)
-                        if 0 < new_l1_qty < lot_qty:
-                            new_l1_invested = new_l1_qty * prev_close
-                            rem_qty = lot_qty - new_l1_qty
-                            rem_invested = total_invested - new_l1_invested
-                            
-                            rem_price = round(max(0.01, rem_invested / rem_qty), 4)
-
-                            now_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
-
-                            q[0]["qty"] = rem_qty
-                            q[0]["price"] = rem_price
-                            q[0]["type"] = "AUTO_SPLIT_UPPER"
-
-                            q.append({
-                                "qty": new_l1_qty,
-                                "price": round(prev_close, 4),
-                                "date": now_str,
-                                "type": "AUTO_SPLIT_L1"
-                            })
-                            data[ticker] = q
-                            self._save_unsafe_no_lock(data)
-                            logging.info(f"🔪 [{ticker}] 동기화 조기 종료 우회: 단일 지층 팽창 감지 ➔ 정밀 분할(Split) 자가 치유 완료 (1층: {new_l1_qty}주 @ ${prev_close:.2f})")
-                            return True
+                old_q_str = json.dumps(q)
+                # 🚨 MODIFIED: 수량 변경 없이 16:05 정산이 돌 때에도 자동 치유(Pegging) 100% 가동
+                q = self._enforce_l1_pegging(q, prev_close, portion_budget, ticker)
+                if json.dumps(q) != old_q_str:
+                    data[ticker] = q
+                    self._save_unsafe_no_lock(data)
+                    return True
                 return False 
 
             today_str = self._get_trading_date_str()
@@ -407,7 +414,6 @@ class QueueLedger:
                     self._save_unsafe_no_lock(data)
                     return True
                 
-                # 🚨 MODIFIED: [지층 독립성 절대 락온] 보정 지층(CALIB_ADD) 추가 시에도 기존 정상 매수 지층과 섞이지 않도록 type 검증 강제
                 if q and str(q[-1].get("date", "")).startswith(today_str) and str(q[-1].get("type", "")) == "CALIB_ADD":
                     old_qty = int(self._safe_float(q[-1].get("qty")))
                     old_price = self._safe_float(q[-1].get("price"))
@@ -459,35 +465,10 @@ class QueueLedger:
                         net_realized_cash = realized_cash * 0.994 
                         remaining_invested = vrev_total_invested - net_realized_cash
                         new_pure_price = round(max(0.01, remaining_invested / remaining_qty), 4)
-                        
-                        if prev_close is not None and portion_budget is not None and remaining_invested > portion_budget * 1.1 and new_pure_price > prev_close:
-                            new_l1_qty = math.floor(portion_budget / prev_close)
-                            if 0 < new_l1_qty < remaining_qty:
-                                new_l1_invested = new_l1_qty * prev_close
-                                rem_qty = remaining_qty - new_l1_qty
-                                rem_invested = remaining_invested - new_l1_invested
-                                
-                                rem_price = round(max(0.01, rem_invested / rem_qty), 4)
-                                    
-                                now_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
-
-                                q[0]["qty"] = rem_qty
-                                q[0]["price"] = rem_price
-                                q[0]["type"] = "AUTO_SPLIT_UPPER"
-                                
-                                q.append({
-                                    "qty": new_l1_qty,
-                                    "price": round(prev_close, 4),
-                                    "date": now_str,
-                                    "type": "AUTO_SPLIT_L1"
-                                })
-                                logging.info(f"🔪 [{ticker}] 동기화 단일 지층 마법 및 초과분 분할 완료 (1층: {new_l1_qty}주 @ ${prev_close:.2f})")
-                            else:
-                                q[0]["price"] = new_pure_price
-                        else:
-                            q[0]["price"] = new_pure_price
+                        q[0]["price"] = new_pure_price
             
-            q = self._enforce_two_tier_limit(q)
+            # 🚨 MODIFIED: 파편화된 분할 로직을 _enforce_l1_pegging으로 100% 통합 및 무조건 실행 락온
+            q = self._enforce_l1_pegging(q, prev_close, portion_budget, ticker)
                          
             if diff > 0:
                 logging.warning(f"⚠️ [QueueLedger] sync_with_broker CALIB_SUB 미달: {ticker} 큐 물량이 브로커보다 {diff}주 부족합니다. 큐가 초기화되었습니다.")
@@ -537,3 +518,4 @@ class QueueLedger:
             
             data[ticker] = sorted_q
             self._save_unsafe_no_lock(data)
+
