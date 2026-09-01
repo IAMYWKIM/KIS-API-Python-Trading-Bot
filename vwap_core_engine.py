@@ -2,7 +2,7 @@
 # FILE: vwap_core_engine.py
 # ==========================================================
 # 🚨 MODIFIED: [단일 지층 팽창 패러독스 궁극 수술 (Parameter Amnesia)] 실시간 매수/매도 체결 후 큐 장부에 팩트를 주입할 때, 분할 연산에 필수적인 `prev_close`와 `portion_budget` 파라미터가 유실되지 않도록 타격 루프 전단에서 실시간으로 100% 무결성 주입을 결속.
-# 🚨 MODIFIED: [NameError 즉사 버그 영구 소각] 전역 함수 스코프 내부에 맹독성으로 잔존하던 `self._safe_float` 찌꺼기를 전면 파기하고, 전역 헬퍼 `_safe_float` 다이렉트 호출로 100% 팩트 교정 완료.
+# 🚨 MODIFIED: [NameError 즉사 버그 영구 소각 (V96.80)] 전역 함수 스코프 내부에 맹독성으로 잔존하던 `self._safe_float` 찌꺼기를 전면 파기하고, 전역 헬퍼 `_safe_float` 다이렉트 호출로 100% 팩트 교정 완료.
 # ==========================================================
 import logging
 import asyncio
@@ -181,13 +181,12 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
             if version == "V_REV" or (version == "V14" and is_manual_vwap):
                 slice_file = f"data/vrev_slice_state_{t}.json"
                 
-                # 🚨 MODIFIED: 실시간 팩트 추출(Parameter Amnesia 붕괴 수술 완료)
                 safe_prev_c = 0.0
                 for attempt in range(3):
                     try:
                         await asyncio.to_thread(GlobalThrottle.wait_api_sync)
                         p_val = await asyncio.wait_for(asyncio.to_thread(broker.get_previous_close, t), timeout=45.0)
-                        # 🚨 MODIFIED: [NameError 즉사 버그 소각] self 키워드 제거
+                        # MODIFIED: [NameError 즉사 버그 소각] self._safe_float ➔ _safe_float
                         safe_prev_c = _safe_float(p_val)
                         if safe_prev_c > 0: break
                     except Exception:
@@ -253,7 +252,7 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                             
                             gap_pct = ((t_curr_p - t_vwap) / t_vwap * 100.0) if t_vwap > 0 else 0.0
                             
-                            # 🚨 MODIFIED: [NameError 즉사 버그 소각] self 키워드 제거
+                            # MODIFIED: [NameError 즉사 버그 소각] self._safe_float ➔ _safe_float
                             gap_thresh = _safe_float(await _retry_api(getattr(cfg, 'get_vrev_gap_threshold', lambda x: -2.0), t, default=-2.0))
                             if gap_thresh == -0.67: gap_thresh = -2.0
                             
@@ -264,7 +263,7 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                 sell_orders = [o for o in slice_state_check.get('orders', []) if str(o.get('side')) == 'SELL']
                                 is_sell_condition = False
                                 for o in sell_orders:
-                                    # 🚨 MODIFIED: [NameError 즉사 버그 소각] self 키워드 제거
+                                    # MODIFIED: [NameError 즉사 버그 소각] self._safe_float ➔ _safe_float
                                     tp_val = _safe_float(o.get('target_price', o.get('price', 0.0)))
                                     if tp_val > 0.0 and t_curr_p >= tp_val:
                                         is_sell_condition = True
@@ -273,7 +272,7 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                 buy_orders = [o for o in slice_state_check.get('orders', []) if str(o.get('side')) == 'BUY']
                                 max_buy_target = 0.0
                                 if buy_orders:
-                                    # 🚨 MODIFIED: [NameError 즉사 버그 소각] self 키워드 제거
+                                    # MODIFIED: [NameError 즉사 버그 소각] self._safe_float ➔ _safe_float
                                     max_buy_target = max(_safe_float(o.get('target_price', o.get('price', 0.0))) for o in buy_orders)
 
                                 if not has_buy_plan:
@@ -353,7 +352,7 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                     buy_qty = 0
                                     for ox in slice_state_disk.get('orders', []):
                                         if str(ox.get('side')) == 'BUY':
-                                            # 🚨 MODIFIED: [NameError 즉사 버그 소각] self 키워드 제거
+                                            # MODIFIED: [NameError 즉사 버그 소각] self._safe_float ➔ _safe_float
                                             _tot = int(_safe_float(ox.get('total_qty', 0)))
                                             _fil = int(_safe_float(ox.get('filled_qty', 0)))
                                             if _tot - _fil > 0:
@@ -395,7 +394,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                                 if hasattr(strategy, 'v_rev_plugin'):
                                                     await _retry_api(strategy.v_rev_plugin.record_execution, t, "BUY", buy_qty, exec_price)
                                                 if queue_ledger:
-                                                    # 🚨 MODIFIED: [지층 팽창 붕괴 자가 치유] 하이재킹 기원을 VREV_VWAP_BUY로 일원화 및 파라미터 무결성 주입
                                                     await _retry_api(queue_ledger.add_lot, t, buy_qty, exec_price, "VREV_VWAP_BUY", prev_close=safe_prev_c, portion_budget=portion_budget)
                                             else:
                                                 if hasattr(strategy, 'v14_vwap_plugin'):
@@ -441,7 +439,7 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                         if not isinstance(vwap_profile, dict): vwap_profile = {}
                     except Exception: vwap_profile = {}
                     
-                    # 🚨 MODIFIED: [NameError 즉사 버그 소각] self 키워드 제거
+                    # MODIFIED: [NameError 즉사 버그 소각] self._safe_float ➔ _safe_float
                     cum_weight = _safe_float(vwap_profile.get(curr_hm, 0.0))
                     
                     if is_cleanup_phase:
@@ -457,7 +455,7 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                     for o in orders:
                         if not isinstance(o, dict): continue
                         
-                        # 🚨 MODIFIED: [NameError 즉사 버그 소각] self 키워드 제거
+                        # MODIFIED: [NameError 즉사 버그 소각] self._safe_float ➔ _safe_float
                         total_qty = int(_safe_float(o.get('total_qty')))
                         filled_qty = int(_safe_float(o.get('filled_qty')))
                         target_price = _safe_float(o.get('target_price', o.get('price', 0.0)))
@@ -504,7 +502,7 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                 _filled_rec = next((ex for ex in _safe_execs if isinstance(ex, dict) and str(ex.get('odno', '')) == last_odno), None)
                                 
                                 if _filled_rec:
-                                    # 🚨 MODIFIED: [NameError 즉사 버그 소각] self 키워드 제거
+                                    # MODIFIED: [NameError 즉사 버그 소각] self._safe_float ➔ _safe_float
                                     ccld_qty_this_tick = int(_safe_float(_filled_rec.get('ft_ccld_qty')))
                                     real_exec_price = _safe_float(_filled_rec.get('ft_ccld_unpr3'))
                                     if real_exec_price == 0.0: real_exec_price = target_price
@@ -524,7 +522,6 @@ async def execute_vwap_trade(tx_lock, cfg, broker, strategy, queue_ledger, chat_
                                 if last_odno not in processed_odnos:
                                     processed_odnos.add(last_odno)
 
-                                    # 🚨 MODIFIED: [Parameter Amnesia 팩트 교정] 단일 지층 팽창 자가 치유를 위해 파라미터 100% 무결성 주입
                                     def _sync_ledger_atomic(tkr, sde, c_qty, r_price, q_ledger, strat, ver, prev_c=None, portion_b=None):
                                         if ver == "V_REV":
                                             if q_ledger:
