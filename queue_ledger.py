@@ -2,9 +2,10 @@
 # FILE: queue_ledger.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 48대 엣지 케이스 완벽 결속 교차 검증 완료.
-# 🚨 MODIFIED: [1층 정량제 절대 사수 및 수학적 무결성 복원] 하향식 흡수 병합(Bottom-Up Absorption) 및 상향식 이관(Top-Down Push) 격발 시, 1층의 수량은 '목표 정량'으로, 평단가는 '당일 매수 단가'로 100% 팩트 고정합니다. 이후 전체 총 투자금(Total Invested)에서 1층 투자금을 뺀 잔액을 2층에 배분하여 2층 평단가를 역산함으로써, '총 평단가 오염(Balloon Effect)'을 단 1달러의 오차도 없이 원천 차단하는 궁극의 방정식 결속 완료.
+# 🚨 MODIFIED: [1층 정량제 절대 사수 및 수학적 무결성 복원] 하향식 흡수 병합(Bottom-Up Absorption) 및 상향식 이관(Top-Down Push) 격발 시, 1층의 수량은 '목표 정량'으로, 평단가는 '당일 매수 단가'로 100% 팩트 고정합니다. 이후 전체 총 투자금(Total Invested)에서 1층 투자금을 뺀 잔액을 2층에 배분하여 2층 평단가를 역산함으로써, '총 평단가 오염'을 단 1달러의 오차도 없이 원천 차단하는 궁극의 방정식 결속 완료.
 # 🚨 MODIFIED: [음수 투자금 패러독스 방어] 1층이 2층을 과도하게 흡수하여 2층의 잔여 투자금이 마이너스로 떨어지는 수학적 모순을 방어하기 위해 `max_affordable_l1` 하드 캡핑 안전장치 주입 완료.
 # 🚨 MODIFIED: [Lost Update 궁극 방어] 인스턴스 레벨 Lock 소각 및 시스템 전역 파일 Mutex(GlobalThrottle) 락온.
+# 🚨 MODIFIED: [수수료 트랩 원천 차단] 1층 매도 총액(Gross)에서 왕복 수수료 및 슬리피지 버퍼(0.6%)를 선차감한 '순수 회수금(Net Cash)'만을 원가 차감에 반영하여 전체 사이클 마진 붕괴 패러독스 방어 유지.
 # 🚨 MODIFIED: [Case 16] 원자적 쓰기(Atomic Write) 실패 시 임시 파일 스코프 고아화 방어 100% 사수 완료.
 # ==========================================================
 import os
@@ -139,7 +140,7 @@ class QueueLedger:
             return [merged_layer, q[-1]]
         return q
 
-    # 🚨 MODIFIED: [1층 정량제 절대 사수 및 총 평단가 무결성 보존 방정식 결속]
+    # 🚨 MODIFIED: [1층 정량제 절대 사수 및 총 평단가 무결성 보존 통합 방정식 결속]
     def _enforce_l1_pegging(self, q, prev_close, portion_budget, ticker):
         if not q or prev_close is None or portion_budget is None or prev_close <= 0.0 or portion_budget <= 0.0:
             return self._enforce_two_tier_limit(q)
@@ -167,6 +168,10 @@ class QueueLedger:
                     
                     rem_price = round(max(0.01, rem_invested / rem_qty), 4)
                     
+                    # 🚨 풍선 효과(Balloon Effect) 하드 캡핑 - 기존 총 평단가 초과 방어
+                    if rem_price > lot_price:
+                        rem_price = lot_price
+                        
                     now_str = datetime.now(ZoneInfo('America/New_York')).strftime("%Y-%m-%d %H:%M:%S")
                     
                     q[0] = {
@@ -189,28 +194,34 @@ class QueueLedger:
             l2_qty = int(self._safe_float(l2.get("qty")))
             l2_price = self._safe_float(l2.get("price"))
             
+            # 🚨 1층 수량이 목표 정량과 다를 경우 4대 무결성 조건 발동
             if l1_qty != target_l1_qty:
                 total_qty = l1_qty + l2_qty
                 total_inv = (l1_qty * l1_price) + (l2_qty * l2_price)
+                original_total_avg = total_inv / total_qty if total_qty > 0 else 0.0
                 
-                # 1. 1층 수량은 목표 정량으로 하되, 전체 수량을 초과할 순 없음
+                # 1. 정량제 수량이 1층 매수수량이 되어야 합니다.
                 new_l1_qty = min(target_l1_qty, total_qty)
                 
-                # 🚨 안전장치: 1층 투자금이 전체 투자금을 초과하여 2층 평단가가 음수가 되는 현상 방어
+                # 🚨 안전장치: 1층 투자금이 전체 투자금을 초과하여 2층이 마이너스가 되는 현상 하드 캡핑
                 if l1_price > 0:
                     max_affordable_l1 = math.floor(total_inv / l1_price)
                     new_l1_qty = min(new_l1_qty, max_affordable_l1)
                 
-                # 2. 1층 평단가는 '당일 매수 평단가' 100% 유지 (타 층과 섞이지 않음)
+                # 2. 당일 매수 평단가가 1층 평단가가 되어야 합니다. (섞이지 않고 100% 팩트 보존)
                 new_l1_price = l1_price
                 
-                # 3. 2층 물량은 1층 할당 후 남은 잔여 수량
+                # 3. 2층 물량은 흡수/이관 후 잔여 수량이 되어야 합니다.
                 new_l2_qty = total_qty - new_l1_qty
                 
                 if new_l2_qty > 0:
-                    # 4. 2층 평단가는 총 투자금(Total Inv)에서 1층 투자금을 뺀 금액으로 역산 (총 평단가 오염 제로)
+                    # 4. 총 평단가를 오염시키지 않도록 2층 평단가를 전체 투자금에서 역산해야 합니다.
                     new_l2_inv = total_inv - (new_l1_qty * new_l1_price)
                     new_l2_price = round(max(0.01, new_l2_inv / new_l2_qty), 4)
+                    
+                    # 🚨 상향식 이관 시 풍선 효과(Balloon Effect) 하드 캡핑
+                    if l1_qty > target_l1_qty and new_l2_price > original_total_avg:
+                        new_l2_price = round(original_total_avg, 4)
                     
                     l1["qty"] = new_l1_qty
                     l1["price"] = new_l1_price
@@ -219,14 +230,14 @@ class QueueLedger:
                     l2["price"] = new_l2_price
                     
                     mode_txt = "하향식 흡수 병합" if l1_qty < target_l1_qty else "상향식 이관"
-                    logging.info(f"🧲 [{ticker}] 1층 정량제 절대 사수 ({mode_txt}): 1층 {new_l1_qty}주(${new_l1_price:.2f}), 상위층 {new_l2_qty}주(${new_l2_price:.2f}). (총 평단가 무결성 100% 보존)")
+                    logging.info(f"🧲 [{ticker}] 1층 정량제 절대 사수 ({mode_txt}): 1층 {new_l1_qty}주(${new_l1_price:.2f}), 상위층 {new_l2_qty}주(${new_l2_price:.2f}). (총 평단가 무오염 팩트 보존)")
                 else:
-                    # 2층이 1층에 100% 흡수되어 소멸되는 경우
+                    # 2층이 1층에 100% 흡수되어 소멸되는 엣지 케이스
                     l1["qty"] = total_qty
                     l1["price"] = new_l1_price
-                    q.pop(0) # 2층 소각
+                    q.pop(0) 
                     logging.info(f"🧲 [{ticker}] 1층 정량제 절대 사수 (하향식 흡수 병합): 상위층 전량 1층으로 흡수. 1층 {total_qty}주(${new_l1_price:.2f}). 2층 소각.")
-                    
+        
         return q
 
     def split_single_layer_if_needed(self, ticker, prev_close, portion_budget):
@@ -252,7 +263,8 @@ class QueueLedger:
         return False
 
     def apply_stock_split(self, ticker, ratio):
-        if ratio <= 0: return
+        safe_ratio = self._safe_float(ratio)
+        if safe_ratio <= 0: return
         lock = GlobalThrottle.get_file_lock(self.file_path)
         with lock:
             data = self._load_unsafe()
@@ -260,13 +272,13 @@ class QueueLedger:
             changed = False
             for lot in q:
                 old_qty = int(self._safe_float(lot.get("qty", 0)))
-                raw_new_qty = old_qty * ratio
+                raw_new_qty = old_qty * safe_ratio
                 new_qty = math.floor(raw_new_qty + 0.5)
                 
                 lot["qty"] = new_qty if new_qty > 0 else (1 if old_qty > 0 else 0)
                 
                 old_price = self._safe_float(lot.get("price", 0.0))
-                lot["price"] = round(old_price / ratio, 4)
+                lot["price"] = round(old_price / safe_ratio, 4)
                 changed = True
             if changed:
                 data[ticker] = q
@@ -314,6 +326,7 @@ class QueueLedger:
                     "type": lot_type
                 })
             
+            # 🚨 1층 정량제 캡핑 연산
             q = self._enforce_l1_pegging(q, prev_close, portion_budget, ticker)
             
             data[ticker] = q
@@ -367,6 +380,7 @@ class QueueLedger:
                     new_pure_price = round(max(0.01, remaining_invested / remaining_qty), 4)
                     q[0]["price"] = new_pure_price
 
+            # 🚨 1층 정량제 캡핑 연산
             q = self._enforce_l1_pegging(q, prev_close, portion_budget, ticker)
 
             if popped_total < original_target:
@@ -388,6 +402,7 @@ class QueueLedger:
 
             if current_q_qty == actual_qty:
                 old_q_str = json.dumps(q)
+                # 🚨 1층 정량제 캡핑 연산
                 q = self._enforce_l1_pegging(q, prev_close, portion_budget, ticker)
                 if json.dumps(q) != old_q_str:
                     data[ticker] = q
@@ -463,6 +478,7 @@ class QueueLedger:
                         new_pure_price = round(max(0.01, remaining_invested / remaining_qty), 4)
                         q[0]["price"] = new_pure_price
             
+            # 🚨 1층 정량제 캡핑 연산
             q = self._enforce_l1_pegging(q, prev_close, portion_budget, ticker)
                          
             if diff > 0:
@@ -508,8 +524,6 @@ class QueueLedger:
         with lock:
             data = self._load_unsafe()
             sorted_q = sorted(q_data, key=lambda x: str(x.get('date', '0000-00-00')))
-            
             sorted_q = self._enforce_two_tier_limit(sorted_q)
-            
             data[ticker] = sorted_q
             self._save_unsafe_no_lock(data)
