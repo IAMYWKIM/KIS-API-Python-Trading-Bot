@@ -12,7 +12,8 @@
 # 🚨 MODIFIED: [State Overwrite Collision 영구 소각] 전량 익절 감지 시 분할되어 있던 상태 업데이트 파이프라인을 단일 트랜잭션으로 통합하여 last_filled_sell_qty 증발을 완벽히 차단.
 # 🚨 MODIFIED: [전역 락 병목 궁극 수술] _do_sniper 전체를 감싸고 있던 async with tx_lock: 족쇄를 영구 소각하여, vwap 스케줄러와 경합하며 55초 타임아웃을 유발하던 최악의 데드락을 100% 팩트 파기 완료.
 # 🚨 MODIFIED: [체결 원장 디커플링 붕괴 수술] 암살자의 모든 매수/매도/덤핑 고유 주문번호(odno)를 상태 파일의 `history_odnos`에 원자적으로 누적(Append)하여, V-REV 정산 시 암살자 내역이 혼입되는 대참사를 원천 차단하는 투명 인간(Ghosting) 방어망 100% 결속.
-# 🚨 NEW: [스레드 풀 고갈(Thread Leak) 궁극 수술] _retry_api의 `wait_for` 타임아웃을 하위 API 점유 한계(35초)를 상회하는 45.0초로 팩트 교정하여 좀비 스레드 누수를 100% 소각.
+# 🚨 MODIFIED: [스레드 풀 고갈(Thread Leak) 궁극 수술] _retry_api의 `wait_for` 타임아웃을 하위 API 점유 한계(35초)를 상회하는 45.0초로 팩트 교정하여 좀비 스레드 누수를 100% 소각.
+# 🚨 MODIFIED: [암살자 휩쏘 방어망] 1.5초 간격 4틱 교차 검증 락온 (04:07 타임쉴드 절대 준수 후 4연속 상회 시에만 매수 팩트 집행).
 # ==========================================================
 import logging
 import datetime
@@ -505,6 +506,30 @@ async def scheduled_sniper_monitor(context):
                                 if not lock_acquired:
                                     logging.info(f"⏳ [{t}] 소프트웨어 트리거 중복 발사 방지 락온 가동")
                                     continue
+                                
+                                # 🚨 MODIFIED: [암살자 휩쏘 방어망] 1.5초 간격 4틱 교차 검증 락온 (04:07 절대 타임쉴드는 get_avwap_decision 내부에서 기 방어 완료)
+                                session_vwap = decision.get('session_vwap', 0.0)
+                                whipsaw_detected = False
+                                
+                                if session_vwap > 0.0:
+                                    logging.info(f"🛡️ [{t}] BREAKOUT_BUY 최초 감지. 휩쏘(Whipsaw) 방어를 위한 4.5초(3틱) 교차 검증 돌입 (기준 VWAP: ${session_vwap:.2f})")
+                                    for tick in range(1, 4):
+                                        await asyncio.sleep(1.5)
+                                        check_p = _safe_float(await _retry_api(broker.get_current_price, t))
+                                        
+                                        if check_p <= 0.0 or check_p < session_vwap:
+                                            logging.warning(f"🚨 [{t}] 휩쏘 방어망 가동! {tick+1}회차 검증 실패 (현재가 ${check_p:.2f} < VWAP ${session_vwap:.2f} 또는 통신오류). 진입을 차단합니다.")
+                                            whipsaw_detected = True
+                                            break
+                                        else:
+                                            logging.info(f"✅ [{t}] {tick+1}/4회차 검증 통과 (현재가 ${check_p:.2f} >= VWAP ${session_vwap:.2f})")
+                                else:
+                                    logging.warning(f"🚨 [{t}] session_vwap 결측치. Whipsaw 검증 불가로 안전 격리 (진입 차단).")
+                                    whipsaw_detected = True
+                                    
+                                if whipsaw_detected:
+                                    await asyncio.wait_for(asyncio.to_thread(_update_state_sync, t, now_est, {'is_ordering': False}), timeout=45.0)
+                                    continue
                                     
                                 ask_price = _safe_float(await _retry_api(broker.get_ask_price, t))
                                 if ask_price <= 0.0:
@@ -763,3 +788,4 @@ async def scheduled_sniper_monitor(context):
         await asyncio.wait_for(_do_sniper(), timeout=55.0)
     except Exception as e:
         logging.error(f"🚨 스나이퍼 타임아웃 에러: {e}", exc_info=True)
+

@@ -1,14 +1,8 @@
 # ==========================================================
 # FILE: vwap_aftermarket_engine.py
 # ==========================================================
-# 🚨 MODIFIED: [Thundering Herd 영구 소각] _retry_api 및 루프 내부의 파편화된 await asyncio.sleep(0.06) 땜질 전면 삭제.
-# 🚨 MODIFIED: [중앙 통제소 위임] 모든 API 지연을 GlobalThrottle(중앙 통제소)로 100% 위임하여 이벤트 루프 교착 상태 완벽 방어.
-# 🚨 NEW: [Case 47 자전거래(Wash Trade) 절대 방어망 결속] 암살자 오버나이트 모드 허용 시 기장전된 +1.0% 지정가 익절 덫과 본진(V-REV)의 16:01 애프터장 지연 고가 매수 덫이 충돌하여 KIS 서버에서 리젝(Reject)당하는 맹독성 패러독스를 완벽히 차단하기 위해, 타격 직전 암살자 덫 임시 취소 및 타격 직후 원상 복구(재장전) 파이프라인 100% 팩트 이식 완료.
-# 🚨 MODIFIED: [예수금 0원 매도 컷오프 맹점 수술] 애프터장 예수금 조회 결과 0원(cash=0.0)일 때 루프 자체를 continue로 끊어버리는 코드를 영구 소각하고, 하위 로직에서 매수(BUY) 플랜만 스킵하고 매도(SELL) 플랜은 정상 집행하도록 100% 팩트 교정 완료.
-# 🚨 MODIFIED: [Case 54 상태 파일 스키마 불일치 붕괴 수술] target_price 단일 추출을 폐기하고 o.get('target_price', o.get('price', 0.0)) 듀얼 폴백을 결속하여 0.0달러 무지성 덤핑 패러독스 완벽 방어.
-# 🚨 MODIFIED: [체결 원장 디커플링 붕괴 수술] 애프터장에서 암살자 오버나이트 익절 덫을 재장전할 때 생성되는 새로운 주문번호(odno) 역시 `history_odnos`에 완벽하게 캐싱하여 16:05 정산 시 암살자 찌꺼기가 유입되는 대참사를 원천 차단.
-# 🚨 MODIFIED: [지층 독립성 팽창 패러독스 자가 치유 수술] 애프터장 매수 체결 후 장부에 팩트를 주입할 때 사용되던 "VREV_AFTERMARKET_BUY" 식별자를 "VREV_VWAP_BUY"로 100% 교정하여, 지층이 쪼개지지 않고 1층에 멱등하게 가중 평균 병합되도록 락온.
-# 🚨 NEW: [단일 지층 팽창 패러독스 궁극 수술 (Parameter Amnesia)] 애프터장 매도 체결 시 `pop_lots`에 분할을 위한 필수 파라미터(`prev_close`, `portion_budget`)가 누락되어 팽창된 지층이 쪼개지지 않는 맹점을 도려내고, 타격 루프 전단에서 실시간 팩트를 추출하여 100% 주입 완료.
+# 🚨 MODIFIED: [단일 지층 팽창 패러독스 궁극 수술 (Parameter Amnesia)] 애프터장 타격 루프 전단에서 추출된 `prev_close`와 `portion_budget` 파라미터를 체결 원자적 동기화 헬퍼(`_sync_aftermarket_ledger_atomic`)를 통해 100% 무결성으로 주입 완료.
+# 🚨 MODIFIED: [지층 독립성 팽창 패러독스 자가 치유 수술] 애프터장 매수 기원을 "VREV_VWAP_BUY"로 일원화(통합)하여 1층 지층 팽창(2회분 중복 저장) 원천 봉쇄 락온.
 # ==========================================================
 import logging
 import asyncio
@@ -31,7 +25,6 @@ def _safe_float(val):
         return 0.0
 
 async def _retry_api(func, *args, timeout=15.0, default=None, **kwargs):
-    """ 🚨 [Case 32, 33] 중앙 집중형 TPS 캡핑 (GlobalThrottle 위임) 및 지수 백오프 래퍼 """
     for attempt in range(3):
         try:
             if asyncio.iscoroutinefunction(func):
@@ -64,15 +57,15 @@ async def _safe_send(context, chat_id, text, timeout=15.0, **kwargs):
         logging.error(f"🚨 텔레그램 전송 실패: {e}")
         return None
 
-# 🚨 MODIFIED: [Parameter Amnesia 팩트 교정] 단일 지층 팽창 자가 치유를 위해 prev_c, portion_b 파라미터 시그니처 결속
+# 🚨 MODIFIED: [Parameter Amnesia 팩트 교정] 단일 지층 팽창 자가 치유를 위해 파라미터 무결성 수신 및 락온
 def _sync_aftermarket_ledger_atomic(tkr, sde, c_qty, r_price, q_ledger, strat, ver, prev_c=None, portion_b=None):
     if ver == "V_REV":
         if q_ledger:
             if sde == "BUY":
-                # 🚨 MODIFIED: [지층 팽창 붕괴 자가 치유] 애프터장 지연 매수 기원을 VREV_VWAP_BUY로 일원화 락온
-                q_ledger.add_lot(tkr, c_qty, r_price, "VREV_VWAP_BUY")
+                # 🚨 MODIFIED: [지층 팽창 붕괴 자가 치유] 애프터장 매수 기원 통일
+                q_ledger.add_lot(tkr, c_qty, r_price, "VREV_VWAP_BUY", prev_close=prev_c, portion_budget=portion_b)
             else:
-                # 🚨 MODIFIED: [팽창 붕괴 수술] pop_lots로 분할용 파라미터 무결성 주입
+                # 🚨 MODIFIED: [팽창 붕괴 수술] pop_lots로 분할용 파라미터 주입
                 q_ledger.pop_lots(tkr, c_qty, r_price, prev_close=prev_c, portion_budget=portion_b)
         if hasattr(strat, 'v_rev_plugin'):
             strat.v_rev_plugin.record_execution(tkr, sde, c_qty, r_price)
@@ -108,8 +101,7 @@ async def execute_aftermarket_trade(tx_lock, cfg, broker, strategy, queue_ledger
                 
                 if version != "V_REV" and not (version == "V14" and is_manual_vwap): continue
                 
-                # 🚨 NEW: [단일 지층 팽창 자가 치유용 팩트 파이프라인 결속]
-                # 실시간 매도 체결 시 1회분 초과 지층을 정밀 분할(Split)하기 위해 prev_close와 예산을 선제 추출
+                # 🚨 MODIFIED: [단일 지층 팽창 자가 치유용 팩트 파이프라인 결속]
                 safe_prev_c = 0.0
                 for attempt in range(3):
                     try:
@@ -148,10 +140,8 @@ async def execute_aftermarket_trade(tx_lock, cfg, broker, strategy, queue_ledger
                         await asyncio.sleep(10.0)
                 
                 if cash <= 0.0:
-                    # 🚨 MODIFIED: [예수금 0원 매도 컷오프 맹점 수술] 루프를 끊어버리던 `continue`를 소각하고, 매수만 차단되도록 경고 메시지 팩트 교정
                     logging.warning(f"⚠️ [{t}] 애프터장 예수금 확보 실패 (자본 잠김 미해소). 매수(BUY) 타격만 중단합니다.")
 
-                # 🚨 NEW: [Case 47 자전거래(Wash Trade) 절대 방어망 결속]
                 avwap_state_file = f"data/avwap_trade_state_{t}.json"
                 avwap_state = {}
                 try:
@@ -189,7 +179,6 @@ async def execute_aftermarket_trade(tx_lock, cfg, broker, strategy, queue_ledger
                     side = str(o.get('side', 'BUY'))
                     total_qty = int(_safe_float(o.get('total_qty')))
                     
-                    # 🚨 MODIFIED: [Case 54] 상태 파일 스키마 불일치 방어(Target Price Amnesia) 듀얼 폴백 팩트 결속
                     target_price = _safe_float(o.get('target_price', o.get('price', 0.0)))
                     desc = html.escape(str(o.get('desc', '')))
                     
@@ -226,7 +215,6 @@ async def execute_aftermarket_trade(tx_lock, cfg, broker, strategy, queue_ledger
                         continue
 
                     if side == "BUY":
-                        # 🚨 MODIFIED: [예수금 0원 매수 컷오프 팩트 적용]
                         if cash <= 0.0:
                             msgs += f"⚠️ {desc}: KIS 예수금 0.0으로 애프터장 매수 스킵\n"
                             continue
@@ -290,7 +278,6 @@ async def execute_aftermarket_trade(tx_lock, cfg, broker, strategy, queue_ledger
                 if msgs.strip() and chat_id:
                     await _safe_send(context, chat_id, f"🌃 <b>[{html.escape(t)}] 16:01 EST 애프터장 일괄 타격 보고</b>\n\n{msgs.strip()}", parse_mode='HTML')
 
-                # 🚨 NEW: [Case 47 절대 방어망 결속] 자전거래 방어 해제: 암살자 오버나이트 덫 원상 복구
                 avwap_state_fresh = await _retry_api(_read_json_safe_sync, avwap_state_file, today_hyphen, default={})
                 
                 if avwap_state_fresh and avwap_state_fresh.get('qty', 0) > 0:
@@ -313,7 +300,6 @@ async def execute_aftermarket_trade(tx_lock, cfg, broker, strategy, queue_ledger
                             avwap_state_fresh['sell_odno'] = new_odno
                             avwap_state_fresh['suppress_sell'] = False
                             
-                            # 🚨 MODIFIED: [체결 원장 디커플링 붕괴 수술] 애프터장 재장전 덫 번호도 Ghosting 망에 캐싱하여 타점 오염 영구 차단
                             if 'history_odnos' not in avwap_state_fresh:
                                 avwap_state_fresh['history_odnos'] = []
                             if new_odno and new_odno not in avwap_state_fresh['history_odnos']:
